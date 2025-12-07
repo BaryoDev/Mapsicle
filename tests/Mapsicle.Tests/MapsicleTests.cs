@@ -85,7 +85,23 @@ namespace Mapsicle.Tests
             Assert.NotNull(dest);
             Assert.NotNull(dest.Child);
             Assert.Equal("Baby", dest.Child.Name);
+            Assert.Equal("Baby", dest.Child.Name);
             // Ensure it's a new instance, not a reference copy (since types differ, ref copy is impossible anyway, but good to check generally)
+        }
+
+        [Fact]
+        public void MapToExisting_ShouldUpdateTarget()
+        {
+            var source = new User { Id = 2, Name = "Updated" };
+            var target = new UserDto { Id = 1, Name = "Original", Email = "keep@me.com" };
+
+            // Act
+            source.Map(target);
+
+            // Assert
+            Assert.Equal(2, target.Id);
+            Assert.Equal("Updated", target.Name);
+            Assert.Equal("keep@me.com", target.Email); // Should not be touched as it doesn't exist on source (or is just skipped if null? logic dictates ignore missing source props)
         }
 
         [Fact]
