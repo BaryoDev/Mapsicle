@@ -68,10 +68,18 @@ Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Mat
     *   `int` -> `int`: ✅ Mapped
     *   `User` -> `User` (Same Class): ✅ Mapped (Reference Copy)
     *   `SubClass` -> `BaseClass`: ✅ Mapped
-    *   `int` -> `int?`: ❌ **Skipped** (Strict type match)
-    *   `int` -> `string`: ❌ **Skipped**
-    *   `ClassA` -> `ClassB` (Different Classes): ❌ **Skipped** (No deep/internal mapping)
+    *   `ClassA` -> `ClassB` (Different Classes): ✅ **Mapped** (Deep Copy via Recursive Mapping)
+    *   `int` -> `string`: ✅ **Mapped** (Coerced via `ToString()`)
+    *   `Enum` -> `int`: ✅ **Mapped** (Coerced via Casting)
+    *   `int` -> `int?`: ❌ **Skipped** (Strict type match logic applies to wrapper types generally, though specific coercions may vary)
 *   **Unmatched Properties**: Properties in Source or Destination that do not match are simply ignored (no errors).
+
+### Constructor & Record Support
+Mapsicle supports creating objects via constructors, enabling mapping to immutable **Records**:
+```csharp
+public record UserRecord(int Id, string Name);
+var rec = source.MapTo<UserRecord>();
+```
 
 ## Performance Logic
 **Mapsicle** achieves its speed by using **System.Linq.Expressions** to generate and compile mapping code dynamically at runtime.
