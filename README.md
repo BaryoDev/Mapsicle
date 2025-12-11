@@ -49,6 +49,16 @@ var users = new List<User>
 List<UserDto> dtos = users.MapTo<UserDto>().ToList();
 ```
 
+### 3. Update Existing Instance
+Update a target object with values from a source. useful for database entities.
+```csharp
+var existingUser = new UserDto { Id = 1, Name = "Old Name" };
+var input = new User { Id = 1, Name = "New Name" };
+
+// Updates existingUser in-place (ID=1, Name="New Name")
+input.Map(existingUser);
+```
+
 ## Behavior & Limitations
 Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Matching**:
 
@@ -58,7 +68,6 @@ Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Mat
     *   `int` -> `int`: ✅ Mapped
     *   `User` -> `User` (Same Class): ✅ Mapped (Reference Copy)
     *   `SubClass` -> `BaseClass`: ✅ Mapped
-    *   `ClassA` -> `ClassB` (Different Classes): ✅ **Mapped** (Deep Copy via Recursive Mapping)
     *   `int` -> `int?`: ❌ **Skipped** (Strict type match)
     *   `int` -> `string`: ❌ **Skipped**
     *   `ClassA` -> `ClassB` (Different Classes): ❌ **Skipped** (No deep/internal mapping)
