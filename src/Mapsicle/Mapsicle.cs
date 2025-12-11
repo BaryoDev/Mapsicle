@@ -35,10 +35,26 @@ namespace Mapsicle
                         p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && 
                         p.CanRead);
 
-                    if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
+                    if (sourceProp != null)
                     {
                         var propExp = Expression.Property(typedSource, sourceProp);
-                        bindings.Add(Expression.Bind(destProp, propExp));
+                        var targetType = destProp.PropertyType;
+                        var srcType = sourceProp.PropertyType;
+
+                        if (targetType.IsAssignableFrom(srcType))
+                        {
+                            bindings.Add(Expression.Bind(destProp, propExp));
+                        }
+                        else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+                        {
+                            // Recursive MapTo
+                            var mapMethod = typeof(Mapper).GetMethods()
+                                .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
+                                .MakeGenericMethod(targetType);
+                            
+                            var recursiveCall = Expression.Call(null, mapMethod, propExp);
+                            bindings.Add(Expression.Bind(destProp, recursiveCall));
+                        }
                     }
                 }
 

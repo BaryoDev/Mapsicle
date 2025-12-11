@@ -7,7 +7,7 @@
 **Mapsicle** is a high-performance, zero-dependency object mapper for .NET. It uses compiled Expression Trees to match properties at near-native speed, designed as a lightweight alternative to lightweight libraries.
 
 ## Author
-*   [Arneli Robles](https://github.com/arnelirobles)
+*   [Arnel Isiderio Robles](https://github.com/arnelirobles)
 
 ## The Pitch
 
@@ -58,6 +58,7 @@ Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Mat
     *   `int` -> `int`: ✅ Mapped
     *   `User` -> `User` (Same Class): ✅ Mapped (Reference Copy)
     *   `SubClass` -> `BaseClass`: ✅ Mapped
+    *   `ClassA` -> `ClassB` (Different Classes): ✅ **Mapped** (Deep Copy via Recursive Mapping)
     *   `int` -> `int?`: ❌ **Skipped** (Strict type match)
     *   `int` -> `string`: ❌ **Skipped**
     *   `ClassA` -> `ClassB` (Different Classes): ❌ **Skipped** (No deep/internal mapping)
