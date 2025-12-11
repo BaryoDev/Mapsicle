@@ -59,6 +59,10 @@ var input = new User { Id = 1, Name = "New Name" };
 input.Map(existingUser);
 ```
 
+### Limitations
+- **Circular References**: Mapsicle does not support object graphs with circular references (e.g. Parent -> Child -> Parent). Mapping such objects will result in a `StackOverflowException`. Ensure your DTOs describe a Directed Acyclic Graph (DAG).
+- **Complex Logic**: No `ForMember` or custom resolvers. Strictly property-to-property mapping.
+
 ## Behavior & Limitations
 Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Matching**:
 
@@ -71,7 +75,9 @@ Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Mat
     *   `ClassA` -> `ClassB` (Different Classes): ✅ **Mapped** (Deep Copy via Recursive Mapping)
     *   `int` -> `string`: ✅ **Mapped** (Coerced via `ToString()`)
     *   `Enum` -> `int`: ✅ **Mapped** (Coerced via Casting)
-    *   `int` -> `int?`: ❌ **Skipped** (Strict type match logic applies to wrapper types generally, though specific coercions may vary)
+    *   `Enum` -> `int`: ✅ **Mapped** (Coerced via Casting)
+    *   `int` -> `int?`: ✅ **Mapped** (Nullable Wrapping)
+    *   `int?` -> `int`: ✅ **Mapped** (Nullable Unwrapping, defaults to 0 if null)
 *   **Unmatched Properties**: Properties in Source or Destination that do not match are simply ignored (no errors).
 
 ### Constructor & Record Support
