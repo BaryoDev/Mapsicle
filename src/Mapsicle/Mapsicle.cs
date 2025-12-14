@@ -28,39 +28,106 @@ namespace Mapsicle
                 var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
                 var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
-                foreach (var destProp in destProps)
+                // --- 1. Parameterless Constructor Path ---
+                if (destType.GetConstructor(Type.EmptyTypes) != null || destType.IsValueType)
                 {
-                    if (!destProp.CanWrite) continue;
-                    
-                    var sourceProp = sourceProps.FirstOrDefault(p => 
-                        p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && 
-                        p.CanRead);
-
-                    if (sourceProp != null)
+                    foreach (var destProp in destProps)
                     {
-                        var propExp = Expression.Property(typedSource, sourceProp);
-                        var targetType = destProp.PropertyType;
-                        var srcType = sourceProp.PropertyType;
+                        if (!destProp.CanWrite) continue;
+                        
+                        var sourceProp = sourceProps.FirstOrDefault(p => 
+                            p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && 
+                            p.CanRead);
 
-                        if (targetType.IsAssignableFrom(srcType))
+                        if (sourceProp != null)
                         {
-                            bindings.Add(Expression.Bind(destProp, propExp));
-                        }
-                        else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-                        {
-                            // Recursive MapTo
-                            var mapMethod = typeof(Mapper).GetMethods()
-                                .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
-                                .MakeGenericMethod(targetType);
-                            
-                            var recursiveCall = Expression.Call(null, mapMethod, propExp);
-                            bindings.Add(Expression.Bind(destProp, recursiveCall));
+                            var propExp = Expression.Property(typedSource, sourceProp);
+                            var targetType = destProp.PropertyType;
+                            var srcType = sourceProp.PropertyType;
+
+                            if (targetType.IsAssignableFrom(srcType))
+                            {
+                                bindings.Add(Expression.Bind(destProp, propExp));
+                            }
+                            else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+                            {
+                                // Recursive MapTo
+                                var mapMethod = typeof(Mapper).GetMethods()
+                                    .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
+                                    .MakeGenericMethod(targetType);
+                                
+                                var recursiveCall = Expression.Call(null, mapMethod, propExp);
+                                bindings.Add(Expression.Bind(destProp, recursiveCall));
+                            }
+                            // --- Type Coercion ---
+                            else if (targetType == typeof(string))
+                            {
+                                // Any -> String
+                                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString"));
+                                bindings.Add(Expression.Bind(destProp, toStringCall));
+                            }
+                            else if (srcType.IsEnum && (targetType == typeof(int) || targetType == typeof(long)))
+                            {
+                                // Enum -> Int/Long
+                                bindings.Add(Expression.Bind(destProp, Expression.Convert(propExp, targetType)));
+                            }
                         }
                     }
+                    var init = Expression.MemberInit(Expression.New(destType), bindings);
+                    return Expression.Lambda<Func<object, T>>(init, sourceParam).Compile();
+                }
+                
+                // --- 2. Constructor / Record Path ---
+                // Find constructor with most parameters
+                var ctor = destType.GetConstructors()
+                    .OrderByDescending(c => c.GetParameters().Length)
+                    .FirstOrDefault();
+
+                if (ctor != null)
+                {
+                    var args = new List<Expression>();
+                    foreach (var param in ctor.GetParameters())
+                    {
+                        var sourceProp = sourceProps.FirstOrDefault(p => 
+                            p.Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase) && 
+                            p.CanRead);
+
+                        if (sourceProp != null)
+                        {
+                            var propExp = Expression.Property(typedSource, sourceProp);
+                            if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
+                            {
+                                args.Add(propExp);
+                            }
+                            else if (param.ParameterType == typeof(string))
+                            {
+                                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString"));
+                                args.Add(toStringCall);
+                            }
+                            else
+                            {
+                                // If incompatible and no coercion logic fits (e.g. enum->int for ctor), pass default used?
+                                // Let's support Enum->Int for records too
+                                 if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
+                                {
+                                    args.Add(Expression.Convert(propExp, param.ParameterType));
+                                }
+                                else
+                                {
+                                     args.Add(Expression.Default(param.ParameterType));
+                                }
+                            }
+                        }
+                        else
+                        {
+                            args.Add(Expression.Default(param.ParameterType));
+                        }
+                    }
+                    var newExp = Expression.New(ctor, args);
+                    return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
                 }
 
-                var init = Expression.MemberInit(Expression.New(destType), bindings);
-                return Expression.Lambda<Func<object, T>>(init, sourceParam).Compile();
+                return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();
             });
 
             return mapFunction(source);

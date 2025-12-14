@@ -85,7 +85,7 @@ namespace Mapsicle.Tests
             Assert.NotNull(dest);
             Assert.NotNull(dest.Child);
             Assert.Equal("Baby", dest.Child.Name);
-            Assert.Equal("Baby", dest.Child.Name);
+
             // Ensure it's a new instance, not a reference copy (since types differ, ref copy is impossible anyway, but good to check generally)
         }
 
@@ -102,6 +102,38 @@ namespace Mapsicle.Tests
             Assert.Equal(2, target.Id);
             Assert.Equal("Updated", target.Name);
             Assert.Equal("keep@me.com", target.Email); // Should not be touched as it doesn't exist on source (or is just skipped if null? logic dictates ignore missing source props)
+        }
+
+
+        [Fact]
+        public void Coercion_IntToString_ShouldMap()
+        {
+            var source = new { Id = 123 };
+            var dest = source.MapTo<StringIdDto>();
+            
+            Assert.NotNull(dest);
+            Assert.Equal("123", dest.Id);
+        }
+
+        [Fact]
+        public void Coercion_EnumToInt_ShouldMap()
+        {
+            var source = new { Status = UserStatus.Active };
+            var dest = source.MapTo<IntStatusDto>();
+            
+            Assert.NotNull(dest);
+            Assert.Equal(1, dest.Status);
+        }
+
+        [Fact]
+        public void Record_ShouldMapViaConstructor()
+        {
+            var source = new User { Id = 99, Name = "RecordReader" };
+            var dest = source.MapTo<UserRecord>();
+
+            Assert.NotNull(dest);
+            Assert.Equal(99, dest.Id);
+            Assert.Equal("RecordReader", dest.Name);
         }
 
         [Fact]
@@ -200,5 +232,19 @@ namespace Mapsicle.Tests
         {
             public DestChild Child { get; set; }
         }
+        
+        public class StringIdDto
+        {
+            public string Id { get; set; } = string.Empty;
+        }
+
+        public enum UserStatus { Inactive = 0, Active = 1 }
+
+        public class IntStatusDto
+        {
+            public int Status { get; set; }
+        }
+
+        public record UserRecord(int Id, string Name);
     }
 }
