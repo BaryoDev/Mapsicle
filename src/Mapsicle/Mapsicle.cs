@@ -12,6 +12,16 @@ namespace Mapsicle
         private static readonly ConcurrentDictionary<(Type, Type), Delegate> _mapToCache = new();
         private static readonly ConcurrentDictionary<(Type, Type), Action<object, object>> _mapCache = new();
 
+        /// <summary>
+        /// Maps the source object to a new instance of the destination type T.
+        /// </summary>
+        /// <typeparam name="T">The target type.</typeparam>
+        /// <param name="source">The source object.</param>
+        /// <returns>A new instance of T mapped from source, or default(T) if source is null.</returns>
+        /// <remarks>
+        /// Supports strict type mapping, type coercion (e.g. string conversions), nested objects, and collections.
+        /// Does NOT support circular references (will cause StackOverflow).
+        /// </remarks>
         public static T? MapTo<T>(this object? source)
         {
             if (source is null) return default;
@@ -22,7 +32,36 @@ namespace Mapsicle
                 var sourceType = k.Item1;
                 var destType = k.Item2;
                 var sourceParam = Expression.Parameter(typeof(object), "source");
-                var typedSource = Expression.Convert(sourceParam, sourceType);
+                // Check if source type is accessible (public)
+                bool isSourceVisible = sourceType.IsVisible;
+                var typedSource = isSourceVisible ? Expression.Convert(sourceParam, sourceType) : null;
+
+                // --- 0. Direct Primitive/Value Mapping ---
+                // Handle cases like int -> int?, int -> string (when source is just an int, not an object with int property)
+                // This is crucial for List<int>.MapTo<string>()
+                if (sourceType.IsValueType || sourceType == typeof(string))
+                {
+                     if (destType.IsAssignableFrom(sourceType))
+                    {
+                        var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
+                        return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
+                    }
+                    if (destType == typeof(string))
+                    {
+                        // Any -> String
+                        var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
+                        var toStringCall = Expression.Call(castSrc, typeof(object).GetMethod("ToString"));
+                        return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
+                    }
+                    var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
+                    var underlyingSource = Nullable.GetUnderlyingType(sourceType) ?? sourceType;
+
+                    if (underlyingDest.IsAssignableFrom(underlyingSource))
+                    {
+                        var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
+                        return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
+                    }
+                }
 
                 var bindings = new List<MemberBinding>();
                 var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
@@ -41,13 +80,26 @@ namespace Mapsicle
 
                         if (sourceProp != null)
                         {
-                            var propExp = Expression.Property(typedSource, sourceProp);
+                            Expression propExp;
+                            if (isSourceVisible && sourceProp.GetGetMethod()?.IsPublic == true)
+                            {
+                                propExp = Expression.Property(typedSource!, sourceProp);
+                            }
+                            else
+                            {
+                                // Fallback for internal types (Anonymous types): Use Reflection in the tree
+                                var getValue = typeof(PropertyInfo).GetMethod("GetValue", new[] { typeof(object), typeof(object[]) });
+                                var call = Expression.Call(Expression.Constant(sourceProp), getValue, sourceParam, Expression.Constant(null, typeof(object[])));
+                                propExp = Expression.Convert(call, sourceProp.PropertyType);
+                            }
+
                             var targetType = destProp.PropertyType;
                             var srcType = sourceProp.PropertyType;
 
+
                             if (targetType.IsAssignableFrom(srcType))
                             {
-                                bindings.Add(Expression.Bind(destProp, propExp));
+                                bindings.Add(Expression.Bind(destProp, Expression.Convert(propExp, targetType)));
                             }
                             else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
                             {
@@ -70,6 +122,21 @@ namespace Mapsicle
                             {
                                 // Enum -> Int/Long
                                 bindings.Add(Expression.Bind(destProp, Expression.Convert(propExp, targetType)));
+                            }
+                            // --- Nullable Handling ---
+                            else 
+                            {
+                                var underlyingTarget = Nullable.GetUnderlyingType(targetType);
+                                var underlyingSource = Nullable.GetUnderlyingType(srcType);
+                                
+                                // Case: T? -> T (Unwrapping)
+                                if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
+                                {
+                                    // If source is null, it defaults to default(T) because of MemberInit?
+                                    // No, we need explicit Coalesce
+                                    var coalesce = Expression.Coalesce(propExp, Expression.Default(targetType));
+                                    bindings.Add(Expression.Bind(destProp, coalesce));
+                                }
                             }
                         }
                     }
@@ -97,7 +164,7 @@ namespace Mapsicle
                             var propExp = Expression.Property(typedSource, sourceProp);
                             if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
                             {
-                                args.Add(propExp);
+                                args.Add(Expression.Convert(propExp, param.ParameterType));
                             }
                             else if (param.ParameterType == typeof(string))
                             {
@@ -123,8 +190,16 @@ namespace Mapsicle
                             args.Add(Expression.Default(param.ParameterType));
                         }
                     }
-                    var newExp = Expression.New(ctor, args);
-                    return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
+                    try
+                    {
+                        var newExp = Expression.New(ctor, args);
+                        return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.IO.File.WriteAllText("error_log.txt", $"Error compiling map for {sourceType.Name} -> {destType.Name}: {ex}");
+                        throw;
+                    }
                 }
 
                 return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();
@@ -133,6 +208,16 @@ namespace Mapsicle
             return mapFunction(source);
         }
 
+        /// <summary>
+        /// Maps properties from the source object to an existing destination object.
+        /// </summary>
+        /// <typeparam name="TDestination">The type of the destination object.</typeparam>
+        /// <param name="source">The source object.</param>
+        /// <param name="destination">The destination instance to populate.</param>
+        /// <returns>The updated destination object.</returns>
+        /// <remarks>
+        /// Properties in destination with no matching source property are left unchanged.
+        /// </remarks>
         public static TDestination Map<TDestination>(this object? source, TDestination destination)
         {
             if (source is null || destination is null) return destination;
@@ -170,7 +255,7 @@ namespace Mapsicle
 
                         if (targetType.IsAssignableFrom(srcType))
                         {
-                            assignments.Add(Expression.Assign(destPropExp, propExp));
+                            assignments.Add(Expression.Assign(destPropExp, Expression.Convert(propExp, targetType)));
                         }
                         else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
                         {
@@ -196,10 +281,18 @@ namespace Mapsicle
             return destination;
         }
 
-        public static IEnumerable<T> MapTo<T>(this IEnumerable<object>? source)
+
+        /// <summary>
+        /// Maps a collection of objects to a collection of type T.
+        /// </summary>
+        /// <typeparam name="T">The target item type.</typeparam>
+        /// <param name="source">The source collection.</param>
+        /// <returns>An IEnumerable of T.</returns>
+        public static IEnumerable<T> MapTo<T>(this System.Collections.IEnumerable? source)
         {
             if (source is null) return Enumerable.Empty<T>();
-            return source.Select(x => x is null ? default : x.MapTo<T>())!;
+            // Use Cast<object> to enable LINQ on non-generic IEnumerable
+            return source.Cast<object>().Select(x => x is null ? default : x.MapTo<T>())!;
         }
     }
 }
