@@ -62,7 +62,7 @@ namespace Mapsicle.Tests
             Assert.Equal("Alice", dest.Name);
             // Dest doesn't have "Extra", should just be ignored
         }
-        
+
         [Fact]
         public void TypeMismatch_ShouldSkipIncompatibleTypes()
         {
@@ -110,7 +110,7 @@ namespace Mapsicle.Tests
         {
             var source = new { Id = 123 };
             var dest = source.MapTo<StringIdDto>();
-            
+
             Assert.NotNull(dest);
             Assert.Equal("123", dest.Id);
         }
@@ -120,7 +120,7 @@ namespace Mapsicle.Tests
         {
             var source = new { Status = UserStatus.Active };
             var dest = source.MapTo<IntStatusDto>();
-            
+
             Assert.NotNull(dest);
             Assert.Equal(1, dest.Status);
         }
@@ -142,17 +142,17 @@ namespace Mapsicle.Tests
             // Renamed from NestedObject... to be clearer
             var addr = new Address { City = "New York" };
             var source = new UserWithAddress { Address = addr };
-            var dest = source.MapTo<UserWithAddressDto>(); 
+            var dest = source.MapTo<UserWithAddressDto>();
 
             Assert.NotNull(dest);
             Assert.Same(source.Address, dest.Address); // Shallow copy verified
-            Assert.Equal("New York", dest.Address.City);
+            Assert.Equal("New York", dest.Address!.City);
         }
 
         [Fact]
         public void ListMapping_WithNulls_ShouldHandleGracefully()
         {
-            var source = new List<User>
+            var source = new List<User?>
             {
                 new User { Name = "Alice" },
                 null,
@@ -160,7 +160,7 @@ namespace Mapsicle.Tests
             };
 
             var dest = source.MapTo<UserDto>().ToList();
-            
+
             Assert.Equal(3, dest.Count);
             Assert.Equal("Alice", dest[0].Name);
             Assert.Null(dest[1]); // Assuming Select(x => x.MapTo) returns null for null input
@@ -188,29 +188,29 @@ namespace Mapsicle.Tests
             public string Email { get; set; } = string.Empty;
         }
 
-        public class UserAge 
+        public class UserAge
         {
             public int Age { get; set; }
         }
 
-        public class NullableUserDto 
+        public class NullableUserDto
         {
             public int? Age { get; set; }
         }
 
         public class Address
         {
-            public string City { get; set; }
+            public string City { get; set; } = string.Empty;
         }
 
         public class UserWithAddress
         {
-            public Address Address { get; set; }
+            public Address? Address { get; set; }
         }
 
         public class UserWithAddressDto
         {
-            public Address Address { get; set; }
+            public Address? Address { get; set; }
         }
 
         public class SourceChild
@@ -220,7 +220,7 @@ namespace Mapsicle.Tests
 
         public class SourceParent
         {
-            public SourceChild Child { get; set; }
+            public SourceChild? Child { get; set; }
         }
 
         public class DestChild
@@ -230,9 +230,9 @@ namespace Mapsicle.Tests
 
         public class DestParent
         {
-            public DestChild Child { get; set; }
+            public DestChild? Child { get; set; }
         }
-        
+
         public class StringIdDto
         {
             public string Id { get; set; } = string.Empty;
