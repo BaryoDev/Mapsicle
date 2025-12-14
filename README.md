@@ -46,7 +46,8 @@ var users = new List<User>
 };
 
 // Map to valid List<UserDto>
-List<UserDto> dtos = users.MapTo<UserDto>().ToList();
+// Map to valid List<UserDto> (Returns List<T> directly)
+List<UserDto> dtos = users.MapTo<UserDto>();
 ```
 
 ### 3. Update Existing Instance
@@ -72,6 +73,7 @@ Mapsicle is designed to be **simple** and **fast**. It follows **Strict Type Mat
     *   `int` -> `int`: ✅ Mapped
     *   `User` -> `User` (Same Class): ✅ Mapped (Reference Copy)
     *   `SubClass` -> `BaseClass`: ✅ Mapped
+    *   `MapTo<T>(IEnumerable)` -> `List<T>`: ✅ **Mapped** (Collections are automatically mapped to Lists)
     *   `ClassA` -> `ClassB` (Different Classes): ✅ **Mapped** (Deep Copy via Recursive Mapping)
     *   `int` -> `string`: ✅ **Mapped** (Coerced via `ToString()`)
     *   `Enum` -> `int`: ✅ **Mapped** (Coerced via Casting)

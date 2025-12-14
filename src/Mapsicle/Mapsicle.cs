@@ -26,7 +26,7 @@ namespace Mapsicle
         {
             if (source is null) return default;
             var key = (source.GetType(), typeof(T));
-            
+
             var mapFunction = (Func<object, T>)_mapToCache.GetOrAdd(key, k =>
             {
                 var sourceType = k.Item1;
@@ -41,7 +41,7 @@ namespace Mapsicle
                 // This is crucial for List<int>.MapTo<string>()
                 if (sourceType.IsValueType || sourceType == typeof(string))
                 {
-                     if (destType.IsAssignableFrom(sourceType))
+                    if (destType.IsAssignableFrom(sourceType))
                     {
                         var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
                         return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
@@ -63,8 +63,51 @@ namespace Mapsicle
                     }
                 }
 
+                // --- 0.5 Collection Mapping Support (Fix for nested lists) ---
+                // If source implements IEnumerable and dest implements IEnumerable (but not string)
+                if (typeof(System.Collections.IEnumerable).IsAssignableFrom(sourceType) &&
+                    typeof(System.Collections.IEnumerable).IsAssignableFrom(destType) &&
+                    sourceType != typeof(string) && destType != typeof(string))
+                {
+                    // We need to determine the generic argument for the destination IEnumerable<T>
+                    // logic: find MapTo<T>(IEnumerable)
+
+                    var destEnumerableInt = destType.GetInterfaces()
+                        .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+
+                    // If dest is exactly IEnumerable<T> or List<T> etc.
+                    // If destType is generic, likely List<T> or IEnumerable<T>
+                    // We'll target the method: public static List<T> MapTo<T>(this IEnumerable source)
+
+                    Type targetItemType = typeof(object);
+                    if (destEnumerableInt != null)
+                    {
+                        targetItemType = destEnumerableInt.GetGenericArguments()[0];
+                    }
+                    else if (destType.IsGenericType)
+                    {
+                        // Fallback for List<T> direct
+                        targetItemType = destType.GetGenericArguments()[0];
+                    }
+
+                    var collectionMapMethod = typeof(Mapper).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(System.Collections.IEnumerable))
+                        .MakeGenericMethod(targetItemType);
+
+                    var call = Expression.Call(collectionMapMethod, Expression.Convert(sourceParam, typeof(System.Collections.IEnumerable)));
+
+                    // If the return type of MapTo (List<T>) is assignable to destType (e.g. dest is List<T> or IEnumerable<T>), return it.
+                    if (destType.IsAssignableFrom(collectionMapMethod.ReturnType))
+                    {
+                        return Expression.Lambda<Func<object, T>>(Expression.Convert(call, destType), sourceParam).Compile();
+                    }
+                    // If dest is an array, we might need ToArray... for now let's assume List<T> compatibility or fail gracefully to property mapping
+                }
+
                 var bindings = new List<MemberBinding>();
-                var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead)
+                    .ToArray();
                 var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
                 // --- 1. Parameterless Constructor Path ---
@@ -73,9 +116,9 @@ namespace Mapsicle
                     foreach (var destProp in destProps)
                     {
                         if (!destProp.CanWrite) continue;
-                        
-                        var sourceProp = sourceProps.FirstOrDefault(p => 
-                            p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && 
+
+                        var sourceProp = sourceProps.FirstOrDefault(p =>
+                            p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) &&
                             p.CanRead);
 
                         if (sourceProp != null)
@@ -107,7 +150,7 @@ namespace Mapsicle
                                 var mapMethod = typeof(Mapper).GetMethods()
                                     .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
                                     .MakeGenericMethod(targetType);
-                                
+
                                 var recursiveCall = Expression.Call(null, mapMethod, propExp);
                                 bindings.Add(Expression.Bind(destProp, recursiveCall));
                             }
@@ -124,11 +167,11 @@ namespace Mapsicle
                                 bindings.Add(Expression.Bind(destProp, Expression.Convert(propExp, targetType)));
                             }
                             // --- Nullable Handling ---
-                            else 
+                            else
                             {
                                 var underlyingTarget = Nullable.GetUnderlyingType(targetType);
                                 var underlyingSource = Nullable.GetUnderlyingType(srcType);
-                                
+
                                 // Case: T? -> T (Unwrapping)
                                 if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
                                 {
@@ -143,7 +186,7 @@ namespace Mapsicle
                     var init = Expression.MemberInit(Expression.New(destType), bindings);
                     return Expression.Lambda<Func<object, T>>(init, sourceParam).Compile();
                 }
-                
+
                 // --- 2. Constructor / Record Path ---
                 // Find constructor with most parameters
                 var ctor = destType.GetConstructors()
@@ -155,8 +198,8 @@ namespace Mapsicle
                     var args = new List<Expression>();
                     foreach (var param in ctor.GetParameters())
                     {
-                        var sourceProp = sourceProps.FirstOrDefault(p => 
-                            p.Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase) && 
+                        var sourceProp = sourceProps.FirstOrDefault(p =>
+                            p.Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase) &&
                             p.CanRead);
 
                         if (sourceProp != null)
@@ -175,13 +218,13 @@ namespace Mapsicle
                             {
                                 // If incompatible and no coercion logic fits (e.g. enum->int for ctor), pass default used?
                                 // Let's support Enum->Int for records too
-                                 if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
+                                if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
                                 {
                                     args.Add(Expression.Convert(propExp, param.ParameterType));
                                 }
                                 else
                                 {
-                                     args.Add(Expression.Default(param.ParameterType));
+                                    args.Add(Expression.Default(param.ParameterType));
                                 }
                             }
                         }
@@ -190,16 +233,9 @@ namespace Mapsicle
                             args.Add(Expression.Default(param.ParameterType));
                         }
                     }
-                    try
-                    {
-                        var newExp = Expression.New(ctor, args);
-                        return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
-                    }
-                    catch (Exception ex)
-                    {
-                        System.IO.File.WriteAllText("error_log.txt", $"Error compiling map for {sourceType.Name} -> {destType.Name}: {ex}");
-                        throw;
-                    }
+                    // Exception bubbling is preferred over swallowing/logging to file
+                    var newExp = Expression.New(ctor, args);
+                    return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
                 }
 
                 return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();
@@ -221,16 +257,16 @@ namespace Mapsicle
         public static TDestination Map<TDestination>(this object? source, TDestination destination)
         {
             if (source is null || destination is null) return destination;
-            
+
             var key = (source.GetType(), typeof(TDestination));
-            
+
             var mapAction = _mapCache.GetOrAdd(key, k =>
             {
                 var sourceType = k.Item1;
                 var destType = k.Item2;
                 var sourceParam = Expression.Parameter(typeof(object), "source");
                 var destParam = Expression.Parameter(typeof(object), "destination");
-                
+
                 var typedSource = Expression.Convert(sourceParam, sourceType);
                 var typedDest = Expression.Convert(destParam, destType);
 
@@ -241,9 +277,9 @@ namespace Mapsicle
                 foreach (var destProp in destProps)
                 {
                     if (!destProp.CanWrite) continue;
-                    
-                    var sourceProp = sourceProps.FirstOrDefault(p => 
-                        p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && 
+
+                    var sourceProp = sourceProps.FirstOrDefault(p =>
+                        p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) &&
                         p.CanRead);
 
                     if (sourceProp != null)
@@ -266,7 +302,7 @@ namespace Mapsicle
                             var mapMethod = typeof(Mapper).GetMethods()
                                 .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
                                 .MakeGenericMethod(targetType);
-                            
+
                             var recursiveCall = Expression.Call(null, mapMethod, propExp);
                             assignments.Add(Expression.Assign(destPropExp, recursiveCall));
                         }
@@ -287,12 +323,24 @@ namespace Mapsicle
         /// </summary>
         /// <typeparam name="T">The target item type.</typeparam>
         /// <param name="source">The source collection.</param>
-        /// <returns>An IEnumerable of T.</returns>
-        public static IEnumerable<T> MapTo<T>(this System.Collections.IEnumerable? source)
+        /// <returns>A List of T.</returns>
+        public static List<T> MapTo<T>(this System.Collections.IEnumerable? source)
         {
-            if (source is null) return Enumerable.Empty<T>();
-            // Use Cast<object> to enable LINQ on non-generic IEnumerable
-            return source.Cast<object>().Select(x => x is null ? default : x.MapTo<T>())!;
+            if (source is null) return new List<T>();
+
+            var result = new List<T>();
+            foreach (var item in source)
+            {
+                if (item is null)
+                {
+                    result.Add(default!);
+                }
+                else
+                {
+                    result.Add(item.MapTo<T>()!);
+                }
+            }
+            return result;
         }
     }
 }
