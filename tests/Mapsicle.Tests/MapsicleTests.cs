@@ -77,6 +77,18 @@ namespace Mapsicle.Tests
 
 
         [Fact]
+        public void NestedMapping_DifferentTypes_ShouldDeepMap()
+        {
+            var source = new SourceParent { Child = new SourceChild { Name = "Baby" } };
+            var dest = source.MapTo<DestParent>();
+
+            Assert.NotNull(dest);
+            Assert.NotNull(dest.Child);
+            Assert.Equal("Baby", dest.Child.Name);
+            // Ensure it's a new instance, not a reference copy (since types differ, ref copy is impossible anyway, but good to check generally)
+        }
+
+        [Fact]
         public void ReferenceCopy_ShouldCopyReference_WhenTypesMatch()
         {
             // Renamed from NestedObject... to be clearer
@@ -151,6 +163,26 @@ namespace Mapsicle.Tests
         public class UserWithAddressDto
         {
             public Address Address { get; set; }
+        }
+
+        public class SourceChild
+        {
+            public string Name { get; set; } = string.Empty;
+        }
+
+        public class SourceParent
+        {
+            public SourceChild Child { get; set; }
+        }
+
+        public class DestChild
+        {
+            public string Name { get; set; } = string.Empty;
+        }
+
+        public class DestParent
+        {
+            public DestChild Child { get; set; }
         }
     }
 }
