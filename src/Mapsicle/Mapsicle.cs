@@ -38,34 +38,308 @@ namespace Mapsicle
         {
             MapToEntries = mapToEntries;
             MapEntries = mapEntries;
+            Hits = 0;
+            Misses = 0;
         }
+
+        public MapperCacheInfo(int mapToEntries, int mapEntries, long hits, long misses)
+        {
+            MapToEntries = mapToEntries;
+            MapEntries = mapEntries;
+            Hits = hits;
+            Misses = misses;
+        }
+
         public int MapToEntries { get; }
         public int MapEntries { get; }
         public int Total => MapToEntries + MapEntries;
+
+        /// <summary>
+        /// Number of cache hits (only tracked when UseLruCache is enabled).
+        /// </summary>
+        public long Hits { get; }
+
+        /// <summary>
+        /// Number of cache misses (only tracked when UseLruCache is enabled).
+        /// </summary>
+        public long Misses { get; }
+
+        /// <summary>
+        /// Cache hit ratio (0.0 to 1.0). Returns 0 if no cache accesses.
+        /// </summary>
+        public double HitRatio => Hits + Misses > 0 ? (double)Hits / (Hits + Misses) : 0.0;
     }
 
     #endregion
 
     public static class Mapper
     {
+        // Unbounded caches (default for backward compatibility)
         private static readonly ConcurrentDictionary<(Type, Type), Delegate> _mapToCache = new();
         private static readonly ConcurrentDictionary<(Type, Type), Action<object, object>> _mapCache = new();
+
+        // LRU caches (optional, for memory-bounded operation)
+        private static LruCache<(Type, Type), Delegate>? _lruMapToCache;
+        private static LruCache<(Type, Type), Action<object, object>>? _lruMapCache;
+
+        // PropertyInfo cache for performance
+        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertyCache = new();
+
+        private static readonly System.Threading.AsyncLocal<int> _mappingDepth = new();
+
+        // Cache statistics
+        private static long _cacheHits;
+        private static long _cacheMisses;
+        private static readonly object _configLock = new();
+
+        #region Configuration
+
+        private static bool _useLruCache;
+        private static int _maxCacheSize = 1000;
+
+        /// <summary>
+        /// When true, uses LRU cache with bounded memory. When false (default), uses unbounded cache.
+        /// Changing this setting clears all caches.
+        /// </summary>
+        public static bool UseLruCache
+        {
+            get => _useLruCache;
+            set
+            {
+                lock (_configLock)
+                {
+                    if (_useLruCache != value)
+                    {
+                        _useLruCache = value;
+                        ReinitializeCaches();
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Maximum cache size when UseLruCache is enabled. Default: 1000.
+        /// Changing this setting clears all caches if LRU is enabled.
+        /// </summary>
+        public static int MaxCacheSize
+        {
+            get => _maxCacheSize;
+            set
+            {
+                lock (_configLock)
+                {
+                    if (_maxCacheSize != value)
+                    {
+                        _maxCacheSize = value > 0 ? value : 1000;
+                        if (_useLruCache)
+                        {
+                            ReinitializeCaches();
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Maximum mapping depth for cycle detection. Default: 32.
+        /// </summary>
+        public static int MaxDepth { get; set; } = 32;
+
+        /// <summary>
+        /// Logger for diagnostic output. Null disables logging.
+        /// </summary>
+        public static Action<string>? Logger { get; set; }
+
+        private static void ReinitializeCaches()
+        {
+            _mapToCache.Clear();
+            _mapCache.Clear();
+            _propertyCache.Clear();
+            System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
+            System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
+
+            if (_useLruCache)
+            {
+                _lruMapToCache = new LruCache<(Type, Type), Delegate>(_maxCacheSize);
+                _lruMapCache = new LruCache<(Type, Type), Action<object, object>>(_maxCacheSize);
+            }
+            else
+            {
+                _lruMapToCache = null;
+                _lruMapCache = null;
+            }
+        }
+
+        #endregion
 
         #region Cache Management
 
         /// <summary>
-        /// Clears all cached mapping delegates. Useful for testing or when types change dynamically.
+        /// Clears all cached mapping delegates.
         /// </summary>
         public static void ClearCache()
         {
-            _mapToCache.Clear();
-            _mapCache.Clear();
+            lock (_configLock)
+            {
+                _mapToCache.Clear();
+                _mapCache.Clear();
+                _lruMapToCache?.Clear();
+                _lruMapCache?.Clear();
+                _propertyCache.Clear();
+                System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
+                System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
+            }
         }
 
         /// <summary>
         /// Gets information about the current cache state.
         /// </summary>
-        public static MapperCacheInfo CacheInfo() => new(_mapToCache.Count, _mapCache.Count);
+        public static MapperCacheInfo CacheInfo()
+        {
+            if (_useLruCache && _lruMapToCache != null && _lruMapCache != null)
+            {
+                return new MapperCacheInfo(
+                    _lruMapToCache.Count,
+                    _lruMapCache.Count,
+                    System.Threading.Interlocked.Read(ref _cacheHits),
+                    System.Threading.Interlocked.Read(ref _cacheMisses));
+            }
+            return new MapperCacheInfo(_mapToCache.Count, _mapCache.Count);
+        }
+
+        /// <summary>
+        /// Gets cached PropertyInfo array for a type.
+        /// </summary>
+        internal static PropertyInfo[] GetCachedProperties(Type type)
+        {
+            return _propertyCache.GetOrAdd(type, t =>
+                t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.GetIndexParameters().Length == 0)
+                    .ToArray());
+        }
+
+        #endregion
+
+        #region Validation
+
+        /// <summary>
+        /// Validates that all destination properties can be mapped from source.
+        /// Throws if unmapped properties exist.
+        /// </summary>
+        public static void AssertMappingValid<TSource, TDest>()
+        {
+            var unmapped = GetUnmappedProperties<TSource, TDest>();
+            if (unmapped.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Unmapped properties on {typeof(TDest).Name} from {typeof(TSource).Name}: {string.Join(", ", unmapped)}");
+            }
+        }
+
+        /// <summary>
+        /// Gets list of destination properties that cannot be mapped from source.
+        /// </summary>
+        public static List<string> GetUnmappedProperties<TSource, TDest>()
+        {
+            var unmapped = new List<string>();
+            var sourceProps = new HashSet<string>(
+                typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+                    .Select(p => p.Name),
+                StringComparer.OrdinalIgnoreCase);
+            var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.CanWrite);
+
+            foreach (var destProp in destProps)
+            {
+                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+                
+                var mapFrom = destProp.GetCustomAttribute<MapFromAttribute>();
+                var sourceName = mapFrom?.SourcePropertyName ?? destProp.Name;
+                
+                if (sourceProps.Contains(sourceName)) continue;
+                
+                // Check flattening
+                bool hasFlattening = typeof(TSource).GetProperties()
+                    .Any(sp => destProp.Name.StartsWith(sp.Name, StringComparison.OrdinalIgnoreCase) &&
+                               destProp.Name.Length > sp.Name.Length);
+                if (hasFlattening) continue;
+
+                unmapped.Add(destProp.Name);
+            }
+            return unmapped;
+        }
+
+        #endregion
+
+        #region Depth Tracking (Cycle Detection)
+
+        private static bool IncrementDepth()
+        {
+            var depth = _mappingDepth.Value;
+            if (depth >= MaxDepth)
+            {
+                Logger?.Invoke($"[Mapsicle] Max depth {MaxDepth} reached - possible circular reference");
+                return false;
+            }
+            _mappingDepth.Value = depth + 1;
+            return true;
+        }
+
+        private static void DecrementDepth()
+        {
+            _mappingDepth.Value = Math.Max(0, _mappingDepth.Value - 1);
+        }
+
+        #endregion
+
+        #region Cache Helpers
+
+        private static Func<object, T>? GetCachedMapToDelegate<T>((Type, Type) key)
+        {
+            if (_useLruCache && _lruMapToCache != null)
+            {
+                if (_lruMapToCache.TryGetValue(key, out var cached))
+                {
+                    System.Threading.Interlocked.Increment(ref _cacheHits);
+                    return (Func<object, T>)cached;
+                }
+                System.Threading.Interlocked.Increment(ref _cacheMisses);
+                return null;
+            }
+            else
+            {
+                if (_mapToCache.TryGetValue(key, out var cached))
+                {
+                    return (Func<object, T>)cached;
+                }
+                return null;
+            }
+        }
+
+        private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
+        {
+            if (_useLruCache && _lruMapToCache != null)
+            {
+                return (Func<object, T>)_lruMapToCache.GetOrAdd(key, factory);
+            }
+            else
+            {
+                return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
+            }
+        }
+
+        private static Action<object, object> GetOrAddMapDelegate((Type, Type) key, Func<(Type, Type), Action<object, object>> factory)
+        {
+            if (_useLruCache && _lruMapCache != null)
+            {
+                return _lruMapCache.GetOrAdd(key, factory);
+            }
+            else
+            {
+                return _mapCache.GetOrAdd(key, factory);
+            }
+        }
 
         #endregion
 
@@ -76,17 +350,38 @@ namespace Mapsicle
         /// </summary>
         /// <typeparam name="T">The target type.</typeparam>
         /// <param name="source">The source object.</param>
-        /// <returns>A new instance of T mapped from source, or default(T) if source is null.</returns>
+        /// <returns>A new instance of T mapped from source, or default(T) if source is null or max depth reached.</returns>
         /// <remarks>
-        /// Supports strict type mapping, type coercion (e.g. string conversions), nested objects, collections, and flattening.
-        /// Does NOT support circular references (will cause StackOverflow).
+        /// Supports type coercion, nested objects, collections, and flattening.
+        /// Circular references are detected via depth tracking and return default.
         /// </remarks>
         public static T? MapTo<T>(this object? source)
         {
             if (source is null) return default;
-            var key = (source.GetType(), typeof(T));
 
-            var mapFunction = (Func<object, T>)_mapToCache.GetOrAdd(key, k =>
+            var key = (source.GetType(), typeof(T));
+            var destType = typeof(T);
+
+            // OPTIMIZATION: Fast path for primitives - no depth tracking needed
+            if (destType.IsValueType || destType == typeof(string))
+            {
+                var cachedMapper = GetCachedMapToDelegate<T>(key);
+                if (cachedMapper != null)
+                {
+                    return cachedMapper(source);
+                }
+                // Fall through to build the delegate
+            }
+
+            // Full path with cycle detection for complex objects
+            if (!IncrementDepth())
+            {
+                return default; // Max depth reached - likely circular reference
+            }
+
+            try
+            {
+                var mapFunction = GetOrAddMapToDelegate<T>(key, k =>
             {
                 var sourceType = k.Item1;
                 var destType = k.Item2;
@@ -243,6 +538,11 @@ namespace Mapsicle
             });
 
             return mapFunction(source);
+            }
+            finally
+            {
+                DecrementDepth();
+            }
         }
 
         #endregion
@@ -258,7 +558,7 @@ namespace Mapsicle
 
             var key = (source.GetType(), typeof(TDestination));
 
-            var mapAction = _mapCache.GetOrAdd(key, k =>
+            var mapAction = GetOrAddMapDelegate(key, k =>
             {
                 var sourceType = k.Item1;
                 var destType = k.Item2;
@@ -336,17 +636,48 @@ namespace Mapsicle
         {
             if (source is null) return new List<T>();
 
-            var result = new List<T>();
+            // OPTIMIZATION: Pre-allocate list with capacity hint
+            List<T> result;
+            if (source is System.Collections.ICollection collection)
+            {
+                result = new List<T>(collection.Count);
+            }
+            else
+            {
+                result = new List<T>();
+            }
+
+            // OPTIMIZATION: Cache the mapper delegate once and reuse for all items
+            // This avoids repeated cache lookups during collection iteration
+            Type? itemType = null;
+            Func<object, T>? cachedMapper = null;
+
             foreach (var item in source)
             {
                 if (item is null)
                 {
                     result.Add(default!);
+                    continue;
                 }
-                else
+
+                // Lazily get mapper for first non-null item
+                if (cachedMapper is null)
                 {
-                    result.Add(item.MapTo<T>()!);
+                    itemType = item.GetType();
+                    var key = (itemType, typeof(T));
+                    // Try to get existing cached delegate
+                    cachedMapper = GetCachedMapToDelegate<T>(key);
+                    if (cachedMapper is null)
+                    {
+                        // Fall back to single-item MapTo which will cache the delegate
+                        result.Add(item.MapTo<T>()!);
+                        // Now get the cached delegate for subsequent items
+                        cachedMapper = GetCachedMapToDelegate<T>(key);
+                        continue;
+                    }
                 }
+
+                result.Add(cachedMapper(item)!);
             }
             return result;
         }

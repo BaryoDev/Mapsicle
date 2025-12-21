@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <Title>Mapsicle.EntityFramework</Title>
+    <Authors>Arneli Robles</Authors>
+    <Description>Entity Framework Core integration for Mapsicle. Adds ProjectTo&lt;T&gt;() for IQueryable projections that translate to SQL.</Description>
+    <PackageTags>mapper;efcore;entityframework;projection;queryable;sql</PackageTags>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mapsicle\Mapsicle.csproj" />
+    <ProjectReference Include="..\Mapsicle.Fluent\Mapsicle.Fluent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

@@ -27,8 +27,14 @@ jobs:
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
 
-      - name: Pack
+      - name: Pack Core
         run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --no-build --output . /p:Version=1.0.${{ github.run_number }}
 
+      - name: Pack Fluent
+        run: dotnet pack src/Mapsicle.Fluent/Mapsicle.Fluent.csproj --configuration Release --no-build --output . /p:Version=1.0.${{ github.run_number }}
+
+      - name: Pack EntityFramework
+        run: dotnet pack src/Mapsicle.EntityFramework/Mapsicle.EntityFramework.csproj --configuration Release --no-build --output . /p:Version=1.0.${{ github.run_number }}
+
       - name: Push to NuGet
-        run: dotnet nuget push *.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push *.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
