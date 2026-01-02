@@ -39,6 +39,14 @@ public class Program
         {
             BenchmarkRunner.Run<RealWorldScenarioBenchmarks>();
         }
+        else if (args.Length > 0 && args[0] == "--cache")
+        {
+            BenchmarkRunner.Run<CacheBenchmarks>();
+        }
+        else if (args.Length > 0 && args[0] == "--concurrency")
+        {
+            BenchmarkRunner.Run<ConcurrencyBenchmarks>();
+        }
         else
         {
             // Full BenchmarkDotNet run
@@ -51,6 +59,7 @@ public class Program
             BenchmarkRunner.Run<EdgeCaseBenchmarks>(config);
             BenchmarkRunner.Run<RealWorldScenarioBenchmarks>(config);
             BenchmarkRunner.Run<ConcurrencyBenchmarks>(config);
+            BenchmarkRunner.Run<CacheBenchmarks>(config);
         }
     }
 
@@ -739,6 +748,139 @@ public class ConcurrencyBenchmarks
             if (dto != null) Interlocked.Increment(ref count);
         });
         return count;
+    }
+}
+
+#endregion
+
+#region Cache Benchmarks
+
+/// <summary>
+/// Benchmarks for cache performance: cold start vs warm, LRU vs Unbounded, eviction overhead
+/// </summary>
+[MemoryDiagnoser]
+[RankColumn]
+public class CacheBenchmarks
+{
+    private UserEntity _user = null!;
+    private List<UserEntity> _users = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _user = new UserEntity { Id = 1, FirstName = "Test", LastName = "User", Email = "test@test.com" };
+        _users = Enumerable.Range(1, 1000)
+            .Select(i => new UserEntity { Id = i, FirstName = $"User{i}", LastName = $"Last{i}", Email = $"user{i}@test.com" })
+            .ToList();
+    }
+
+    [Benchmark(Baseline = true, Description = "Warm cache - single type")]
+    public UserDto? WarmCache()
+    {
+        // First call warms cache
+        _ = _user.MapTo<UserDto>();
+        // Second call uses cached mapper
+        return _user.MapTo<UserDto>();
+    }
+
+    [Benchmark(Description = "Cold start - cache cleared")]
+    public UserDto? ColdStart()
+    {
+        Mapsicle.Mapper.ClearCache();
+        return _user.MapTo<UserDto>();
+    }
+
+    [Benchmark(Description = "Unbounded cache - 1000 mappings")]
+    public List<UserDto> UnboundedCache_1000Mappings()
+    {
+        var originalUseLru = Mapsicle.Mapper.UseLruCache;
+        try
+        {
+            Mapsicle.Mapper.UseLruCache = false;
+            Mapsicle.Mapper.ClearCache();
+            return _users.MapTo<UserDto>();
+        }
+        finally
+        {
+            Mapsicle.Mapper.UseLruCache = originalUseLru;
+        }
+    }
+
+    [Benchmark(Description = "LRU cache - 1000 mappings")]
+    public List<UserDto> LruCache_1000Mappings()
+    {
+        var originalUseLru = Mapsicle.Mapper.UseLruCache;
+        var originalMaxCache = Mapsicle.Mapper.MaxCacheSize;
+        try
+        {
+            Mapsicle.Mapper.UseLruCache = true;
+            Mapsicle.Mapper.MaxCacheSize = 100;
+            Mapsicle.Mapper.ClearCache();
+            return _users.MapTo<UserDto>();
+        }
+        finally
+        {
+            Mapsicle.Mapper.UseLruCache = originalUseLru;
+            Mapsicle.Mapper.MaxCacheSize = originalMaxCache;
+        }
+    }
+
+    [Benchmark(Description = "Cache hit ratio - repeated mappings")]
+    public int CacheHitRatio()
+    {
+        Mapsicle.Mapper.ClearCache();
+        
+        // Warm up cache
+        _ = _user.MapTo<UserDto>();
+        
+        // Perform many mappings (should hit cache)
+        int count = 0;
+        for (int i = 0; i < 10000; i++)
+        {
+            var dto = _user.MapTo<UserDto>();
+            if (dto != null) count++;
+        }
+        return count;
+    }
+
+    [Benchmark(Description = "Cache eviction overhead - LRU")]
+    public List<UserDto> CacheEvictionOverhead()
+    {
+        var originalUseLru = Mapsicle.Mapper.UseLruCache;
+        var originalMaxCache = Mapsicle.Mapper.MaxCacheSize;
+        try
+        {
+            Mapsicle.Mapper.UseLruCache = true;
+            Mapsicle.Mapper.MaxCacheSize = 10; // Very small cache to force evictions
+            Mapsicle.Mapper.ClearCache();
+            
+            // Map many times to cause evictions
+            var results = new List<UserDto>();
+            for (int i = 0; i < 100; i++)
+            {
+                results.AddRange(_users.Take(20).MapTo<UserDto>());
+            }
+            return results;
+        }
+        finally
+        {
+            Mapsicle.Mapper.UseLruCache = originalUseLru;
+            Mapsicle.Mapper.MaxCacheSize = originalMaxCache;
+        }
+    }
+
+    [Benchmark(Description = "PropertyInfo cache effectiveness")]
+    public List<UserDto> PropertyInfoCacheEffectiveness()
+    {
+        Mapsicle.Mapper.ClearCache();
+        
+        // First mapping builds PropertyInfo cache
+        var first = _users.Take(10).MapTo<UserDto>();
+        
+        // Subsequent mappings benefit from cached PropertyInfo
+        var second = _users.Skip(10).Take(990).MapTo<UserDto>();
+        
+        return first.Concat(second).ToList();
     }
 }
 
