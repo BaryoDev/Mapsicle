@@ -400,7 +400,7 @@ namespace Mapsicle.EntityFramework.Tests
         /// Test async ProjectTo operations.
         /// </summary>
         [Fact]
-        public async void ProjectTo_Async_ShouldWork()
+        public async Task ProjectTo_Async_ShouldWork()
         {
             var products = await _context.Products
                 .ProjectTo<ProductEntity, ProductDto>()

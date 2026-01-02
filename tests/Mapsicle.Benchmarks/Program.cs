@@ -786,49 +786,49 @@ public class CacheBenchmarks
     [Benchmark(Description = "Cold start - cache cleared")]
     public UserDto? ColdStart()
     {
-        Mapsicle.Mapper.ClearCache();
+        Mapper.ClearCache();
         return _user.MapTo<UserDto>();
     }
 
     [Benchmark(Description = "Unbounded cache - 1000 mappings")]
     public List<UserDto> UnboundedCache_1000Mappings()
     {
-        var originalUseLru = Mapsicle.Mapper.UseLruCache;
+        var originalUseLru = Mapper.UseLruCache;
         try
         {
-            Mapsicle.Mapper.UseLruCache = false;
-            Mapsicle.Mapper.ClearCache();
+            Mapper.UseLruCache = false;
+            Mapper.ClearCache();
             return _users.MapTo<UserDto>();
         }
         finally
         {
-            Mapsicle.Mapper.UseLruCache = originalUseLru;
+            Mapper.UseLruCache = originalUseLru;
         }
     }
 
     [Benchmark(Description = "LRU cache - 1000 mappings")]
     public List<UserDto> LruCache_1000Mappings()
     {
-        var originalUseLru = Mapsicle.Mapper.UseLruCache;
-        var originalMaxCache = Mapsicle.Mapper.MaxCacheSize;
+        var originalUseLru = Mapper.UseLruCache;
+        var originalMaxCache = Mapper.MaxCacheSize;
         try
         {
-            Mapsicle.Mapper.UseLruCache = true;
-            Mapsicle.Mapper.MaxCacheSize = 100;
-            Mapsicle.Mapper.ClearCache();
+            Mapper.UseLruCache = true;
+            Mapper.MaxCacheSize = 100;
+            Mapper.ClearCache();
             return _users.MapTo<UserDto>();
         }
         finally
         {
-            Mapsicle.Mapper.UseLruCache = originalUseLru;
-            Mapsicle.Mapper.MaxCacheSize = originalMaxCache;
+            Mapper.UseLruCache = originalUseLru;
+            Mapper.MaxCacheSize = originalMaxCache;
         }
     }
 
     [Benchmark(Description = "Cache hit ratio - repeated mappings")]
     public int CacheHitRatio()
     {
-        Mapsicle.Mapper.ClearCache();
+        Mapper.ClearCache();
         
         // Warm up cache
         _ = _user.MapTo<UserDto>();
@@ -846,13 +846,13 @@ public class CacheBenchmarks
     [Benchmark(Description = "Cache eviction overhead - LRU")]
     public List<UserDto> CacheEvictionOverhead()
     {
-        var originalUseLru = Mapsicle.Mapper.UseLruCache;
-        var originalMaxCache = Mapsicle.Mapper.MaxCacheSize;
+        var originalUseLru = Mapper.UseLruCache;
+        var originalMaxCache = Mapper.MaxCacheSize;
         try
         {
-            Mapsicle.Mapper.UseLruCache = true;
-            Mapsicle.Mapper.MaxCacheSize = 10; // Very small cache to force evictions
-            Mapsicle.Mapper.ClearCache();
+            Mapper.UseLruCache = true;
+            Mapper.MaxCacheSize = 10; // Very small cache to force evictions
+            Mapper.ClearCache();
             
             // Map many times to cause evictions
             var results = new List<UserDto>();
@@ -864,15 +864,15 @@ public class CacheBenchmarks
         }
         finally
         {
-            Mapsicle.Mapper.UseLruCache = originalUseLru;
-            Mapsicle.Mapper.MaxCacheSize = originalMaxCache;
+            Mapper.UseLruCache = originalUseLru;
+            Mapper.MaxCacheSize = originalMaxCache;
         }
     }
 
     [Benchmark(Description = "PropertyInfo cache effectiveness")]
     public List<UserDto> PropertyInfoCacheEffectiveness()
     {
-        Mapsicle.Mapper.ClearCache();
+        Mapper.ClearCache();
         
         // First mapping builds PropertyInfo cache
         var first = _users.Take(10).MapTo<UserDto>();
