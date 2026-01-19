@@ -1,22 +1,35 @@
 name: Publish to NuGet
 
 on:
-  push:
-    branches: ["main", "master"]
-  release:
-    types: [created]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g., 1.0.0, 1.1.0-beta)'
+        required: true
+        type: string
+      skip_tests:
+        description: 'Skip running tests'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            echo "Invalid version format. Use semantic versioning (e.g., 1.0.0 or 1.0.0-beta)"
+            exit 1
+          fi
 
       - name: Restore dependencies
         run: dotnet restore
@@ -25,16 +38,33 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Test
+        if: ${{ !inputs.skip_tests }}
         run: dotnet test --configuration Release --no-build --verbosity normal
 
-      - name: Pack Core
-        run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --no-build --output . /p:Version=1.0.${{ github.run_number }}
+      - name: Pack Mapsicle (Core)
+        run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
 
-      - name: Pack Fluent
-        run: dotnet pack src/Mapsicle.Fluent/Mapsicle.Fluent.csproj --configuration Release --no-build --output . /p:Version=1.0.${{ github.run_number }}
+      - name: Pack Mapsicle.Fluent
+        run: dotnet pack src/Mapsicle.Fluent/Mapsicle.Fluent.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
 
-      - name: Pack EntityFramework
-        run: dotnet pack src/Mapsicle.EntityFramework/Mapsicle.EntityFramework.csproj --configuration Release --no-build --output . /p:Version=1.0.${{ github.run_number }}
+      - name: Pack Mapsicle.EntityFramework
+        run: dotnet pack src/Mapsicle.EntityFramework/Mapsicle.EntityFramework.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.Validation
+        run: dotnet pack src/Mapsicle.Validation/Mapsicle.Validation.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.NamingConventions
+        run: dotnet pack src/Mapsicle.NamingConventions/Mapsicle.NamingConventions.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: List packages
+        run: ls -la ./packages
 
       - name: Push to NuGet
-        run: dotnet nuget push *.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+        run: dotnet nuget push ./packages/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+
+      - name: Create Git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
