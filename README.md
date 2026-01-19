@@ -8,11 +8,13 @@
 
 **Mapsicle** is a high-performance, modular object mapping ecosystem for .NET. Choose only what you need:
 
-| Package                      | Purpose                  | Dependencies    |
-| :--------------------------- | :----------------------- | :-------------- |
-| **Mapsicle**                 | Zero-config mapping      | None            |
-| **Mapsicle.Fluent**          | Fluent configuration     | Mapsicle        |
-| **Mapsicle.EntityFramework** | EF Core `ProjectTo<T>()` | Mapsicle.Fluent |
+| Package                      | Purpose                  | Dependencies      |
+| :--------------------------- | :----------------------- | :---------------- |
+| **Mapsicle**                 | Zero-config mapping      | None              |
+| **Mapsicle.Fluent**          | Fluent configuration     | Mapsicle          |
+| **Mapsicle.EntityFramework** | EF Core `ProjectTo<T>()` | Mapsicle.Fluent   |
+| **Mapsicle.Validation**      | FluentValidation integration | Mapsicle.Fluent |
+| **Mapsicle.NamingConventions** | Naming convention support | Mapsicle.Fluent |
 
 > *"The fastest mapping is the one you don't have to configure."*
 
@@ -75,16 +77,22 @@ List<UserDto> dtos = users.MapTo<UserDto>();  // Entire list mapped
 Do you need EF Core query translation (ProjectTo)?
 ├─ YES → Install: Mapsicle + Mapsicle.Fluent + Mapsicle.EntityFramework
 └─ NO
+   ├─ Do you need post-mapping validation?
+   │  └─ YES → Install: Mapsicle + Mapsicle.Fluent + Mapsicle.Validation
+   ├─ Do you need naming convention support (snake_case ↔ PascalCase)?
+   │  └─ YES → Install: Mapsicle + Mapsicle.Fluent + Mapsicle.NamingConventions
    ├─ Do you need custom mapping logic (ForMember, hooks)?
-   │  ├─ YES → Install: Mapsicle + Mapsicle.Fluent
-   │  └─ NO → Install: Mapsicle (core only - zero config)
+   │  └─ YES → Install: Mapsicle + Mapsicle.Fluent
+   └─ NO → Install: Mapsicle (core only - zero config)
 ```
 
 | Scenario | Packages Needed |
 |:---------|:----------------|
 | Simple POCO mapping | `Mapsicle` |
-| API DTOs with transformations | `Mapsicle.Fluent` (includes core) |
-| EF Core with SQL projection | All three packages |
+| API DTOs with transformations | `Mapsicle.Fluent` |
+| EF Core with SQL projection | `Mapsicle.EntityFramework` |
+| Map + validate DTOs | `Mapsicle.Validation` |
+| snake_case ↔ PascalCase mapping | `Mapsicle.NamingConventions` |
 
 ---
 
@@ -175,6 +183,12 @@ dotnet add package Mapsicle.Fluent
 
 # EF Core ProjectTo (optional)
 dotnet add package Mapsicle.EntityFramework
+
+# FluentValidation integration (optional)
+dotnet add package Mapsicle.Validation
+
+# Naming conventions support (optional)
+dotnet add package Mapsicle.NamingConventions
 ```
 
 ---
@@ -323,6 +337,221 @@ var orders = _context.Orders.ProjectTo<Order, OrderDto>(config).ToList();
 
 ---
 
+## ⚡ Package 4: Mapsicle.Validation
+
+**Post-mapping validation** using FluentValidation—validate DTOs immediately after mapping!
+
+### Basic Usage
+
+```csharp
+using FluentValidation;
+using Mapsicle.Fluent;
+using Mapsicle.Validation;
+
+// 1. Define your validator
+public class UserDtoValidator : AbstractValidator<UserDto>
+{
+    public UserDtoValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().WithMessage("Name is required");
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Age).GreaterThan(0).WithMessage("Age must be positive");
+    }
+}
+
+// 2. Map and validate in one call
+var result = mapper.MapAndValidate<User, UserDto, UserDtoValidator>(user);
+
+if (result.IsValid)
+{
+    return Ok(result.Value);  // The mapped DTO
+}
+else
+{
+    return BadRequest(result.ErrorsByProperty);  // { "Email": ["Valid email is required"] }
+}
+```
+
+### API Overview
+
+```csharp
+// Map and validate with validator type
+var result = mapper.MapAndValidate<TSource, TDest, TValidator>(source);
+
+// Map and validate with validator instance
+var validator = new UserDtoValidator();
+var result = mapper.MapAndValidate<UserDto>(source, validator);
+
+// Validate an existing object
+var result = dto.Validate<UserDto, UserDtoValidator>();
+
+// Get value or throw exception
+var dto = result.GetValueOrThrow();  // Throws ValidationException if invalid
+```
+
+### Result Properties
+
+```csharp
+result.IsValid           // bool - true if validation passed
+result.Value             // TDest - the mapped object
+result.Errors            // IList<ValidationFailure> - all validation errors
+result.ErrorsByProperty  // IDictionary<string, string[]> - errors grouped by property
+result.ValidationResult  // FluentValidation.Results.ValidationResult - full result
+```
+
+### Real-World Example: API Controller
+
+```csharp
+[ApiController]
+[Route("api/users")]
+public class UsersController : ControllerBase
+{
+    private readonly IMapper _mapper;
+    private readonly IUserRepository _repo;
+
+    public UsersController(IMapper mapper, IUserRepository repo)
+    {
+        _mapper = mapper;
+        _repo = repo;
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
+    {
+        var result = _mapper.MapAndValidate<CreateUserRequest, UserDto, UserDtoValidator>(request);
+
+        if (!result.IsValid)
+        {
+            return BadRequest(new { errors = result.ErrorsByProperty });
+        }
+
+        var user = await _repo.CreateAsync(result.Value);
+        return CreatedAtAction(nameof(GetById), new { id = user.Id }, user);
+    }
+}
+```
+
+---
+
+## ⚡ Package 5: Mapsicle.NamingConventions
+
+**Automatic naming convention conversion**—map between `snake_case`, `PascalCase`, `camelCase`, and `kebab-case`!
+
+### Basic Usage
+
+```csharp
+using Mapsicle.NamingConventions;
+
+// Source uses snake_case (e.g., from Python API or database)
+public class ApiResponse
+{
+    public int user_id { get; set; }
+    public string first_name { get; set; }
+    public string email_address { get; set; }
+}
+
+// Destination uses PascalCase (C# convention)
+public class UserDto
+{
+    public int UserId { get; set; }
+    public string FirstName { get; set; }
+    public string EmailAddress { get; set; }
+}
+
+// Map with naming convention conversion
+var dto = apiResponse.MapWithConvention<ApiResponse, UserDto>(
+    NamingConvention.SnakeCase,
+    NamingConvention.PascalCase);
+
+// dto.UserId == apiResponse.user_id
+// dto.FirstName == apiResponse.first_name
+```
+
+### Built-in Conventions
+
+| Convention | Example | C# Property |
+|:-----------|:--------|:------------|
+| `NamingConvention.PascalCase` | `UserName` | Standard C# |
+| `NamingConvention.CamelCase` | `userName` | JavaScript/JSON |
+| `NamingConvention.SnakeCase` | `user_name` | Python/Ruby/SQL |
+| `NamingConvention.KebabCase` | `user-name` | URLs/CSS |
+
+### Convert Property Names
+
+```csharp
+// Convert a single name
+var snake = "UserName".ConvertName(NamingConvention.PascalCase, NamingConvention.SnakeCase);
+// Result: "user_name"
+
+var pascal = "first_name".ConvertName(NamingConvention.SnakeCase, NamingConvention.PascalCase);
+// Result: "FirstName"
+
+var camel = "OrderCount".ConvertName(NamingConvention.PascalCase, NamingConvention.CamelCase);
+// Result: "orderCount"
+```
+
+### Use with Fluent Mapper
+
+```csharp
+// Combine with IMapper for convention-based mapping
+var dto = mapper.MapWithConvention<ApiResponse, UserDto>(
+    apiResponse,
+    NamingConvention.SnakeCase,
+    NamingConvention.PascalCase);
+```
+
+### Check Name Matching
+
+```csharp
+// Check if names match across conventions
+bool match = NamingConvention.NamesMatch(
+    "user_name", NamingConvention.SnakeCase,
+    "UserName", NamingConvention.PascalCase);
+// Result: true
+```
+
+### Real-World Example: External API Integration
+
+```csharp
+public class ExternalApiClient
+{
+    private readonly HttpClient _http;
+
+    public async Task<UserDto> GetUserAsync(int id)
+    {
+        // External API returns snake_case JSON
+        var response = await _http.GetFromJsonAsync<ExternalUserResponse>($"/users/{id}");
+
+        // Convert to C# conventions
+        return response.MapWithConvention<ExternalUserResponse, UserDto>(
+            NamingConvention.SnakeCase,
+            NamingConvention.PascalCase);
+    }
+}
+
+// External API response (snake_case)
+public class ExternalUserResponse
+{
+    public int user_id { get; set; }
+    public string first_name { get; set; }
+    public string last_name { get; set; }
+    public string email_address { get; set; }
+    public DateTime created_at { get; set; }
+}
+
+// Internal DTO (PascalCase)
+public class UserDto
+{
+    public int UserId { get; set; }
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public string EmailAddress { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+```
+
+---
+
 ## 🔧 Migration from AutoMapper
 
 ### API Compatibility
@@ -428,11 +657,14 @@ public class UserService
 ### Known Incompatibilities
 
 ❌ **Not Supported:**
-- Custom naming conventions (PascalCase → camelCase)
 - `IMemberValueResolver` interface - use `ResolveUsing(func)` instead
 - `ITypeConverter` interface - use `CreateConverter<T, U>()` instead
 - Conditional mapping with complex predicates
 - MaxDepth per individual mapping (only global `Mapper.MaxDepth`)
+
+✅ **Now Supported (via extension packages):**
+- Custom naming conventions → `Mapsicle.NamingConventions`
+- Post-mapping validation → `Mapsicle.Validation`
 
 ⚠️ **Behavioral Differences:**
 - **Circular references**: AutoMapper throws exception, Mapsicle returns default value
@@ -613,11 +845,14 @@ var dto = mapper.MapTo<UserDto>(user);
 ### Feature Limitations
 
 ❌ **Not Supported:**
-- Custom naming conventions (e.g., PascalCase → camelCase)
 - Async mapping operations
 - Source/destination value injection (context passing)
 - Open generic types
 - Explicit type conversion configuration beyond built-ins
+
+✅ **Supported via Extension Packages:**
+- Custom naming conventions (PascalCase ↔ snake_case) → `Mapsicle.NamingConventions`
+- Post-mapping validation → `Mapsicle.Validation`
 
 ⚠️ **Partial Support:**
 - Nested flattening limited to 1 level (`Address.City` ✅, `Address.Street.Line1` ❌)
@@ -901,6 +1136,96 @@ var dtos = await context.Users
 
 ---
 
+### Validation Extensions (`using Mapsicle.Validation`)
+
+#### `MapAndValidate<TDest, TValidator>(this IMapper mapper, object? source)`
+
+Maps source to destination and validates using the specified validator type.
+
+**Type Parameters:**
+- `TDest` - Destination type
+- `TValidator` - FluentValidation validator type (must have parameterless constructor)
+
+**Returns:**
+- `MapperValidationResult<TDest>` - Contains `IsValid`, `Value`, `Errors`, `ErrorsByProperty`
+
+**Example:**
+```csharp
+var result = mapper.MapAndValidate<User, UserDto, UserDtoValidator>(user);
+if (result.IsValid) return result.Value;
+```
+
+---
+
+#### `MapAndValidate<TDest>(this IMapper mapper, object? source, IValidator<TDest> validator)`
+
+Maps source to destination and validates using a provided validator instance.
+
+**Example:**
+```csharp
+var validator = new UserDtoValidator();
+var result = mapper.MapAndValidate<UserDto>(user, validator);
+```
+
+---
+
+#### `Validate<T, TValidator>(this T value)`
+
+Validates an existing object using the specified validator type.
+
+**Example:**
+```csharp
+var result = dto.Validate<UserDto, UserDtoValidator>();
+```
+
+---
+
+### NamingConventions Extensions (`using Mapsicle.NamingConventions`)
+
+#### `MapWithConvention<TSource, TDest>(this TSource source, NamingConvention sourceConvention, NamingConvention destConvention)`
+
+Maps source to destination with naming convention transformation.
+
+**Parameters:**
+- `sourceConvention` - The naming convention of source properties
+- `destConvention` - The naming convention of destination properties
+
+**Returns:**
+- `TDest?` - New instance with convention-matched properties
+
+**Example:**
+```csharp
+var dto = apiResponse.MapWithConvention<ApiResponse, UserDto>(
+    NamingConvention.SnakeCase,
+    NamingConvention.PascalCase);
+```
+
+---
+
+#### `ConvertName(this string name, NamingConvention from, NamingConvention to)`
+
+Converts a property name from one convention to another.
+
+**Example:**
+```csharp
+var snakeName = "UserName".ConvertName(NamingConvention.PascalCase, NamingConvention.SnakeCase);
+// Result: "user_name"
+```
+
+---
+
+#### `NamingConvention.NamesMatch(string sourceName, NamingConvention sourceConvention, string destName, NamingConvention destConvention)`
+
+Checks if two names match when their conventions are applied.
+
+**Example:**
+```csharp
+bool match = NamingConvention.NamesMatch("user_id", NamingConvention.SnakeCase, "UserId", NamingConvention.PascalCase);
+// Result: true
+```
+
+---
+
 ## 📝 Complete Feature List
 
 ### Core Features
@@ -948,16 +1273,37 @@ var dtos = await context.Users
 - ✅ Nested projection
 - ✅ Type coercion in queries
 
+### Validation Features (Mapsicle.Validation)
+- ✅ MapAndValidate with FluentValidation
+- ✅ Validator type parameter
+- ✅ Validator instance injection
+- ✅ Validation result with IsValid, Errors
+- ✅ ErrorsByProperty dictionary
+- ✅ GetValueOrThrow pattern
+- ✅ Validator caching
+
+### Naming Convention Features (Mapsicle.NamingConventions)
+- ✅ PascalCase convention
+- ✅ camelCase convention
+- ✅ snake_case convention
+- ✅ kebab-case convention
+- ✅ MapWithConvention extension
+- ✅ ConvertName string extension
+- ✅ NamesMatch cross-convention comparison
+- ✅ Property mapping cache
+
 ---
 
 ## 🧪 Test Coverage
 
-| Package                  |  Tests | Coverage            |
-| :----------------------- | -----: | :------------------ |
-| Mapsicle                 |     67 | Core + Stability    |
-| Mapsicle.Fluent          |     18 | Fluent + Enterprise |
-| Mapsicle.EntityFramework |      7 | EF Core             |
-| **Total**                | **92** |                     |
+| Package                    |  Tests | Coverage            |
+| :------------------------- | -----: | :------------------ |
+| Mapsicle                   |    210 | Core + Stability    |
+| Mapsicle.Fluent            |     35 | Fluent + Enterprise |
+| Mapsicle.EntityFramework   |     19 | EF Core             |
+| Mapsicle.Validation        |     13 | FluentValidation    |
+| Mapsicle.NamingConventions |     55 | Naming Conventions  |
+| **Total**                  | **332** |                     |
 
 ---
 
@@ -966,14 +1312,26 @@ var dtos = await context.Users
 ```
 Mapsicle/
 ├── src/
-│   ├── Mapsicle/                  # Core - zero config
-│   ├── Mapsicle.Fluent/           # Fluent + DI
-│   └── Mapsicle.EntityFramework/  # EF Core ProjectTo
-└── tests/
-    ├── Mapsicle.Tests/
-    ├── Mapsicle.Fluent.Tests/
-    ├── Mapsicle.EntityFramework.Tests/
-    └── Mapsicle.Benchmarks/
+│   ├── Mapsicle/                    # Core - zero config
+│   ├── Mapsicle.Fluent/             # Fluent + DI
+│   ├── Mapsicle.EntityFramework/    # EF Core ProjectTo
+│   ├── Mapsicle.Validation/         # FluentValidation integration
+│   └── Mapsicle.NamingConventions/  # Naming convention support
+├── tests/
+│   ├── Mapsicle.Tests/
+│   ├── Mapsicle.Fluent.Tests/
+│   ├── Mapsicle.EntityFramework.Tests/
+│   ├── Mapsicle.Validation.Tests/
+│   ├── Mapsicle.NamingConventions.Tests/
+│   └── Mapsicle.Benchmarks/
+└── examples/
+    └── Mapsicle.Examples/           # Working examples for all packages
+```
+
+### Run Examples
+
+```bash
+dotnet run --project examples/Mapsicle.Examples
 ```
 
 ---

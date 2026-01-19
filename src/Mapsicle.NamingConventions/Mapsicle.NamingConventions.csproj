@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <Title>Mapsicle.NamingConventions</Title>
+    <Authors>Arneli Robles</Authors>
+    <Description>Naming convention support for Mapsicle. Adds PascalCase, camelCase, snake_case, and kebab-case automatic property matching.</Description>
+    <PackageTags>mapper;mapping;naming;conventions;camelcase;snakecase;automapper-alternative</PackageTags>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mapsicle.Fluent\Mapsicle.Fluent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

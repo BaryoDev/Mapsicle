@@ -143,7 +143,12 @@ namespace Mapsicle
         /// <summary>
         /// Maximum mapping depth for cycle detection. Default: 32.
         /// </summary>
-        public static int MaxDepth { get; set; } = 32;
+        private static int _maxDepth = 32;
+        public static int MaxDepth
+        {
+            get => _maxDepth;
+            set => _maxDepth = value > 0 ? value : 32;
+        }
 
         /// <summary>
         /// Logger for diagnostic output. Null disables logging.
@@ -702,8 +707,8 @@ namespace Mapsicle
             if (source is null) return new Dictionary<string, object?>();
 
             var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            var props = source.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead);
+            var props = GetCachedProperties(source.GetType())
+                .Where(p => p.CanRead);
 
             foreach (var prop in props)
             {
@@ -750,9 +755,9 @@ namespace Mapsicle
                             prop.SetValue(dest, converted);
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Skip incompatible types silently
+                        Logger?.Invoke($"[Mapsicle] Type conversion failed for property '{prop.Name}': {ex.Message}");
                     }
                 }
             }

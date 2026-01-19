@@ -638,25 +638,4 @@ namespace Mapsicle.Fluent
 
     #endregion
 
-    #region Extensions
-
-    /// <summary>
-    /// Extension methods for fluent mapper integration.
-    /// </summary>
-    public static class FluentMapperExtensions
-    {
-        /// <summary>
-        /// Converts using a custom converter function.
-        /// </summary>
-        public static ITypeMapExpression<TSource, TDest> ConvertUsing<TSource, TDest>(
-            this ITypeMapExpression<TSource, TDest> expression,
-            Func<TSource, TDest> converter)
-        {
-            // This would need access to the configuration to register
-            // For now, this is a placeholder for the API shape
-            return expression;
-        }
-    }
-
-    #endregion
 }
