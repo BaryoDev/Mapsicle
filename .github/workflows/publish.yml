@@ -56,6 +56,27 @@ jobs:
       - name: Pack Mapsicle.NamingConventions
         run: dotnet pack src/Mapsicle.NamingConventions/Mapsicle.NamingConventions.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
 
+      - name: Pack Mapsicle.Serilog
+        run: dotnet pack src/Mapsicle.Serilog/Mapsicle.Serilog.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.Dapper
+        run: dotnet pack src/Mapsicle.Dapper/Mapsicle.Dapper.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.Json
+        run: dotnet pack src/Mapsicle.Json/Mapsicle.Json.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.AspNetCore
+        run: dotnet pack src/Mapsicle.AspNetCore/Mapsicle.AspNetCore.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.Caching
+        run: dotnet pack src/Mapsicle.Caching/Mapsicle.Caching.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.Audit
+        run: dotnet pack src/Mapsicle.Audit/Mapsicle.Audit.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
+      - name: Pack Mapsicle.DataAnnotations
+        run: dotnet pack src/Mapsicle.DataAnnotations/Mapsicle.DataAnnotations.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+
       - name: List packages
         run: ls -la ./packages
 

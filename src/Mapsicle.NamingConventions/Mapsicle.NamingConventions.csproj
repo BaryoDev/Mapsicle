@@ -5,11 +5,14 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>Mapsicle.NamingConventions</PackageId>
+    <Version>1.2.1</Version>
     <Title>Mapsicle.NamingConventions</Title>
-    <Authors>Arneli Robles</Authors>
+    <Authors>Arnel Isiderio Robles</Authors>
     <Description>Naming convention support for Mapsicle. Adds PascalCase, camelCase, snake_case, and kebab-case automatic property matching.</Description>
     <PackageTags>mapper;mapping;naming;conventions;camelcase;snakecase;automapper-alternative</PackageTags>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
     <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>

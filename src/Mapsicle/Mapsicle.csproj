@@ -5,11 +5,14 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>Mapsicle</PackageId>
+    <Version>1.2.1</Version>
     <Title>Mapsicle</Title>
-    <Authors>Arneli Robles</Authors>
-    <Description>A zero-dependency, high-performance object mapper for .NET.</Description>
-    <PackageTags>mapper;mapping;object-mapper;performance;zero-dependency</PackageTags>
+    <Authors>Arnel Isiderio Robles</Authors>
+    <Description>A zero-dependency, high-performance object mapper for .NET. 2x faster than AutoMapper with zero configuration.</Description>
+    <PackageTags>mapper;mapping;object-mapper;performance;zero-dependency;automapper-alternative</PackageTags>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
     <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
