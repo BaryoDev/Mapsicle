@@ -9,6 +9,7 @@ namespace Mapsicle.Tests
     /// Integration tests for multiple mapper configurations and real-world usage patterns.
     /// These tests validate that Mapsicle works correctly in realistic scenarios.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class IntegrationTests
     {
         #region Test Models

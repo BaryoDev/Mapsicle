@@ -8,6 +8,7 @@ namespace Mapsicle.Tests
     /// <summary>
     /// Production-like test scenarios simulating real-world mapping use cases.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class ProductionScenarioTests
     {
         #region E-Commerce Domain Models

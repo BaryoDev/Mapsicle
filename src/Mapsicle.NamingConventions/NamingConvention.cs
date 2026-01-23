@@ -9,6 +9,12 @@ namespace Mapsicle.NamingConventions
     /// </summary>
     public abstract class NamingConvention
     {
+        // Compiled regex for better performance - splits on word boundaries
+        // Matches sequences like "User", "Name", "ID", "XMLParser", etc.
+        protected static readonly Regex WordBoundaryRegex = new(
+            @"([A-Z][a-z0-9]*|[A-Z]+(?=[A-Z][a-z]|$)|[a-z0-9]+)",
+            RegexOptions.Compiled);
+
         /// <summary>
         /// PascalCase naming convention (e.g., UserName, FirstName).
         /// </summary>
@@ -28,6 +34,12 @@ namespace Mapsicle.NamingConventions
         /// kebab-case naming convention (e.g., user-name, first-name).
         /// </summary>
         public static NamingConvention KebabCase { get; } = new KebabCaseConvention();
+
+        /// <summary>
+        /// SCREAMING_SNAKE_CASE naming convention (e.g., USER_NAME, FIRST_NAME).
+        /// Common for constants and environment variables.
+        /// </summary>
+        public static NamingConvention ScreamingSnakeCase { get; } = new ScreamingSnakeCaseConvention();
 
         /// <summary>
         /// The name of this naming convention.
@@ -83,8 +95,8 @@ namespace Mapsicle.NamingConventions
 
         public override string[] ToWords(string name)
         {
-            // Split on uppercase letters (word boundaries in PascalCase)
-            var matches = Regex.Matches(name, @"([A-Z][a-z0-9]*|[a-z0-9]+)");
+            // Use compiled regex for better performance
+            var matches = WordBoundaryRegex.Matches(name);
             var words = new string[matches.Count];
             for (int i = 0; i < matches.Count; i++)
             {
@@ -113,8 +125,8 @@ namespace Mapsicle.NamingConventions
 
         public override string[] ToWords(string name)
         {
-            // Same as PascalCase splitting
-            var matches = Regex.Matches(name, @"([A-Z][a-z0-9]*|[a-z0-9]+)");
+            // Use compiled regex for better performance
+            var matches = WordBoundaryRegex.Matches(name);
             var words = new string[matches.Count];
             for (int i = 0; i < matches.Count; i++)
             {
@@ -183,6 +195,27 @@ namespace Mapsicle.NamingConventions
             {
                 if (i > 0) sb.Append('-');
                 sb.Append(words[i].ToLowerInvariant());
+            }
+            return sb.ToString();
+        }
+    }
+
+    internal class ScreamingSnakeCaseConvention : NamingConvention
+    {
+        public override string Name => "SCREAMING_SNAKE_CASE";
+
+        public override string[] ToWords(string name)
+        {
+            return name.Split(new[] { '_' }, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        public override string FromWords(string[] words)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < words.Length; i++)
+            {
+                if (i > 0) sb.Append('_');
+                sb.Append(words[i].ToUpperInvariant());
             }
             return sb.ToString();
         }

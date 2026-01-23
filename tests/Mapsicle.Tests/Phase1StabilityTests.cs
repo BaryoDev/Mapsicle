@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 
 namespace Mapsicle.Tests
 {
+    [Collection("StaticMapperTests")]
     public class Phase1StabilityTests
     {
         #region Test Models

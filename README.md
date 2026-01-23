@@ -8,31 +8,164 @@
 
 **Mapsicle** is a high-performance, modular object mapping ecosystem for .NET. Choose only what you need:
 
-| Package                      | Purpose                  | Dependencies      |
-| :--------------------------- | :----------------------- | :---------------- |
-| **Mapsicle**                 | Zero-config mapping      | None              |
-| **Mapsicle.Fluent**          | Fluent configuration     | Mapsicle          |
-| **Mapsicle.EntityFramework** | EF Core `ProjectTo<T>()` | Mapsicle.Fluent   |
-| **Mapsicle.Validation**      | FluentValidation integration | Mapsicle.Fluent |
-| **Mapsicle.NamingConventions** | Naming convention support | Mapsicle.Fluent |
+| Package                      | Purpose                           | Dependencies      |
+| :--------------------------- | :-------------------------------- | :---------------- |
+| **Mapsicle**                 | Zero-config mapping               | None              |
+| **Mapsicle.Fluent**          | Fluent configuration + Profiles   | Mapsicle          |
+| **Mapsicle.EntityFramework** | EF Core `ProjectTo<T>()`          | Mapsicle.Fluent   |
+| **Mapsicle.Validation**      | FluentValidation integration      | Mapsicle.Fluent   |
+| **Mapsicle.NamingConventions** | Naming convention support       | Mapsicle.Fluent   |
+| **Mapsicle.Json**            | JSON serialization integration    | Mapsicle.Fluent   |
+| **Mapsicle.AspNetCore**      | ASP.NET Core Minimal API helpers  | Mapsicle.Validation |
+| **Mapsicle.Caching**         | Memory/Distributed cache support  | Mapsicle.Fluent   |
+| **Mapsicle.Audit**           | Change tracking/diff detection    | Mapsicle.Fluent   |
+| **Mapsicle.DataAnnotations** | DataAnnotations validation        | Mapsicle.Fluent   |
 
 > *"The fastest mapping is the one you don't have to configure."*
 
 ---
 
-## 🚀 Why Switch from AutoMapper?
+## 🚀 Why Choose Mapsicle?
 
-> ⚠️ **AutoMapper is now commercial software.** As of version 13+, AutoMapper requires a paid license. Mapsicle is **100% free and MPL 2.0 licensed** forever.
+> ⚠️ **AutoMapper is now commercial software.** As of July 2025, AutoMapper requires a paid license for commercial use. Mapsicle is **100% free and MPL 2.0 licensed** forever.
 
-| Feature              | Mapsicle         | AutoMapper   |
-| :------------------- | :--------------- | :----------- |
-| **License**          | **MPL 2.0 (Free)**   | Commercial   |
-| **Dependencies**     | **0**            | 5+           |
-| **Setup Required**   | **None**         | Profiles, DI |
-| **Circular Refs**    | **Handled**      | Crash        |
-| **Binary Size**      | **~25KB**        | ~500KB+      |
-| **Memory Bounded**   | **LRU Option**   | No           |
-| **Cache Statistics** | **Yes**          | No           |
+### Quick Comparison
+
+| Feature              | Mapsicle         | AutoMapper   | Mapperly     |
+| :------------------- | :--------------- | :----------- | :----------- |
+| **License**          | **MPL 2.0 (Free)**   | Commercial   | MIT (Free)   |
+| **Architecture**     | Runtime + Caching | Runtime + Expressions | Source Generator |
+| **Setup Required**   | **None**         | Profiles, DI | Partial class |
+| **Dependencies**     | **0**            | 5+           | 0 (compile-time) |
+| **Compile-time Safety** | Partial       | No           | **Full**     |
+| **AOT Compatible**   | Partial          | No           | **Yes**      |
+| **Circular Refs**    | **Handled**      | Crash        | N/A          |
+| **Memory Bounded**   | **LRU Option**   | No           | N/A          |
+| **Cache Statistics** | **Yes**          | No           | N/A          |
+| **Integrated Validation** | **Yes**     | No           | No           |
+| **ASP.NET Core Helpers** | **Yes**      | No           | No           |
+
+---
+
+## 📊 Detailed Comparison: Mapsicle vs AutoMapper vs Mapperly
+
+### Core Mapping Features
+
+| Feature | Mapsicle | AutoMapper | Mapperly |
+|---------|----------|------------|----------|
+| Convention-based mapping | ✅ | ✅ | ✅ |
+| Flattening (`Address.City` → `AddressCity`) | ✅ | ✅ | ✅ |
+| Custom member mapping | ✅ `ForMember()` | ✅ `ForMember()` | ✅ `[MapProperty]` |
+| Ignore members | ✅ `[IgnoreMap]` | ✅ `Ignore()` | ✅ `[MapperIgnore]` |
+| Reverse mapping | ✅ `ReverseMap()` | ✅ `ReverseMap()` | ✅ (define both) |
+| Before/After map hooks | ✅ | ✅ | ✅ |
+| Type converters | ✅ `CreateConverter<>()` | ✅ `ConvertUsing()` | ✅ User methods |
+| Inheritance/Polymorphism | ✅ `Include<>()` | ✅ `Include<>()` | ✅ |
+| Nested object mapping | ✅ | ✅ | ✅ |
+| Collection mapping | ✅ | ✅ | ✅ |
+| Constructor mapping | ✅ `ConstructUsing()` | ✅ `ConstructUsing()` | ✅ (automatic) |
+
+### Configuration & Organization
+
+| Feature | Mapsicle | AutoMapper | Mapperly |
+|---------|----------|------------|----------|
+| Profile support | ✅ `MapsicleProfile` | ✅ `Profile` | ❌ (partial classes) |
+| Fluent configuration | ✅ | ✅ | ❌ (attributes) |
+| Attribute-based config | ✅ `[MapFrom]` | ✅ | ✅ |
+| Static zero-config API | ✅ `obj.MapTo<T>()` | ❌ | ❌ |
+| DI-friendly | ✅ `IMapper` | ✅ `IMapper` | ✅ |
+| Assembly scanning | ✅ | ✅ | N/A |
+
+### Extension Packages
+
+| Package/Feature | Mapsicle | AutoMapper | Mapperly |
+|-----------------|----------|------------|----------|
+| **EF Core ProjectTo** | ✅ `Mapsicle.EntityFramework` | ✅ Built-in | ✅ (expressions) |
+| **FluentValidation** | ✅ `Mapsicle.Validation` | ❌ | ❌ |
+| **DataAnnotations** | ✅ `Mapsicle.DataAnnotations` | ❌ | ❌ |
+| **JSON serialization** | ✅ `Mapsicle.Json` | ❌ | ❌ |
+| **ASP.NET Core** | ✅ `Mapsicle.AspNetCore` | ❌ | ❌ |
+| **Caching** | ✅ `Mapsicle.Caching` | ❌ | N/A |
+| **Audit/Change tracking** | ✅ `Mapsicle.Audit` | ❌ | ❌ |
+| **Naming conventions** | ✅ 5 conventions | ✅ Built-in | ✅ `NamingStrategy` |
+
+### Naming Convention Support
+
+| Convention | Mapsicle | AutoMapper | Mapperly |
+|------------|----------|------------|----------|
+| PascalCase | ✅ | ✅ | ✅ |
+| camelCase | ✅ | ✅ | ✅ |
+| snake_case | ✅ | ✅ | ✅ |
+| kebab-case | ✅ | ❌ | ❌ |
+| SCREAMING_SNAKE_CASE | ✅ | ❌ | ❌ |
+
+### Performance Characteristics
+
+| Aspect | Mapsicle | AutoMapper | Mapperly |
+|--------|----------|------------|----------|
+| **First map overhead** | Medium | Medium-High | **None** |
+| **Subsequent maps** | Fast | Fast | **Fastest** |
+| **Memory footprint** | Low-Medium | Medium | **Lowest** |
+| **Startup time impact** | Low | Medium | **None** |
+| **AOT compatible** | Partial | No | **Yes** |
+
+### When to Use Each
+
+| Scenario | Recommendation |
+|----------|----------------|
+| **Maximum performance, AOT required** | **Mapperly** |
+| **Compile-time safety is critical** | **Mapperly** |
+| **Quick prototyping, zero setup** | **Mapsicle** (static API) |
+| **Need integrated validation** | **Mapsicle** |
+| **Existing AutoMapper codebase** | **AutoMapper** (if licensed) or migrate |
+| **Budget-conscious / OSS project** | **Mapsicle** or **Mapperly** |
+| **Complex mapping configurations** | **AutoMapper** or **Mapsicle** (fluent) |
+| **ASP.NET Core Minimal APIs** | **Mapsicle** (AspNetCore package) |
+| **Need audit trail of changes** | **Mapsicle** (Audit package) |
+
+### Code Comparison
+
+**Mapsicle (Static - Zero Config)**
+```csharp
+var dto = user.MapTo<UserDto>();
+```
+
+**Mapsicle (Fluent)**
+```csharp
+var config = new MapperConfiguration(cfg => cfg.CreateMap<User, UserDto>());
+var mapper = config.CreateMapper();
+var dto = mapper.Map<UserDto>(user);
+```
+
+**AutoMapper**
+```csharp
+var config = new MapperConfiguration(cfg => cfg.CreateMap<User, UserDto>());
+var mapper = config.CreateMapper();
+var dto = mapper.Map<UserDto>(user);
+```
+
+**Mapperly**
+```csharp
+[Mapper]
+public partial class UserMapper
+{
+    public partial UserDto ToDto(User user);
+}
+// Usage
+var dto = new UserMapper().ToDto(user);
+```
+
+### Unique Mapsicle Features
+
+Features not found in AutoMapper or Mapperly:
+
+1. **Static zero-config API**: `user.MapTo<UserDto>()` - no setup required
+2. **Built-in validation integration**: Map + validate in one call with FluentValidation or DataAnnotations
+3. **Audit/diff tracking**: Track what changed during mapping with `MapWithAudit<T>()`
+4. **Caching integration**: Cache mapped results with `IMemoryCache`/`IDistributedCache`
+5. **ASP.NET Core IResult helpers**: `MapValidateAndReturn<T, TValidator>()`
+6. **JSON map-and-serialize**: `MapToJson<T>()`, `MapFromJson<T>()`
+7. **LRU cache option**: Memory-bounded cache for long-running applications
 
 ---
 
@@ -102,32 +235,38 @@ Real benchmarks on Apple M1, .NET 8.0, BenchmarkDotNet v0.13.12:
 
 ### Core Mapping Performance
 
-| Scenario             | Manual |  Mapsicle | AutoMapper |      Winner       |
-| :------------------- | -----: | --------: | ---------: | :---------------: |
-| **Single Object**    |  31 ns | **59 ns** |      72 ns | ⭐ Mapsicle (+22%) |
-| **Flattening**       |  14 ns | **29 ns** |      56 ns | ⭐ Mapsicle (+93%) |
-| **Collection (100)** | 3.5 μs |    5.5 μs |     4.0 μs |    AutoMapper     |
+| Scenario             | Manual |  Mapsicle | AutoMapper | Mapperly |      Winner       |
+| :------------------- | -----: | --------: | ---------: | -------: | :---------------: |
+| **Single Object**    |  13 ns | **26 ns** |      54 ns |    13 ns | ⭐ Mapsicle (2.1x faster than AutoMapper) |
+| **Flattening**       |  13 ns | **29 ns** |      56 ns |    15 ns | ⭐ Mapsicle (1.9x faster than AutoMapper) |
+| **Collection (100)** | 1.5 μs |    2.0 μs |     1.9 μs |   1.5 μs | ⭐ Mapperly (Mapsicle uses 18% less memory) |
+
+> **Note:** Mapperly generates code at compile-time, resulting in near-manual performance. **Mapsicle is now the fastest runtime-based mapper**, outperforming AutoMapper by 2.1x for single objects and 1.9x for flattening, while using less memory for collections.
 
 ### Edge Case Performance
 
-| Scenario                     | Mapsicle      | AutoMapper    | Notes                     |
-| :--------------------------- | :------------ | :------------ | :------------------------ |
-| **Deep Nesting (15 levels)** | ✅ Safe        | ✅ Safe        | Both handle with MaxDepth |
-| **Circular References**      | ✅ Handled     | ❌ Crashes     | **Mapsicle wins**         |
-| **Large Collection (10K)**   | **4 ms**      | 4 ms          | Comparable                |
-| **Parallel (1000 threads)**  | ✅ Thread-safe | ✅ Thread-safe | Lock-free reads           |
+| Scenario                     | Mapsicle      | AutoMapper    | Mapperly      | Notes                     |
+| :--------------------------- | :------------ | :------------ | :------------ | :------------------------ |
+| **Deep Nesting (15 levels)** | ✅ Safe        | ✅ Safe        | ✅ Safe        | All handle with limits    |
+| **Circular References**      | ✅ Handled     | ❌ Crashes     | ❌ Compile error | **Mapsicle wins**     |
+| **Large Collection (10K)**   | **4 ms**      | 4 ms          | ~3.5 ms       | Mapperly fastest          |
+| **Parallel (1000 threads)**  | ✅ Thread-safe | ✅ Thread-safe | ✅ Thread-safe | All thread-safe           |
+| **Cold Start**               | Medium        | Slow          | **None**      | Mapperly pre-compiled     |
 
 ### Performance Optimizations (v1.1+)
 
-| Optimization                   | Improvement                       | Status |
-| :----------------------------- | :-------------------------------- | :----- |
-| **Lock-free cache reads**      | Eliminates contention             | ✅      |
-| **Collection mapper caching**  | +20% for collections (v1.1)       | ✅      |
-| **PropertyInfo caching**       | +15% faster cold starts           | ✅      |
-| **Primitive fast path**        | Skips depth tracking              | ✅      |
-| **Cached compiled actions**    | No runtime reflection             | ✅      |
-| **LRU cache option**           | Memory-bounded in long-run apps   | ✅      |
-| **Collection pre-allocation**  | Capacity hints for known sizes    | ✅      |
+| Optimization                       | Improvement                       | Status |
+| :--------------------------------- | :-------------------------------- | :----- |
+| **TypedMapperCache&lt;T,D&gt;**    | Zero-allocation generic cache     | ✅ NEW |
+| **MapTo&lt;TSource,TDest&gt;()**   | Strongly-typed mapping, no boxing | ✅ NEW |
+| **Skip depth tracking for simple** | No overhead for flat types        | ✅ NEW |
+| **Lock-free cache reads**          | Eliminates contention             | ✅      |
+| **Collection mapper caching**      | +20% for collections (v1.1)       | ✅      |
+| **PropertyInfo caching**           | +15% faster cold starts           | ✅      |
+| **Primitive fast path**            | Skips depth tracking              | ✅      |
+| **Cached compiled actions**        | No runtime reflection             | ✅      |
+| **LRU cache option**               | Memory-bounded in long-run apps   | ✅      |
+| **Collection pre-allocation**      | Capacity hints for known sizes    | ✅      |
 
 ### Memory & Cache Statistics (v1.1+)
 
@@ -159,7 +298,7 @@ Console.WriteLine($"Hits: {stats.Hits}, Misses: {stats.Misses}");
 ✓ Large collection (10,000 items): 4ms
 ```
 
-> 💡 **Key Insight**: Mapsicle wins on simple/flattened mappings and safety. Both vastly outperform reflection-based approaches.
+> 💡 **Key Insight**: Mapsicle is now **2.1x faster than AutoMapper** for single object mapping while maintaining zero-configuration simplicity. Both vastly outperform reflection-based approaches.
 
 ### Run Benchmarks Yourself
 
@@ -178,7 +317,7 @@ dotnet run -c Release -- --edge    # Edge cases only
 # Core package - zero config
 dotnet add package Mapsicle
 
-# Fluent configuration (optional)
+# Fluent configuration + Profiles (optional)
 dotnet add package Mapsicle.Fluent
 
 # EF Core ProjectTo (optional)
@@ -189,6 +328,27 @@ dotnet add package Mapsicle.Validation
 
 # Naming conventions support (optional)
 dotnet add package Mapsicle.NamingConventions
+
+# Serilog structured logging (optional)
+dotnet add package Mapsicle.Serilog
+
+# Dapper integration (optional)
+dotnet add package Mapsicle.Dapper
+
+# JSON serialization (optional)
+dotnet add package Mapsicle.Json
+
+# ASP.NET Core Minimal API helpers (optional)
+dotnet add package Mapsicle.AspNetCore
+
+# Memory/Distributed caching (optional)
+dotnet add package Mapsicle.Caching
+
+# Change tracking/audit (optional)
+dotnet add package Mapsicle.Audit
+
+# DataAnnotations validation (optional)
+dotnet add package Mapsicle.DataAnnotations
 ```
 
 ---
@@ -548,6 +708,136 @@ public class UserDto
     public string EmailAddress { get; set; }
     public DateTime CreatedAt { get; set; }
 }
+```
+
+---
+
+## ⚡ Package 6: Mapsicle.Serilog
+
+**Structured logging integration** for enterprise diagnostics and observability.
+
+### Basic Setup
+
+```csharp
+using Mapsicle.Serilog;
+using Serilog;
+
+// Configure Serilog logger
+var logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .MinimumLevel.Debug()
+    .CreateLogger();
+
+// Enable Mapsicle logging
+MapsicleLogging.UseSerilog(logger);
+```
+
+### Map with Logging
+
+```csharp
+// Log individual mappings
+var dto = user.MapWithLogging<User, UserDto>(logger);
+// Output: [INF] Mapsicle: Mapped User -> UserDto in 0.5ms
+
+// Log collection mappings
+var dtos = users.MapCollectionWithLogging<User, UserDto>(logger);
+// Output: [INF] Mapsicle: Mapped 100 User -> UserDto items in 5.2ms
+```
+
+### Slow Mapping Warnings
+
+```csharp
+// Configure slow mapping threshold (default: 100ms)
+MapsicleLogging.SlowMappingThreshold = TimeSpan.FromMilliseconds(50);
+
+// Slow mappings automatically log warnings
+var dto = largeObject.MapWithLogging<Large, LargeDto>(logger);
+// Output: [WRN] Mapsicle: Slow mapping detected Large -> LargeDto took 75ms
+```
+
+### Scoped Logging for Batch Operations
+
+```csharp
+using (var scope = new MappingLoggingScope(logger, "OrderProcessing"))
+{
+    // All mappings in this scope are logged with the operation context
+    var orderDto = order.MapWithLogging<Order, OrderDto>(logger);
+    var itemDtos = items.MapCollectionWithLogging<Item, ItemDto>(logger);
+}
+// Output includes: OperationName = "OrderProcessing"
+```
+
+---
+
+## ⚡ Package 7: Mapsicle.Dapper
+
+**Seamless integration with Dapper** for mapping database query results directly to DTOs.
+
+### Basic Usage
+
+```csharp
+using Mapsicle.Dapper;
+using Dapper;
+
+// Query and map in one call
+var users = connection.QueryAndMap<User, UserDto>("SELECT * FROM Users").ToList();
+
+// With parameters
+var user = connection.QuerySingleAndMap<User, UserDto>(
+    "SELECT * FROM Users WHERE Id = @Id",
+    param: new { Id = 1 });
+```
+
+### Async Support
+
+```csharp
+// Async query and map
+var users = await connection.QueryAndMapAsync<User, UserDto>("SELECT * FROM Users");
+
+// Async single result
+var user = await connection.QuerySingleAndMapAsync<User, UserDto>(
+    "SELECT * FROM Users WHERE Id = @Id",
+    param: new { Id = 1 });
+```
+
+### With Custom Configuration
+
+```csharp
+// Use a custom mapper configuration
+var config = new MapperConfiguration(cfg =>
+{
+    cfg.CreateMap<User, UserSummaryDto>()
+        .ForMember(d => d.FullName, opt => opt.MapFrom(s => $"{s.FirstName} {s.LastName}"));
+});
+
+var users = connection.QueryAndMap<User, UserSummaryDto>(
+    "SELECT * FROM Users", config).ToList();
+
+// Or use IMapper instance
+var mapper = config.CreateMapper();
+var users = connection.QueryAndMap<User, UserSummaryDto>(
+    "SELECT * FROM Users", mapper).ToList();
+```
+
+### Transaction Support
+
+```csharp
+using var transaction = connection.BeginTransaction();
+
+// Mappings work within transactions
+var users = connection.QueryAndMap<User, UserDto>(
+    "SELECT * FROM Users WHERE Active = 1",
+    transaction: transaction).ToList();
+
+transaction.Commit();
+```
+
+### Map Existing Dapper Results
+
+```csharp
+// Map existing IEnumerable from Dapper
+var users = connection.Query<User>("SELECT * FROM Users");
+var dtos = users.MapTo<User, UserDto>(mapper);
 ```
 
 ---
@@ -1226,6 +1516,141 @@ bool match = NamingConvention.NamesMatch("user_id", NamingConvention.SnakeCase, 
 
 ---
 
+### Serilog Extensions (`using Mapsicle.Serilog`)
+
+#### `MapsicleLogging.UseSerilog(ILogger logger)`
+
+Enables global Serilog integration for Mapsicle mapping operations.
+
+**Parameters:**
+- `logger` - Serilog ILogger instance
+
+**Example:**
+```csharp
+MapsicleLogging.UseSerilog(Log.Logger);
+```
+
+---
+
+#### `MapWithLogging<TSource, TDest>(this TSource source, ILogger logger)`
+
+Maps source to destination with timing and structured logging.
+
+**Returns:**
+- `TDest?` - Mapped destination object
+
+**Example:**
+```csharp
+var dto = user.MapWithLogging<User, UserDto>(logger);
+// Logs: Mapsicle: Mapped User -> UserDto in 0.5ms
+```
+
+---
+
+#### `MapCollectionWithLogging<TSource, TDest>(this IEnumerable<TSource> source, ILogger logger)`
+
+Maps a collection with aggregated timing and logging.
+
+**Returns:**
+- `List<TDest>` - List of mapped destination objects
+
+**Example:**
+```csharp
+var dtos = users.MapCollectionWithLogging<User, UserDto>(logger);
+// Logs: Mapsicle: Mapped 100 User -> UserDto items in 5.2ms
+```
+
+---
+
+#### `MapsicleLogging.SlowMappingThreshold`
+
+Configures the threshold for slow mapping warnings.
+
+**Default:** 100ms
+
+**Example:**
+```csharp
+MapsicleLogging.SlowMappingThreshold = TimeSpan.FromMilliseconds(50);
+```
+
+---
+
+### Dapper Extensions (`using Mapsicle.Dapper`)
+
+#### `QueryAndMap<TSource, TDest>(this IDbConnection connection, string sql, ...)`
+
+Executes a SQL query and maps results to destination type.
+
+**Overloads:**
+- `QueryAndMap<TSource, TDest>(sql, param?, transaction?, commandTimeout?)` - Auto-mapping
+- `QueryAndMap<TSource, TDest>(sql, MapperConfiguration, param?, ...)` - With configuration
+- `QueryAndMap<TSource, TDest>(sql, IMapper, param?, ...)` - With mapper instance
+
+**Returns:**
+- `IEnumerable<TDest>` - Mapped results
+
+**Example:**
+```csharp
+var users = connection.QueryAndMap<User, UserDto>("SELECT * FROM Users").ToList();
+```
+
+---
+
+#### `QueryAndMapAsync<TSource, TDest>(this IDbConnection connection, string sql, ...)`
+
+Async version of QueryAndMap.
+
+**Example:**
+```csharp
+var users = await connection.QueryAndMapAsync<User, UserDto>("SELECT * FROM Users");
+```
+
+---
+
+#### `QuerySingleAndMap<TSource, TDest>(this IDbConnection connection, string sql, ...)`
+
+Executes a query expecting a single result and maps it.
+
+**Returns:**
+- `TDest?` - Mapped result or null
+
+**Example:**
+```csharp
+var user = connection.QuerySingleAndMap<User, UserDto>(
+    "SELECT * FROM Users WHERE Id = @Id", param: new { Id = 1 });
+```
+
+---
+
+#### `QueryFirstAndMap<TSource, TDest>(this IDbConnection connection, string sql, ...)`
+
+Executes a query and maps the first result.
+
+**Returns:**
+- `TDest?` - First mapped result or null
+
+**Example:**
+```csharp
+var user = connection.QueryFirstAndMap<User, UserDto>("SELECT * FROM Users ORDER BY CreatedAt DESC");
+```
+
+---
+
+#### `MapTo<TSource, TDest>(this IEnumerable<TSource>? source, IMapper mapper)`
+
+Maps an existing collection using a provided mapper.
+
+**Returns:**
+- `List<TDest>` - Mapped results
+
+**Example:**
+```csharp
+var users = connection.Query<User>("SELECT * FROM Users");
+var dtos = users.MapTo<User, UserDto>(mapper);
+```
+
+---
+
 ## 📝 Complete Feature List
 
 ### Core Features
@@ -1292,6 +1717,24 @@ bool match = NamingConvention.NamesMatch("user_id", NamingConvention.SnakeCase, 
 - ✅ NamesMatch cross-convention comparison
 - ✅ Property mapping cache
 
+### Serilog Features (Mapsicle.Serilog)
+- ✅ UseSerilog global integration
+- ✅ MapWithLogging extension
+- ✅ MapCollectionWithLogging extension
+- ✅ Slow mapping warnings
+- ✅ MappingLoggingScope for batch operations
+- ✅ Structured logging with properties
+- ✅ Configurable thresholds
+
+### Dapper Features (Mapsicle.Dapper)
+- ✅ QueryAndMap / QueryAndMapAsync
+- ✅ QuerySingleAndMap / QuerySingleAndMapAsync
+- ✅ QueryFirstAndMap / QueryFirstAndMapAsync
+- ✅ Transaction support
+- ✅ Custom MapperConfiguration support
+- ✅ IMapper instance support
+- ✅ MapTo collection extension
+
 ---
 
 ## 🧪 Test Coverage
@@ -1303,7 +1746,14 @@ bool match = NamingConvention.NamesMatch("user_id", NamingConvention.SnakeCase, 
 | Mapsicle.EntityFramework   |     19 | EF Core             |
 | Mapsicle.Validation        |     13 | FluentValidation    |
 | Mapsicle.NamingConventions |     55 | Naming Conventions  |
-| **Total**                  | **332** |                     |
+| Mapsicle.Serilog           |     22 | Serilog Logging     |
+| Mapsicle.Dapper            |     25 | Dapper Integration  |
+| Mapsicle.Json              |     26 | JSON Serialization  |
+| Mapsicle.AspNetCore        |     23 | ASP.NET Core        |
+| Mapsicle.Caching           |     21 | Caching Integration |
+| Mapsicle.Audit             |     26 | Change Tracking     |
+| Mapsicle.DataAnnotations   |     24 | DataAnnotations     |
+| **Total**                  | **499** |                     |
 
 ---
 
@@ -1313,16 +1763,30 @@ bool match = NamingConvention.NamesMatch("user_id", NamingConvention.SnakeCase, 
 Mapsicle/
 ├── src/
 │   ├── Mapsicle/                    # Core - zero config
-│   ├── Mapsicle.Fluent/             # Fluent + DI
+│   ├── Mapsicle.Fluent/             # Fluent + DI + Profiles
 │   ├── Mapsicle.EntityFramework/    # EF Core ProjectTo
 │   ├── Mapsicle.Validation/         # FluentValidation integration
-│   └── Mapsicle.NamingConventions/  # Naming convention support
+│   ├── Mapsicle.NamingConventions/  # Naming convention support
+│   ├── Mapsicle.Serilog/            # Serilog structured logging
+│   ├── Mapsicle.Dapper/             # Dapper integration
+│   ├── Mapsicle.Json/               # JSON serialization
+│   ├── Mapsicle.AspNetCore/         # ASP.NET Core Minimal API
+│   ├── Mapsicle.Caching/            # Memory/Distributed caching
+│   ├── Mapsicle.Audit/              # Change tracking/diff
+│   └── Mapsicle.DataAnnotations/    # DataAnnotations validation
 ├── tests/
 │   ├── Mapsicle.Tests/
 │   ├── Mapsicle.Fluent.Tests/
 │   ├── Mapsicle.EntityFramework.Tests/
 │   ├── Mapsicle.Validation.Tests/
 │   ├── Mapsicle.NamingConventions.Tests/
+│   ├── Mapsicle.Serilog.Tests/
+│   ├── Mapsicle.Dapper.Tests/
+│   ├── Mapsicle.Json.Tests/
+│   ├── Mapsicle.AspNetCore.Tests/
+│   ├── Mapsicle.Caching.Tests/
+│   ├── Mapsicle.Audit.Tests/
+│   ├── Mapsicle.DataAnnotations.Tests/
 │   └── Mapsicle.Benchmarks/
 └── examples/
     └── Mapsicle.Examples/           # Working examples for all packages

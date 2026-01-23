@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Mapsicle;
 using Mapsicle.Fluent;
 using Mapsicle.EntityFramework;
+using Riok.Mapperly.Abstractions;
 using System.Collections.Concurrent;
 
 namespace Mapsicle.Benchmarks;
@@ -66,14 +67,70 @@ public class Program
     static void RunSmokeTests()
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        
-        // Core tests
+
+        // Setup AutoMapper for comparison
+        var autoConfig = new AutoMapper.MapperConfiguration(cfg => cfg.CreateMap<UserEntity, UserDto>());
+        var autoMapper = autoConfig.CreateMapper();
+
         var user = new UserEntity { Id = 1, FirstName = "Test", LastName = "User", Email = "test@test.com" };
+
+        // Warm up both mappers
+        _ = user.MapTo<UserDto>();
+        _ = autoMapper.Map<UserDto>(user);
+        Mapsicle.Mapper.ClearCache();
+
+        // Cold start comparison
+        sw.Restart();
         for (int i = 0; i < 10000; i++)
             _ = user.MapTo<UserDto>();
-        Console.WriteLine($"✓ Core: 10,000 mappings in {sw.ElapsedMilliseconds}ms");
-        
+        var mapsicleTime = sw.ElapsedMilliseconds;
+        Console.WriteLine($"✓ Mapsicle (cold+warm): 10,000 mappings in {mapsicleTime}ms");
+
+        sw.Restart();
+        for (int i = 0; i < 10000; i++)
+            _ = autoMapper.Map<UserDto>(user);
+        var autoMapperTime = sw.ElapsedMilliseconds;
+        Console.WriteLine($"  AutoMapper (warm):    10,000 mappings in {autoMapperTime}ms");
+
+        // Warm start comparison (cache hit scenario)
+        Console.WriteLine("\n--- Warm Cache Performance (100,000 iterations) ---");
+
+        // Mapsicle warm
+        _ = user.MapTo<UserDto>(); // Ensure cached
+        sw.Restart();
+        for (int i = 0; i < 100000; i++)
+            _ = user.MapTo<UserDto>();
+        mapsicleTime = sw.ElapsedMilliseconds;
+        Console.WriteLine($"  Mapsicle:   {mapsicleTime}ms ({100000.0 / mapsicleTime * 1000:N0} ops/sec)");
+
+        // AutoMapper warm
+        sw.Restart();
+        for (int i = 0; i < 100000; i++)
+            _ = autoMapper.Map<UserDto>(user);
+        autoMapperTime = sw.ElapsedMilliseconds;
+        Console.WriteLine($"  AutoMapper: {autoMapperTime}ms ({100000.0 / autoMapperTime * 1000:N0} ops/sec)");
+
+        // Manual (baseline)
+        sw.Restart();
+        for (int i = 0; i < 100000; i++)
+            _ = new UserDto { Id = user.Id, FirstName = user.FirstName, LastName = user.LastName, Email = user.Email, IsActive = user.IsActive };
+        var manualTime = sw.ElapsedMilliseconds;
+        Console.WriteLine($"  Manual:     {manualTime}ms ({100000.0 / manualTime * 1000:N0} ops/sec)");
+
+        var ratio = autoMapperTime > 0 ? (double)mapsicleTime / autoMapperTime : 0;
+        Console.WriteLine($"\n  Mapsicle/AutoMapper ratio: {ratio:F2}x {(ratio < 1 ? "(FASTER)" : ratio > 1 ? "(slower)" : "(equal)")}");
+
+        // Strongly-typed performance test
+        Console.WriteLine("\n--- Strongly-Typed Mapper Performance (100,000 iterations) ---");
+        _ = user.MapTo<UserEntity, UserDto>(); // Ensure typed cache is built
+        sw.Restart();
+        for (int i = 0; i < 100000; i++)
+            _ = user.MapTo<UserEntity, UserDto>();
+        var typedTime = sw.ElapsedMilliseconds;
+        Console.WriteLine($"  Mapsicle<S,D>: {typedTime}ms ({100000.0 / typedTime * 1000:N0} ops/sec)");
+
         // Fluent tests
+        Console.WriteLine("\n--- Other Tests ---");
         sw.Restart();
         var config = new Mapsicle.Fluent.MapperConfiguration(cfg => cfg.CreateMap<UserEntity, UserDto>());
         var mapper = config.CreateMapper();
@@ -101,6 +158,12 @@ public class Program
         var largeList = Enumerable.Range(1, 10000).Select(i => new UserEntity { Id = i, FirstName = $"User{i}" }).ToList();
         _ = largeList.MapTo<UserDto>();
         Console.WriteLine($"✓ Large collection (10,000 items): {sw.ElapsedMilliseconds}ms");
+
+        // Typed collection
+        Mapsicle.Mapper.ClearCache();
+        sw.Restart();
+        _ = largeList.MapTo<UserEntity, UserDto>();
+        Console.WriteLine($"✓ Typed collection (10,000 items): {sw.ElapsedMilliseconds}ms");
 
         Console.WriteLine("\n✓ All smoke tests passed!");
     }
@@ -321,6 +384,90 @@ public class ECommerceOrderDto
 
 #endregion
 
+#region Mapperly Mappers (Source Generated)
+
+/// <summary>
+/// Mapperly source-generated mapper for UserEntity -> UserDto.
+/// Generated at compile time with zero runtime overhead.
+/// </summary>
+[Mapper]
+public partial class MapperlyUserMapper
+{
+    public partial UserDto Map(UserEntity source);
+    public partial List<UserDto> MapList(List<UserEntity> source);
+}
+
+/// <summary>
+/// Mapperly source-generated mapper for UserEntity -> UserFlatDto with flattening.
+/// </summary>
+[Mapper]
+public partial class MapperlyFlatMapper
+{
+    [MapProperty("Address.City", "AddressCity")]
+    [MapProperty("Address.Country", "AddressCountry")]
+    public partial UserFlatDto Map(UserEntity source);
+}
+
+/// <summary>
+/// Mapperly source-generated mapper for deep entities.
+/// </summary>
+[Mapper]
+public partial class MapperlyDeepMapper
+{
+    public partial DeepDto Map(DeepEntity source);
+}
+
+/// <summary>
+/// Mapperly source-generated mapper for e-commerce orders.
+/// Uses partial method for custom mapping logic.
+/// </summary>
+[Mapper]
+public partial class MapperlyOrderMapper
+{
+    [MapProperty("Customer.Email", "CustomerEmail")]
+    [MapProperty("ShippingAddress.City", "ShippingCity")]
+    [MapProperty("ShippingAddress.Country", "ShippingCountry")]
+    [MapperIgnoreSource("Customer")]
+    [MapperIgnoreSource("Lines")]
+    [MapperIgnoreSource("BillingAddress")]
+    [MapperIgnoreSource("Subtotal")]
+    [MapperIgnoreSource("Tax")]
+    [MapperIgnoreSource("Shipping")]
+    [MapperIgnoreSource("CouponCode")]
+    [MapperIgnoreSource("Discount")]
+    [MapperIgnoreSource("PaymentMethod")]
+    [MapperIgnoreSource("Notes")]
+    public partial ECommerceOrderDto Map(ECommerceOrder source);
+
+    // Custom mapping for Status enum to string
+    private string MapOrderStatus(OrderStatus status) => status.ToString();
+}
+
+/// <summary>
+/// Simple Mapperly mapper for orders (manual approach for complex mappings).
+/// </summary>
+public class MapperlyOrderMapperManual
+{
+    public ECommerceOrderDto Map(ECommerceOrder source) => new()
+    {
+        Id = source.Id,
+        OrderNumber = source.OrderNumber,
+        CreatedAt = source.CreatedAt,
+        Status = source.Status.ToString(),
+        CustomerName = $"{source.Customer.FirstName} {source.Customer.LastName}",
+        CustomerEmail = source.Customer.Email,
+        ShippingCity = source.ShippingAddress.City,
+        ShippingCountry = source.ShippingAddress.Country,
+        ItemCount = source.Lines.Count,
+        Total = source.Total
+    };
+
+    public List<ECommerceOrderDto> MapList(List<ECommerceOrder> source) =>
+        source.Select(Map).ToList();
+}
+
+#endregion
+
 #region Core Benchmarks
 
 [MemoryDiagnoser]
@@ -330,6 +477,8 @@ public class CoreMapperBenchmarks
     private UserEntity _user = null!;
     private List<UserEntity> _users = null!;
     private AutoMapper.IMapper _autoMapper = null!;
+    private MapperlyUserMapper _mapperlyMapper = null!;
+    private MapperlyFlatMapper _mapperlyFlatMapper = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -357,6 +506,10 @@ public class CoreMapperBenchmarks
         });
         _autoMapper = config.CreateMapper();
 
+        // Initialize Mapperly mappers (source-generated, no runtime overhead)
+        _mapperlyMapper = new MapperlyUserMapper();
+        _mapperlyFlatMapper = new MapperlyFlatMapper();
+
         // Warm up caches
         _ = _user.MapTo<UserDto>();
         Mapsicle.Mapper.ClearCache();
@@ -376,16 +529,25 @@ public class CoreMapperBenchmarks
     public UserDto AutoMapper_Single() => _autoMapper.Map<UserDto>(_user);
 
     [Benchmark]
+    public UserDto Mapperly_Single() => _mapperlyMapper.Map(_user);
+
+    [Benchmark]
     public List<UserDto> Mapsicle_Collection() => _users.MapTo<UserDto>();
 
     [Benchmark]
     public List<UserDto> AutoMapper_Collection() => _autoMapper.Map<List<UserDto>>(_users);
 
     [Benchmark]
+    public List<UserDto> Mapperly_Collection() => _mapperlyMapper.MapList(_users);
+
+    [Benchmark]
     public UserFlatDto? Mapsicle_Flattening() => _user.MapTo<UserFlatDto>();
 
     [Benchmark]
     public UserFlatDto AutoMapper_Flattening() => _autoMapper.Map<UserFlatDto>(_user);
+
+    [Benchmark]
+    public UserFlatDto Mapperly_Flattening() => _mapperlyFlatMapper.Map(_user);
 }
 
 #endregion
@@ -399,6 +561,7 @@ public class FluentMapperBenchmarks
     private UserEntity _user = null!;
     private Mapsicle.Fluent.IMapper _fluentMapper = null!;
     private AutoMapper.IMapper _autoMapper = null!;
+    private MapperlyUserMapper _mapperlyMapper = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -416,6 +579,8 @@ public class FluentMapperBenchmarks
             cfg.CreateMap<UserEntity, UserDto>();
         });
         _autoMapper = autoConfig.CreateMapper();
+
+        _mapperlyMapper = new MapperlyUserMapper();
     }
 
     [Benchmark(Baseline = true)]
@@ -426,6 +591,9 @@ public class FluentMapperBenchmarks
 
     [Benchmark]
     public UserDto AutoMapper() => _autoMapper.Map<UserDto>(_user);
+
+    [Benchmark]
+    public UserDto Mapperly() => _mapperlyMapper.Map(_user);
 }
 
 #endregion
@@ -502,6 +670,8 @@ public class EdgeCaseBenchmarks
     private DeepEntity _deepNested = null!;
     private List<UserEntity> _largeCollection = null!;
     private AutoMapper.IMapper _autoMapper = null!;
+    private MapperlyDeepMapper _mapperlyDeepMapper = null!;
+    private MapperlyUserMapper _mapperlyUserMapper = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -529,6 +699,10 @@ public class EdgeCaseBenchmarks
         });
         _autoMapper = config.CreateMapper();
 
+        // Initialize Mapperly mappers
+        _mapperlyDeepMapper = new MapperlyDeepMapper();
+        _mapperlyUserMapper = new MapperlyUserMapper();
+
         // Set max depth for Mapsicle
         Mapsicle.Mapper.MaxDepth = 32;
     }
@@ -551,11 +725,17 @@ public class EdgeCaseBenchmarks
     [Benchmark(Description = "Deep nesting (15 levels) - AutoMapper")]
     public DeepDto AutoMapper_DeepNesting() => _autoMapper.Map<DeepDto>(_deepNested);
 
+    [Benchmark(Description = "Deep nesting (15 levels) - Mapperly")]
+    public DeepDto Mapperly_DeepNesting() => _mapperlyDeepMapper.Map(_deepNested);
+
     [Benchmark(Description = "Large collection (10K) - Mapsicle")]
     public List<UserDto> Mapsicle_LargeCollection() => _largeCollection.MapTo<UserDto>();
 
     [Benchmark(Description = "Large collection (10K) - AutoMapper")]
     public List<UserDto> AutoMapper_LargeCollection() => _autoMapper.Map<List<UserDto>>(_largeCollection);
+
+    [Benchmark(Description = "Large collection (10K) - Mapperly")]
+    public List<UserDto> Mapperly_LargeCollection() => _mapperlyUserMapper.MapList(_largeCollection);
 
     [Benchmark(Description = "Cold start (new type) - Mapsicle")]
     public DeepDto? Mapsicle_ColdStart()
@@ -566,6 +746,9 @@ public class EdgeCaseBenchmarks
 
     [Benchmark(Description = "Cache hit - Mapsicle")]
     public DeepDto? Mapsicle_CacheHit() => _deepNested.MapTo<DeepDto>();
+
+    [Benchmark(Baseline = true, Description = "No cold start - Mapperly (compile-time)")]
+    public DeepDto Mapperly_NoColdStart() => _mapperlyDeepMapper.Map(_deepNested);
 }
 
 #endregion
@@ -579,6 +762,7 @@ public class RealWorldScenarioBenchmarks
     private List<ECommerceOrder> _orders = null!;
     private AutoMapper.IMapper _autoMapper = null!;
     private Mapsicle.Fluent.IMapper _fluentMapper = null!;
+    private MapperlyOrderMapperManual _mapperlyMapper = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -648,6 +832,9 @@ public class RealWorldScenarioBenchmarks
                 .ForMember(d => d.ItemCount, o => o.MapFrom(s => s.Lines.Count));
         });
         _autoMapper = autoConfig.CreateMapper();
+
+        // Initialize Mapperly mapper (using manual implementation for complex mapping)
+        _mapperlyMapper = new MapperlyOrderMapperManual();
     }
 
     [Benchmark(Baseline = true, Description = "E-Commerce Orders - Manual")]
@@ -680,11 +867,20 @@ public class RealWorldScenarioBenchmarks
         return _autoMapper.Map<List<ECommerceOrderDto>>(_orders);
     }
 
+    [Benchmark(Description = "E-Commerce Orders - Mapperly")]
+    public List<ECommerceOrderDto> Mapperly_Orders()
+    {
+        return _mapperlyMapper.MapList(_orders);
+    }
+
     [Benchmark(Description = "Single complex object - Mapsicle.Fluent")]
     public ECommerceOrderDto? Mapsicle_SingleComplex() => _fluentMapper.Map<ECommerceOrderDto>(_orders[0]);
 
     [Benchmark(Description = "Single complex object - AutoMapper")]
     public ECommerceOrderDto AutoMapper_SingleComplex() => _autoMapper.Map<ECommerceOrderDto>(_orders[0]);
+
+    [Benchmark(Description = "Single complex object - Mapperly")]
+    public ECommerceOrderDto Mapperly_SingleComplex() => _mapperlyMapper.Map(_orders[0]);
 }
 
 #endregion
@@ -696,6 +892,7 @@ public class ConcurrencyBenchmarks
 {
     private UserEntity _user = null!;
     private AutoMapper.IMapper _autoMapper = null!;
+    private MapperlyUserMapper _mapperlyMapper = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -707,6 +904,8 @@ public class ConcurrencyBenchmarks
             cfg.CreateMap<UserEntity, UserDto>();
         });
         _autoMapper = config.CreateMapper();
+
+        _mapperlyMapper = new MapperlyUserMapper();
 
         // Warm up
         _ = _user.MapTo<UserDto>();
@@ -731,6 +930,18 @@ public class ConcurrencyBenchmarks
         Parallel.For(0, 1000, _ =>
         {
             var dto = _autoMapper.Map<UserDto>(_user);
+            if (dto != null) Interlocked.Increment(ref count);
+        });
+        return count;
+    }
+
+    [Benchmark(Description = "1000 parallel mappings - Mapperly")]
+    public int Mapperly_Concurrent()
+    {
+        var count = 0;
+        Parallel.For(0, 1000, _ =>
+        {
+            var dto = _mapperlyMapper.Map(_user);
             if (dto != null) Interlocked.Increment(ref count);
         });
         return count;

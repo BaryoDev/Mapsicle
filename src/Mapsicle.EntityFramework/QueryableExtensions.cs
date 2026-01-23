@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -12,8 +13,9 @@ namespace Mapsicle.EntityFramework
     /// </summary>
     public static class QueryableExtensions
     {
-        private static readonly Dictionary<(Type, Type), LambdaExpression> _projectionCache = new();
-        private static readonly object _lock = new();
+        // Thread-safe cache using ConcurrentDictionary
+        // Key includes config hash to handle configuration changes
+        private static readonly ConcurrentDictionary<(Type, Type, int), LambdaExpression> _projectionCache = new();
 
         /// <summary>
         /// Projects each element of a query to a new form using the configured mapping.
@@ -57,19 +59,11 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var key = (typeof(TSource), typeof(TDest));
+            var configHash = configuration?.GetHashCode() ?? 0;
+            var key = (typeof(TSource), typeof(TDest), configHash);
 
-            lock (_lock)
-            {
-                if (_projectionCache.TryGetValue(key, out var cached))
-                {
-                    return (Expression<Func<TSource, TDest>>)cached;
-                }
-
-                var projection = BuildProjectionExpression<TSource, TDest>(configuration);
-                _projectionCache[key] = projection;
-                return projection;
-            }
+            return (Expression<Func<TSource, TDest>>)_projectionCache.GetOrAdd(key, _ =>
+                BuildProjectionExpression<TSource, TDest>(configuration));
         }
 
         private static LambdaExpression GetOrBuildProjection<TDest>(
@@ -78,19 +72,11 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var key = (sourceType, destType);
+            var configHash = configuration?.GetHashCode() ?? 0;
+            var key = (sourceType, destType, configHash);
 
-            lock (_lock)
-            {
-                if (_projectionCache.TryGetValue(key, out var cached))
-                {
-                    return cached;
-                }
-
-                var projection = BuildProjectionExpressionNonGeneric(sourceType, destType, configuration);
-                _projectionCache[key] = projection;
-                return projection;
-            }
+            return _projectionCache.GetOrAdd(key, _ =>
+                BuildProjectionExpressionNonGeneric(sourceType, destType, configuration));
         }
 
         /// <summary>
@@ -365,11 +351,13 @@ namespace Mapsicle.EntityFramework
         /// </summary>
         public static void ClearProjectionCache()
         {
-            lock (_lock)
-            {
-                _projectionCache.Clear();
-            }
+            _projectionCache.Clear();
         }
+
+        /// <summary>
+        /// Gets the current cache size. Useful for diagnostics.
+        /// </summary>
+        public static int CacheSize => _projectionCache.Count;
 
         /// <summary>
         /// Replaces a parameter expression in an expression tree with another expression.

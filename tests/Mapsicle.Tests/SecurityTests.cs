@@ -11,6 +11,7 @@ namespace Mapsicle.Tests
     /// Tests injection patterns, DoS scenarios, memory safety, and type safety.
     /// Note: These tests validate security measures without executing actual malicious code.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class SecurityTests
     {
         #region Test Models

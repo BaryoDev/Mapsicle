@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>Mapsicle.Dapper</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Arnel Isiderio Robles</Authors>
+    <Description>Dapper integration for Mapsicle - Bridge Dapper query results to mapped DTOs with fluent extensions</Description>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
+    <PackageTags>mapper;mapping;dapper;orm;database;automapper-alternative</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mapsicle\Mapsicle.csproj" />
+    <ProjectReference Include="..\Mapsicle.Fluent\Mapsicle.Fluent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.35" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

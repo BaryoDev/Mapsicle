@@ -11,6 +11,7 @@ namespace Mapsicle.Tests
     /// <summary>
     /// Stress tests for Mapsicle including continuous mapping, random type generation, and cache thrashing.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class StressTests
     {
         #region Test Models

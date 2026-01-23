@@ -9,6 +9,7 @@ namespace Mapsicle.Tests
     /// Regression tests to verify fixes for known issues and ensure consistent behavior.
     /// These tests document expected behavior for edge cases mentioned in README.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class RegressionTests
     {
         #region Test Models

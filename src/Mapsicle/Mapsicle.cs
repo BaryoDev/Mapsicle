@@ -82,10 +82,14 @@ namespace Mapsicle
         private static LruCache<(Type, Type), Delegate>? _lruMapToCache;
         private static LruCache<(Type, Type), Action<object, object>>? _lruMapCache;
 
-        // PropertyInfo cache for performance
+        // PropertyInfo caches for performance - separate readable/writable for faster lookup
         private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertyCache = new();
+        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _readablePropertyCache = new();
+        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _writablePropertyCache = new();
 
-        private static readonly System.Threading.AsyncLocal<int> _mappingDepth = new();
+        // OPTIMIZATION: Use ThreadStatic instead of AsyncLocal for zero-allocation depth tracking
+        [ThreadStatic]
+        private static int _mappingDepth;
 
         // Cache statistics
         private static long _cacheHits;
@@ -160,6 +164,8 @@ namespace Mapsicle
             _mapToCache.Clear();
             _mapCache.Clear();
             _propertyCache.Clear();
+            _readablePropertyCache.Clear();
+            _writablePropertyCache.Clear();
             System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
             System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
 
@@ -191,6 +197,8 @@ namespace Mapsicle
                 _lruMapToCache?.Clear();
                 _lruMapCache?.Clear();
                 _propertyCache.Clear();
+                _readablePropertyCache.Clear();
+                _writablePropertyCache.Clear();
                 System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
                 System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
             }
@@ -221,6 +229,57 @@ namespace Mapsicle
                 t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .Where(p => p.GetIndexParameters().Length == 0)
                     .ToArray());
+        }
+
+        /// <summary>
+        /// Gets cached readable PropertyInfo array for a type (optimized for source types).
+        /// </summary>
+        internal static PropertyInfo[] GetCachedReadableProperties(Type type)
+        {
+            return _readablePropertyCache.GetOrAdd(type, t =>
+            {
+                var props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var count = 0;
+                // Count first to avoid list allocation
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].GetIndexParameters().Length == 0 && props[i].CanRead)
+                        count++;
+                }
+                var result = new PropertyInfo[count];
+                var idx = 0;
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].GetIndexParameters().Length == 0 && props[i].CanRead)
+                        result[idx++] = props[i];
+                }
+                return result;
+            });
+        }
+
+        /// <summary>
+        /// Gets cached writable PropertyInfo array for a type (optimized for destination types).
+        /// </summary>
+        internal static PropertyInfo[] GetCachedWritableProperties(Type type)
+        {
+            return _writablePropertyCache.GetOrAdd(type, t =>
+            {
+                var props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var count = 0;
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].GetIndexParameters().Length == 0 && props[i].CanWrite)
+                        count++;
+                }
+                var result = new PropertyInfo[count];
+                var idx = 0;
+                for (int i = 0; i < props.Length; i++)
+                {
+                    if (props[i].GetIndexParameters().Length == 0 && props[i].CanWrite)
+                        result[idx++] = props[i];
+                }
+                return result;
+            });
         }
 
         #endregion
@@ -281,19 +340,19 @@ namespace Mapsicle
 
         private static bool IncrementDepth()
         {
-            var depth = _mappingDepth.Value;
-            if (depth >= MaxDepth)
+            // OPTIMIZATION: ThreadStatic access is much faster than AsyncLocal
+            if (_mappingDepth >= MaxDepth)
             {
                 Logger?.Invoke($"[Mapsicle] Max depth {MaxDepth} reached - possible circular reference");
                 return false;
             }
-            _mappingDepth.Value = depth + 1;
+            _mappingDepth++;
             return true;
         }
 
         private static void DecrementDepth()
         {
-            _mappingDepth.Value = Math.Max(0, _mappingDepth.Value - 1);
+            if (_mappingDepth > 0) _mappingDepth--;
         }
 
         #endregion
@@ -350,6 +409,279 @@ namespace Mapsicle
 
         #region MapTo<T> - Single Object
 
+        // PERFORMANCE: Strongly-typed cache avoids boxing and enables faster lookups
+        private static class TypedMapperCache<TSource, TDest>
+        {
+            public static Func<TSource, TDest>? CompiledMapper;
+            public static bool RequiresDepthTracking;
+            public static volatile bool IsInitialized;
+        }
+
+        /// <summary>
+        /// High-performance strongly-typed mapping. Use this when source type is known at compile time.
+        /// </summary>
+        public static TDest? MapTo<TSource, TDest>(this TSource? source)
+        {
+            if (source is null) return default;
+
+            // FAST PATH: Check if we have a cached strongly-typed mapper
+            if (TypedMapperCache<TSource, TDest>.IsInitialized)
+            {
+                if (TypedMapperCache<TSource, TDest>.RequiresDepthTracking)
+                {
+                    if (!IncrementDepth()) return default;
+                    try
+                    {
+                        return TypedMapperCache<TSource, TDest>.CompiledMapper!(source);
+                    }
+                    finally
+                    {
+                        DecrementDepth();
+                    }
+                }
+                return TypedMapperCache<TSource, TDest>.CompiledMapper!(source);
+            }
+
+            // Cold path: Build and cache the typed mapper
+            return BuildAndCacheTypedMapper<TSource, TDest>(source);
+        }
+
+        private static TDest? BuildAndCacheTypedMapper<TSource, TDest>(TSource source)
+        {
+            var sourceType = typeof(TSource);
+            var destType = typeof(TDest);
+
+            // Determine if depth tracking is needed (has nested complex types)
+            TypedMapperCache<TSource, TDest>.RequiresDepthTracking = HasNestedComplexTypes(sourceType);
+
+            // Build the strongly-typed mapper
+            var mapper = BuildTypedMapper<TSource, TDest>();
+            TypedMapperCache<TSource, TDest>.CompiledMapper = mapper;
+            TypedMapperCache<TSource, TDest>.IsInitialized = true;
+
+            // Execute with depth tracking if needed
+            if (TypedMapperCache<TSource, TDest>.RequiresDepthTracking)
+            {
+                if (!IncrementDepth()) return default;
+                try
+                {
+                    return mapper(source);
+                }
+                finally
+                {
+                    DecrementDepth();
+                }
+            }
+            return mapper(source);
+        }
+
+        private static bool HasNestedComplexTypes(Type type)
+        {
+            var props = GetCachedReadableProperties(type);
+            for (int i = 0; i < props.Length; i++)
+            {
+                var propType = props[i].PropertyType;
+                if (propType.IsClass && propType != typeof(string) && !typeof(System.Collections.IEnumerable).IsAssignableFrom(propType))
+                {
+                    return true; // Has nested complex object - needs depth tracking
+                }
+            }
+            return false;
+        }
+
+        private static Func<TSource, TDest> BuildTypedMapper<TSource, TDest>()
+        {
+            var sourceType = typeof(TSource);
+            var destType = typeof(TDest);
+            var sourceParam = Expression.Parameter(sourceType, "source");
+
+            var sourceProps = GetCachedReadableProperties(sourceType);
+            var destProps = GetCachedWritableProperties(destType);
+
+            // For simple object-to-object mapping, build optimal expression
+            if (destType.GetConstructor(Type.EmptyTypes) != null || destType.IsValueType)
+            {
+                var bindings = new List<MemberBinding>(destProps.Length);
+
+                for (int i = 0; i < destProps.Length; i++)
+                {
+                    var destProp = destProps[i];
+                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+
+                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
+                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
+
+                    PropertyInfo? sourceProp = null;
+                    for (int j = 0; j < sourceProps.Length; j++)
+                    {
+                        if (sourceProps[j].Name.Equals(sourcePropertyName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            sourceProp = sourceProps[j];
+                            break;
+                        }
+                    }
+
+                    if (sourceProp != null)
+                    {
+                        var binding = CreateTypedPropertyBinding<TSource>(destProp, sourceProp, sourceParam);
+                        if (binding != null) bindings.Add(binding);
+                    }
+                    else
+                    {
+                        // Try flattening
+                        var flattenedBinding = TryCreateTypedFlattenedBinding<TSource>(destProp, sourceProps, sourceParam);
+                        if (flattenedBinding != null) bindings.Add(flattenedBinding);
+                    }
+                }
+
+                var init = Expression.MemberInit(Expression.New(destType), bindings);
+                return Expression.Lambda<Func<TSource, TDest>>(init, sourceParam).Compile();
+            }
+
+            // Fallback to constructor-based mapping
+            return BuildConstructorBasedMapper<TSource, TDest>(sourceParam, sourceProps);
+        }
+
+        private static MemberBinding? CreateTypedPropertyBinding<TSource>(PropertyInfo destProp, PropertyInfo sourceProp, ParameterExpression sourceParam)
+        {
+            var propExp = Expression.Property(sourceParam, sourceProp);
+            var targetType = destProp.PropertyType;
+            var srcType = sourceProp.PropertyType;
+
+            if (targetType.IsAssignableFrom(srcType))
+            {
+                return Expression.Bind(destProp, srcType == targetType ? propExp : Expression.Convert(propExp, targetType));
+            }
+            else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+            {
+                // Nested object - use recursive MapTo
+                var mapMethod = typeof(Mapper).GetMethod("MapTo", new[] { typeof(object) })!.MakeGenericMethod(targetType);
+                var recursiveCall = Expression.Call(null, mapMethod, Expression.Convert(propExp, typeof(object)));
+                return Expression.Bind(destProp, recursiveCall);
+            }
+            else if (targetType == typeof(string))
+            {
+                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
+                return Expression.Bind(destProp, toStringCall);
+            }
+            else if (srcType.IsEnum && (targetType == typeof(int) || targetType == typeof(long)))
+            {
+                return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
+            }
+            else
+            {
+                var underlyingTarget = Nullable.GetUnderlyingType(targetType);
+                var underlyingSource = Nullable.GetUnderlyingType(srcType);
+                if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
+                {
+                    var coalesce = Expression.Coalesce(propExp, Expression.Default(targetType));
+                    return Expression.Bind(destProp, coalesce);
+                }
+            }
+            return null;
+        }
+
+        private static MemberBinding? TryCreateTypedFlattenedBinding<TSource>(PropertyInfo destProp, PropertyInfo[] sourceProps, ParameterExpression sourceParam)
+        {
+            string destName = destProp.Name;
+
+            for (int i = 0; i < sourceProps.Length; i++)
+            {
+                var sourceProp = sourceProps[i];
+                if (!sourceProp.PropertyType.IsClass || sourceProp.PropertyType == typeof(string)) continue;
+                if (!destName.StartsWith(sourceProp.Name, StringComparison.OrdinalIgnoreCase)) continue;
+
+                string remainder = destName.Substring(sourceProp.Name.Length);
+                if (string.IsNullOrEmpty(remainder)) continue;
+
+                var nestedProps = GetCachedReadableProperties(sourceProp.PropertyType);
+                PropertyInfo? nestedProp = null;
+                for (int j = 0; j < nestedProps.Length; j++)
+                {
+                    if (nestedProps[j].Name.Equals(remainder, StringComparison.OrdinalIgnoreCase))
+                    {
+                        nestedProp = nestedProps[j];
+                        break;
+                    }
+                }
+
+                if (nestedProp != null && destProp.PropertyType.IsAssignableFrom(nestedProp.PropertyType))
+                {
+                    var parentAccess = Expression.Property(sourceParam, sourceProp);
+                    var nestedAccess = Expression.Property(parentAccess, nestedProp);
+                    var nullCheck = Expression.Equal(parentAccess, Expression.Constant(null, sourceProp.PropertyType));
+                    var safeAccess = Expression.Condition(
+                        nullCheck,
+                        Expression.Default(destProp.PropertyType),
+                        Expression.Convert(nestedAccess, destProp.PropertyType)
+                    );
+                    return Expression.Bind(destProp, safeAccess);
+                }
+            }
+            return null;
+        }
+
+        private static Func<TSource, TDest> BuildConstructorBasedMapper<TSource, TDest>(ParameterExpression sourceParam, PropertyInfo[] sourceProps)
+        {
+            var destType = typeof(TDest);
+            var ctors = destType.GetConstructors();
+            ConstructorInfo? ctor = null;
+            int maxParams = -1;
+            for (int i = 0; i < ctors.Length; i++)
+            {
+                var paramCount = ctors[i].GetParameters().Length;
+                if (paramCount > maxParams)
+                {
+                    maxParams = paramCount;
+                    ctor = ctors[i];
+                }
+            }
+
+            if (ctor != null)
+            {
+                var ctorParams = ctor.GetParameters();
+                var args = new List<Expression>(ctorParams.Length);
+                for (int paramIdx = 0; paramIdx < ctorParams.Length; paramIdx++)
+                {
+                    var param = ctorParams[paramIdx];
+                    PropertyInfo? sourceProp = null;
+                    for (int j = 0; j < sourceProps.Length; j++)
+                    {
+                        if (sourceProps[j].Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            sourceProp = sourceProps[j];
+                            break;
+                        }
+                    }
+
+                    if (sourceProp != null)
+                    {
+                        var propExp = Expression.Property(sourceParam, sourceProp);
+                        if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
+                        {
+                            args.Add(Expression.Convert(propExp, param.ParameterType));
+                        }
+                        else if (param.ParameterType == typeof(string))
+                        {
+                            args.Add(Expression.Call(propExp, typeof(object).GetMethod("ToString")!));
+                        }
+                        else
+                        {
+                            args.Add(Expression.Default(param.ParameterType));
+                        }
+                    }
+                    else
+                    {
+                        args.Add(Expression.Default(param.ParameterType));
+                    }
+                }
+                var newExp = Expression.New(ctor, args);
+                return Expression.Lambda<Func<TSource, TDest>>(newExp, sourceParam).Compile();
+            }
+
+            return _ => default!;
+        }
+
         /// <summary>
         /// Maps the source object to a new instance of the destination type T.
         /// </summary>
@@ -364,28 +696,38 @@ namespace Mapsicle
         {
             if (source is null) return default;
 
-            var key = (source.GetType(), typeof(T));
+            var sourceType = source.GetType();
             var destType = typeof(T);
+            var key = (sourceType, destType);
 
-            // OPTIMIZATION: Fast path for primitives - no depth tracking needed
-            if (destType.IsValueType || destType == typeof(string))
+            // OPTIMIZATION: Fast path - inline cache check without method call
+            if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
             {
-                var cachedMapper = GetCachedMapToDelegate<T>(key);
-                if (cachedMapper != null)
+                // Skip depth tracking for simple types (no nested objects)
+                if (_mappingDepth == 0 || !HasNestedComplexTypes(sourceType))
                 {
-                    return cachedMapper(source);
+                    return ((Func<object, T>)cached)(source);
                 }
-                // Fall through to build the delegate
+                if (!IncrementDepth()) return default;
+                try
+                {
+                    return ((Func<object, T>)cached)(source);
+                }
+                finally
+                {
+                    DecrementDepth();
+                }
             }
 
-            // Full path with cycle detection for complex objects
+            // Cold path with depth tracking
             if (!IncrementDepth())
             {
-                return default; // Max depth reached - likely circular reference
+                return default;
             }
 
             try
             {
+                // Build the delegate
                 var mapFunction = GetOrAddMapToDelegate<T>(key, k =>
             {
                 var sourceType = k.Item1;
@@ -460,18 +802,18 @@ namespace Mapsicle
                     }
                 }
 
-                var bindings = new List<MemberBinding>();
-                var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead)
-                    .ToArray();
-                var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                // OPTIMIZATION: Use cached property arrays instead of reflection + LINQ
+                var sourceProps = GetCachedReadableProperties(sourceType);
+                var destProps = GetCachedWritableProperties(destType);
+                var bindings = new List<MemberBinding>(destProps.Length);
 
                 // --- 1. Parameterless Constructor Path ---
                 if (destType.GetConstructor(Type.EmptyTypes) != null || destType.IsValueType)
                 {
-                    foreach (var destProp in destProps)
+                    // OPTIMIZATION: destProps is already filtered to writable, use for loop instead of foreach
+                    for (int i = 0; i < destProps.Length; i++)
                     {
-                        if (!destProp.CanWrite) continue;
+                        var destProp = destProps[i];
                         if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
 
                         var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
@@ -496,18 +838,38 @@ namespace Mapsicle
                 }
 
                 // --- 2. Constructor / Record Path ---
-                var ctor = destType.GetConstructors()
-                    .OrderByDescending(c => c.GetParameters().Length)
-                    .FirstOrDefault();
+                // OPTIMIZATION: Find largest constructor without LINQ
+                var ctors = destType.GetConstructors();
+                System.Reflection.ConstructorInfo? ctor = null;
+                int maxParams = -1;
+                for (int i = 0; i < ctors.Length; i++)
+                {
+                    var paramCount = ctors[i].GetParameters().Length;
+                    if (paramCount > maxParams)
+                    {
+                        maxParams = paramCount;
+                        ctor = ctors[i];
+                    }
+                }
 
                 if (ctor != null)
                 {
-                    var args = new List<Expression>();
-                    foreach (var param in ctor.GetParameters())
+                    var ctorParams = ctor.GetParameters();
+                    var args = new List<Expression>(ctorParams.Length);
+                    for (int paramIdx = 0; paramIdx < ctorParams.Length; paramIdx++)
                     {
-                        var sourceProp = sourceProps.FirstOrDefault(p =>
-                            p.Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase) &&
-                            p.CanRead);
+                        var param = ctorParams[paramIdx];
+                        // OPTIMIZATION: Use for loop instead of LINQ FirstOrDefault
+                        PropertyInfo? sourceProp = null;
+                        for (int j = 0; j < sourceProps.Length; j++)
+                        {
+                            // CanRead check removed - sourceProps is already filtered
+                            if (sourceProps[j].Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                sourceProp = sourceProps[j];
+                                break;
+                            }
+                        }
 
                         if (sourceProp != null)
                         {
@@ -573,15 +935,14 @@ namespace Mapsicle
                 var typedSource = Expression.Convert(sourceParam, sourceType);
                 var typedDest = Expression.Convert(destParam, destType);
 
-                var assignments = new List<Expression>();
-                var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead)
-                    .ToArray();
-                var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                // OPTIMIZATION: Use cached property arrays
+                var sourceProps = GetCachedReadableProperties(sourceType);
+                var destProps = GetCachedWritableProperties(destType);
+                var assignments = new List<Expression>(destProps.Length);
 
-                foreach (var destProp in destProps)
+                for (int i = 0; i < destProps.Length; i++)
                 {
-                    if (!destProp.CanWrite) continue;
+                    var destProp = destProps[i];
                     if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
 
                     var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
@@ -635,6 +996,64 @@ namespace Mapsicle
         #region MapTo<T> - Collection
 
         /// <summary>
+        /// High-performance strongly-typed collection mapping. Use when source type is known at compile time.
+        /// </summary>
+        public static List<TDest> MapTo<TSource, TDest>(this IEnumerable<TSource>? source)
+        {
+            if (source is null) return new List<TDest>();
+
+            // Pre-allocate with capacity hint
+            List<TDest> result;
+            if (source is ICollection<TSource> collection)
+            {
+                result = new List<TDest>(collection.Count);
+            }
+            else if (source is System.Collections.ICollection legacyCollection)
+            {
+                result = new List<TDest>(legacyCollection.Count);
+            }
+            else
+            {
+                result = new List<TDest>();
+            }
+
+            // Ensure typed mapper is initialized once
+            if (!TypedMapperCache<TSource, TDest>.IsInitialized)
+            {
+                // Initialize on first non-null item
+                using var enumerator = source.GetEnumerator();
+                while (enumerator.MoveNext())
+                {
+                    var first = enumerator.Current;
+                    if (first is null)
+                    {
+                        result.Add(default!);
+                        continue;
+                    }
+                    // This will initialize the cache
+                    result.Add(first.MapTo<TSource, TDest>()!);
+
+                    // Now process remaining with fast path
+                    while (enumerator.MoveNext())
+                    {
+                        var item = enumerator.Current;
+                        result.Add(item is null ? default! : TypedMapperCache<TSource, TDest>.CompiledMapper!(item)!);
+                    }
+                    return result;
+                }
+                return result;
+            }
+
+            // Fast path - mapper already cached
+            var mapper = TypedMapperCache<TSource, TDest>.CompiledMapper!;
+            foreach (var item in source)
+            {
+                result.Add(item is null ? default! : mapper(item)!);
+            }
+            return result;
+        }
+
+        /// <summary>
         /// Maps a collection of objects to a List of type T.
         /// </summary>
         public static List<T> MapTo<T>(this System.Collections.IEnumerable? source)
@@ -653,7 +1072,6 @@ namespace Mapsicle
             }
 
             // OPTIMIZATION: Cache the mapper delegate once and reuse for all items
-            // This avoids repeated cache lookups during collection iteration
             Type? itemType = null;
             Func<object, T>? cachedMapper = null;
 
@@ -670,14 +1088,20 @@ namespace Mapsicle
                 {
                     itemType = item.GetType();
                     var key = (itemType, typeof(T));
-                    // Try to get existing cached delegate
-                    cachedMapper = GetCachedMapToDelegate<T>(key);
-                    if (cachedMapper is null)
+                    // OPTIMIZATION: Direct cache access
+                    if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
+                    {
+                        cachedMapper = (Func<object, T>)cached;
+                    }
+                    else
                     {
                         // Fall back to single-item MapTo which will cache the delegate
                         result.Add(item.MapTo<T>()!);
                         // Now get the cached delegate for subsequent items
-                        cachedMapper = GetCachedMapToDelegate<T>(key);
+                        if (!_useLruCache && _mapToCache.TryGetValue(key, out cached))
+                        {
+                            cachedMapper = (Func<object, T>)cached;
+                        }
                         continue;
                     }
                 }
@@ -771,8 +1195,22 @@ namespace Mapsicle
 
         private static PropertyInfo? FindSourceProperty(PropertyInfo[] sourceProps, string primaryName, string fallbackName)
         {
-            return sourceProps.FirstOrDefault(p => p.Name.Equals(primaryName, StringComparison.OrdinalIgnoreCase) && p.CanRead)
-                ?? sourceProps.FirstOrDefault(p => p.Name.Equals(fallbackName, StringComparison.OrdinalIgnoreCase) && p.CanRead);
+            // OPTIMIZATION: Use for loop instead of LINQ - avoids allocations
+            PropertyInfo? fallbackMatch = null;
+            for (int i = 0; i < sourceProps.Length; i++)
+            {
+                var prop = sourceProps[i];
+                // CanRead check removed - sourceProps is already filtered to readable
+                if (prop.Name.Equals(primaryName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return prop;
+                }
+                if (fallbackMatch == null && prop.Name.Equals(fallbackName, StringComparison.OrdinalIgnoreCase))
+                {
+                    fallbackMatch = prop;
+                }
+            }
+            return fallbackMatch;
         }
 
         private static MemberBinding? CreatePropertyBinding(PropertyInfo destProp, PropertyInfo sourceProp,
@@ -838,18 +1276,30 @@ namespace Mapsicle
             string destName = destProp.Name;
 
             // Try to find nested properties by splitting the destination name
-            foreach (var sourceProp in sourceProps)
+            // OPTIMIZATION: Use for loop instead of foreach
+            for (int i = 0; i < sourceProps.Length; i++)
             {
+                var sourceProp = sourceProps[i];
                 if (!sourceProp.PropertyType.IsClass || sourceProp.PropertyType == typeof(string)) continue;
                 if (!destName.StartsWith(sourceProp.Name, StringComparison.OrdinalIgnoreCase)) continue;
 
                 string remainder = destName.Substring(sourceProp.Name.Length);
                 if (string.IsNullOrEmpty(remainder)) continue;
 
-                var nestedProps = sourceProp.PropertyType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead);
+                // OPTIMIZATION: Use cached readable properties for nested type
+                var nestedProps = GetCachedReadableProperties(sourceProp.PropertyType);
 
-                var nestedProp = nestedProps.FirstOrDefault(p => p.Name.Equals(remainder, StringComparison.OrdinalIgnoreCase));
+                // OPTIMIZATION: Use for loop with manual search instead of LINQ FirstOrDefault
+                PropertyInfo? nestedProp = null;
+                for (int j = 0; j < nestedProps.Length; j++)
+                {
+                    if (nestedProps[j].Name.Equals(remainder, StringComparison.OrdinalIgnoreCase))
+                    {
+                        nestedProp = nestedProps[j];
+                        break;
+                    }
+                }
+
                 if (nestedProp != null && destProp.PropertyType.IsAssignableFrom(nestedProp.PropertyType))
                 {
                     // Build: source.Address?.City ?? default
