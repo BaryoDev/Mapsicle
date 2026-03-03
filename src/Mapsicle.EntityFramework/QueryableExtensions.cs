@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Mapsicle.Fluent;
 
 namespace Mapsicle.EntityFramework
@@ -59,7 +60,7 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var configHash = configuration?.GetHashCode() ?? 0;
+            var configHash = configuration is null ? 0 : RuntimeHelpers.GetHashCode(configuration);
             var key = (typeof(TSource), typeof(TDest), configHash);
 
             return (Expression<Func<TSource, TDest>>)_projectionCache.GetOrAdd(key, _ =>
@@ -72,7 +73,7 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var configHash = configuration?.GetHashCode() ?? 0;
+            var configHash = configuration is null ? 0 : RuntimeHelpers.GetHashCode(configuration);
             var key = (sourceType, destType, configHash);
 
             return _projectionCache.GetOrAdd(key, _ =>
@@ -87,73 +88,19 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var sourceType = typeof(TSource);
-            var destType = typeof(TDest);
-
-            var sourceParam = Expression.Parameter(sourceType, "src");
-            var bindings = new List<MemberBinding>();
-
-            var typeMap = configuration?.GetTypeMap(sourceType, destType);
-            var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                .ToArray();
-            var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanWrite);
-
-            foreach (var destProp in destProps)
-            {
-                // Check for [IgnoreMap] attribute
-                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-                if (typeMap?.IsIgnored(destProp.Name) == true) continue;
-
-                Expression? valueExpression = null;
-
-                // First check for expression mapping from ForMember/MapFrom (translatable to SQL)
-                var expressionMapping = typeMap?.GetExpressionMapping(destProp.Name);
-                if (expressionMapping != null)
-                {
-                    // Replace the parameter in the expression with our sourceParam
-                    valueExpression = ReplaceParameter(expressionMapping.Body, expressionMapping.Parameters[0], sourceParam);
-
-                    // Ensure the expression type matches the destination property type
-                    if (valueExpression.Type != destProp.PropertyType)
-                    {
-                        valueExpression = Expression.Convert(valueExpression, destProp.PropertyType);
-                    }
-
-                    bindings.Add(Expression.Bind(destProp, valueExpression));
-                    continue;
-                }
-
-                // Check for [MapFrom] attribute
-                var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                string sourcePropName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                // Find matching source property
-                var sourceProp = sourceProps.FirstOrDefault(p =>
-                    p.Name.Equals(sourcePropName, StringComparison.OrdinalIgnoreCase));
-
-                if (sourceProp != null)
-                {
-                    valueExpression = BuildPropertyExpression(sourceParam, sourceProp, destProp);
-                }
-                else
-                {
-                    // Try flattening: AddressCity -> Address.City
-                    valueExpression = TryBuildFlattenedExpression(sourceParam, sourceProps, destProp);
-                }
-
-                if (valueExpression != null)
-                {
-                    bindings.Add(Expression.Bind(destProp, valueExpression));
-                }
-            }
-
-            var memberInit = Expression.MemberInit(Expression.New(destType), bindings);
-            return Expression.Lambda<Func<TSource, TDest>>(memberInit, sourceParam);
+            return (Expression<Func<TSource, TDest>>)BuildProjectionExpressionCore(
+                typeof(TSource), typeof(TDest), configuration);
         }
 
         private static LambdaExpression BuildProjectionExpressionNonGeneric(
+            Type sourceType,
+            Type destType,
+            MapperConfiguration? configuration)
+        {
+            return BuildProjectionExpressionCore(sourceType, destType, configuration);
+        }
+
+        private static LambdaExpression BuildProjectionExpressionCore(
             Type sourceType,
             Type destType,
             MapperConfiguration? configuration)
@@ -179,10 +126,8 @@ namespace Mapsicle.EntityFramework
                 var expressionMapping = typeMap?.GetExpressionMapping(destProp.Name);
                 if (expressionMapping != null)
                 {
-                    // Replace the parameter in the expression with our sourceParam
                     valueExpression = ReplaceParameter(expressionMapping.Body, expressionMapping.Parameters[0], sourceParam);
 
-                    // Ensure the expression type matches the destination property type
                     if (valueExpression.Type != destProp.PropertyType)
                     {
                         valueExpression = Expression.Convert(valueExpression, destProp.PropertyType);

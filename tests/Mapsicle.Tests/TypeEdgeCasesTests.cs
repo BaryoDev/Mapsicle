@@ -80,8 +80,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<UnsignedModel>();
 
             Assert.NotNull(dest);
-            // Type mismatch may result in default value
-            // Document actual behavior
+            // Property name mismatch (IntValue vs UIntValue) — property is skipped
+            Assert.Equal(0u, dest.UIntValue);
         }
 
         [Fact]
@@ -91,7 +91,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<UnsignedModel>();
 
             Assert.NotNull(dest);
-            // Should either skip or convert - document behavior
+            // Property name mismatch — skipped, default value
+            Assert.Equal(0u, dest.UIntValue);
         }
 
         [Fact]
@@ -101,7 +102,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<SignedModel>();
 
             Assert.NotNull(dest);
-            // Document actual mapping behavior
+            // Property name mismatch (UIntValue vs IntValue) — skipped, default value
+            Assert.Equal(0, dest.IntValue);
         }
 
         [Fact]
@@ -111,7 +113,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<SignedModel>();
 
             Assert.NotNull(dest);
-            // Should handle overflow gracefully
+            // Property name mismatch — skipped, default value
+            Assert.Equal(0, dest.IntValue);
         }
 
         #endregion
@@ -125,7 +128,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // May map if within int range
+            // Property name mismatch (LongValue vs IntValue) — skipped
+            Assert.Equal(0, dest.IntValue);
         }
 
         [Fact]
@@ -135,7 +139,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // Should handle overflow - either skip or truncate
+            // Property name mismatch — skipped
+            Assert.Equal(0, dest.IntValue);
         }
 
         [Fact]
@@ -145,21 +150,25 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // Float has less precision than double
-            // Document behavior (skip or convert with loss)
+            // DoubleValue maps to DoubleValue (exact name+type match)
+            Assert.Equal(1.234567890123456, dest.DoubleValue);
+            // FloatValue has no matching source property — default
+            Assert.Equal(0f, dest.FloatValue);
         }
 
         [Fact]
         public void MapTo_DecimalToDouble_PrecisionLoss()
         {
-            var source = new PrecisionSourceModel 
-            { 
-                DecimalValue = 1.234567890123456789012345678m 
+            var source = new PrecisionSourceModel
+            {
+                DecimalValue = 1.234567890123456789012345678m
             };
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // Decimal has more precision than double
+            // DecimalValue has no matching dest property name — skipped
+            // DoubleValue gets default source DoubleValue (0.0)
+            Assert.Equal(0.0, dest.DoubleValue);
         }
 
         #endregion
@@ -224,7 +233,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<DateTimeModel>();
 
             Assert.NotNull(dest);
-            // Document conversion behavior
+            // DateTimeValue matches by name and type — mapped directly
+            Assert.Equal(now, dest.DateTimeValue);
         }
 
         #endregion
@@ -325,7 +335,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<EnumModel>();
 
             Assert.NotNull(dest);
-            // Document enum to int conversion behavior
+            // EnumValue matches by name and exact type — mapped directly
+            Assert.Equal(TestEnum.Second, dest.EnumValue);
         }
 
         [Fact]
@@ -335,7 +346,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<EnumModel>();
 
             Assert.NotNull(dest);
-            // Document int to enum conversion behavior
+            // EnumAsInt matches by name and type (int -> int) — mapped directly
+            Assert.Equal(2, dest.EnumAsInt);
         }
 
         [Fact]
@@ -359,7 +371,10 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // Document NaN handling
+            // Property name "Value" does not match any dest property — all defaults
+            Assert.Equal(0, dest.IntValue);
+            Assert.Equal(0f, dest.FloatValue);
+            Assert.Equal(0.0, dest.DoubleValue);
         }
 
         [Fact]
@@ -369,7 +384,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // Document infinity handling
+            // DoubleValue matches by name and type — special values preserved
+            Assert.Equal(double.PositiveInfinity, dest.DoubleValue);
         }
 
         [Fact]
@@ -379,7 +395,8 @@ namespace Mapsicle.Tests
             var dest = source.MapTo<PrecisionDestModel>();
 
             Assert.NotNull(dest);
-            // Document negative infinity handling
+            // DoubleValue matches by name and type — special values preserved
+            Assert.Equal(double.NegativeInfinity, dest.DoubleValue);
         }
 
         #endregion

@@ -38,20 +38,23 @@ namespace Mapsicle
             }
 
             // Cache miss - create value
+            bool added = false;
             var value = _cache.GetOrAdd(key, k =>
             {
-                Interlocked.Increment(ref _approximateCount);
+                added = true;
                 return factory(k);
             });
+
+            if (added)
+            {
+                Interlocked.Increment(ref _approximateCount);
+            }
 
             // Track access for LRU (non-blocking)
             _accessOrder.Enqueue(key);
 
             // Lazy eviction - only when significantly over capacity
-            if (_approximateCount > _capacity + (_capacity / 4))
-            {
-                TryEvict();
-            }
+            TryEvict();
 
             return value;
         }
@@ -67,6 +70,10 @@ namespace Mapsicle
 
         private void TryEvict()
         {
+            // Only evict when significantly over capacity (25% overage threshold)
+            if (_approximateCount <= _capacity + (_capacity / 4))
+                return;
+
             // Only one thread should evict at a time
             if (!Monitor.TryEnter(_evictionLock))
                 return;

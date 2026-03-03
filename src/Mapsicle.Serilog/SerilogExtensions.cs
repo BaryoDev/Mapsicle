@@ -11,8 +11,8 @@ namespace Mapsicle.Serilog
     /// </summary>
     public static class SerilogExtensions
     {
-        private static ILogger? _logger;
-        private static LoggingOptions _options = new();
+        private static volatile ILogger? _logger;
+        private static volatile LoggingOptions _options = new();
 
         /// <summary>
         /// Configures Mapsicle to use Serilog for logging.
@@ -21,12 +21,15 @@ namespace Mapsicle.Serilog
         /// <param name="configure">Optional configuration action.</param>
         public static void UseSerilog(ILogger logger, Action<LoggingOptions>? configure = null)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _options = new LoggingOptions();
-            configure?.Invoke(_options);
+            if (logger is null) throw new ArgumentNullException(nameof(logger));
+
+            var newOptions = new LoggingOptions();
+            configure?.Invoke(newOptions);
+            _options = newOptions;
+            System.Threading.Interlocked.Exchange(ref _logger, logger);
 
             // Wire up to Mapsicle's Logger callback
-            Mapper.Logger = message => _logger.Information("[Mapsicle] {Message}", message);
+            Mapper.Logger = message => _logger?.Information("[Mapsicle] {Message}", message);
         }
 
         /// <summary>
@@ -35,7 +38,7 @@ namespace Mapsicle.Serilog
         public static void Reset()
         {
             _mappedTypes.Clear();
-            _logger = null;
+            System.Threading.Interlocked.Exchange(ref _logger, null);
             _options = new LoggingOptions();
         }
 

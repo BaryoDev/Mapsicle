@@ -8,6 +8,7 @@ namespace Mapsicle.Tests
     /// <summary>
     /// Tests for boundary conditions including empty strings, extreme values, and collection edge cases.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class BoundaryConditionsTests
     {
         #region Test Models

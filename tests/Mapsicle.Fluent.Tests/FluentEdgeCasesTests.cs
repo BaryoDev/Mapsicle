@@ -480,18 +480,8 @@ namespace Mapsicle.Fluent.Tests
                 // FullName and DisplayName in UserDto are not mapped
             });
 
-            // Should throw or report unmapped properties
-            try
-            {
-                config.AssertConfigurationIsValid();
-                // If it doesn't throw, that's the documented behavior
-                Assert.True(true);
-            }
-            catch (InvalidOperationException)
-            {
-                // Expected if validation is strict
-                Assert.True(true);
-            }
+            // AssertConfigurationIsValid throws when unmapped properties exist
+            Assert.Throws<InvalidOperationException>(() => config.AssertConfigurationIsValid());
         }
 
         #endregion

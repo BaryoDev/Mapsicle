@@ -481,31 +481,58 @@ namespace Mapsicle.Fluent
                 typeMap = FindPolymorphicTypeMap(sourceType, destType);
             }
 
-            // Check for custom constructor factory
+            // 1. Create destination
             var factory = typeMap?.GetConstructorFactory();
             TDest? result;
+            bool usedFactory = false;
             if (factory != null)
             {
                 result = (TDest)factory(source);
+                usedFactory = true;
             }
             else
             {
-                // Use core Mapsicle for basic mapping
-                result = source.MapTo<TDest>();
+                try
+                {
+                    result = Activator.CreateInstance<TDest>();
+                }
+                catch
+                {
+                    // Fall back to core Mapsicle for types without parameterless constructors
+                    result = source.MapTo<TDest>();
+                    if (result is null) return default;
+
+                    // Apply overrides and hooks on the already-mapped result
+                    typeMap?.GetBeforeMap()?.Invoke(source, result);
+                    if (typeMap != null && HasCustomMappingOrConditions(typeMap, destType))
+                    {
+                        var overrides = GetOrBuildOverrideAction<TDest>(sourceType, typeMap);
+                        overrides(source, result);
+                    }
+                    typeMap?.GetAfterMap()?.Invoke(source, result);
+                    return result;
+                }
             }
             if (result is null) return default;
 
-            // Execute BeforeMap hook
+            // 2. BeforeMap on the empty/factory-created destination
             typeMap?.GetBeforeMap()?.Invoke(source, result);
 
-            // OPTIMIZATION: Use cached compiled action for custom mappings
+            // 3. Core mapping (map properties into existing object)
+            // Skip when factory was used — factory is expected to produce a fully initialized object
+            if (!usedFactory)
+            {
+                source.Map(result);
+            }
+
+            // 4. Custom overrides
             if (typeMap != null && HasCustomMappingOrConditions(typeMap, destType))
             {
                 var applyOverrides = GetOrBuildOverrideAction<TDest>(sourceType, typeMap);
                 applyOverrides(source, result);
             }
 
-            // Execute AfterMap hook
+            // 5. AfterMap
             typeMap?.GetAfterMap()?.Invoke(source, result);
 
             return result;

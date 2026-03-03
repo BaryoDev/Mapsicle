@@ -21,6 +21,8 @@
 | **Mapsicle.Audit**           | Change tracking/diff detection    | Mapsicle.Fluent   |
 | **Mapsicle.DataAnnotations** | DataAnnotations validation        | Mapsicle.Fluent   |
 
+> The core `Mapsicle` package has zero dependencies. Extension packages introduce their respective third-party dependencies (listed in the table above).
+
 > *"The fastest mapping is the one you don't have to configure."*
 
 ---
@@ -36,7 +38,7 @@
 | **License**          | **MPL 2.0 (Free)**   | Commercial   | MIT (Free)   |
 | **Architecture**     | Runtime + Caching | Runtime + Expressions | Source Generator |
 | **Setup Required**   | **None**         | Profiles, DI | Partial class |
-| **Dependencies**     | **0**            | 5+           | 0 (compile-time) |
+| **Dependencies**     | **0** (core)     | 5+           | 0 (compile-time) |
 | **Compile-time Safety** | Partial       | No           | **Full**     |
 | **AOT Compatible**   | Partial          | No           | **Yes**      |
 | **Circular Refs**    | **Handled**      | Crash        | N/A          |

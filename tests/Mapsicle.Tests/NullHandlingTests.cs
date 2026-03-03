@@ -324,22 +324,14 @@ namespace Mapsicle.Tests
                 IntValue = 42
             };
 
-            // Mapping from null should ideally not crash
-            // The behavior depends on implementation - document current behavior
-            try
-            {
-                AllPropertiesModel? nullSource = null;
-                nullSource?.Map(target);
-                
-                // If it doesn't throw, target should be unchanged
-                Assert.Equal("Original", target.StringValue);
-                Assert.Equal(42, target.IntValue);
-            }
-            catch (NullReferenceException)
-            {
-                // If it throws, that's also acceptable behavior - document it
-                Assert.True(true, "Null source throws NullReferenceException as expected");
-            }
+            // Map() with null source returns destination unchanged (null-check at start)
+            AllPropertiesModel? nullSource = null;
+            var result = Mapper.Map(nullSource, target);
+
+            // Target should be unchanged — Map returns early for null source
+            Assert.Equal("Original", target.StringValue);
+            Assert.Equal(42, target.IntValue);
+            Assert.Same(target, result);
         }
 
         #endregion

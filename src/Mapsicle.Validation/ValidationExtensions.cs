@@ -140,6 +140,11 @@ namespace Mapsicle.Validation
             return new MapperValidationResult<T>(value, validationResult);
         }
 
+        /// <summary>
+        /// Gets or creates a cached validator instance. Note: validators created this way are
+        /// process-wide singletons. For DI-registered validators, use the overloads accepting
+        /// IValidator&lt;TDest&gt; directly instead.
+        /// </summary>
         private static TValidator GetOrCreateValidator<TValidator>()
             where TValidator : new()
         {

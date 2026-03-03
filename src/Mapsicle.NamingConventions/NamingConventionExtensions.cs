@@ -61,7 +61,7 @@ namespace Mapsicle.NamingConventions
                             }
                         }
                     }
-                    catch
+                    catch (Exception)
                     {
                         // Skip properties that can't be mapped
                     }
@@ -212,7 +212,7 @@ namespace Mapsicle.NamingConventions
 
                 return null;
             }
-            catch
+            catch (Exception)
             {
                 return null;
             }

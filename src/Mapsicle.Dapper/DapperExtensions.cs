@@ -59,7 +59,7 @@ namespace Mapsicle.Dapper
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <param name="commandType">Optional command type.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static IEnumerable<TDest> QueryAndMap<TSource, TDest>(
+        public static List<TDest> QueryAndMap<TSource, TDest>(
             this IDbConnection connection,
             string sql,
             object? param = null,
@@ -69,7 +69,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => item!.MapTo<TDest>()!);
+            return results.Select(item => item!.MapTo<TDest>()!).ToList();
         }
 
         /// <summary>
@@ -86,7 +86,7 @@ namespace Mapsicle.Dapper
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <param name="commandType">Optional command type.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static IEnumerable<TDest> QueryAndMap<TSource, TDest>(
+        public static List<TDest> QueryAndMap<TSource, TDest>(
             this IDbConnection connection,
             string sql,
             MapperConfiguration config,
@@ -98,7 +98,7 @@ namespace Mapsicle.Dapper
         {
             var mapper = config.CreateMapper();
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => mapper.Map<TSource, TDest>(item)!);
+            return results.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
         }
 
         /// <summary>
@@ -115,7 +115,7 @@ namespace Mapsicle.Dapper
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <param name="commandType">Optional command type.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static IEnumerable<TDest> QueryAndMap<TSource, TDest>(
+        public static List<TDest> QueryAndMap<TSource, TDest>(
             this IDbConnection connection,
             string sql,
             IMapper mapper,
@@ -126,7 +126,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => mapper.Map<TSource, TDest>(item)!);
+            return results.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
         }
 
         #endregion
@@ -145,7 +145,7 @@ namespace Mapsicle.Dapper
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <param name="commandType">Optional command type.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static async Task<IEnumerable<TDest>> QueryAndMapAsync<TSource, TDest>(
+        public static async Task<List<TDest>> QueryAndMapAsync<TSource, TDest>(
             this IDbConnection connection,
             string sql,
             object? param = null,
@@ -154,7 +154,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = await connection.QueryAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return results.Select(item => item!.MapTo<TDest>()!);
+            return results.Select(item => item!.MapTo<TDest>()!).ToList();
         }
 
         /// <summary>
@@ -170,7 +170,7 @@ namespace Mapsicle.Dapper
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <param name="commandType">Optional command type.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static async Task<IEnumerable<TDest>> QueryAndMapAsync<TSource, TDest>(
+        public static async Task<List<TDest>> QueryAndMapAsync<TSource, TDest>(
             this IDbConnection connection,
             string sql,
             IMapper mapper,
@@ -180,7 +180,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = await connection.QueryAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return results.Select(item => mapper.Map<TSource, TDest>(item)!);
+            return results.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
         }
 
         #endregion
@@ -354,7 +354,7 @@ namespace Mapsicle.Dapper
         /// <param name="transaction">Optional transaction.</param>
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static IEnumerable<TDest> ExecuteAndMap<TSource, TDest>(
+        public static List<TDest> ExecuteAndMap<TSource, TDest>(
             this IDbConnection connection,
             string procedureName,
             object? param = null,
@@ -363,7 +363,7 @@ namespace Mapsicle.Dapper
         {
             var results = connection.Query<TSource>(
                 procedureName, param, transaction, true, commandTimeout, CommandType.StoredProcedure);
-            return results.Select(item => item!.MapTo<TDest>()!);
+            return results.Select(item => item!.MapTo<TDest>()!).ToList();
         }
 
         /// <summary>
@@ -377,7 +377,7 @@ namespace Mapsicle.Dapper
         /// <param name="transaction">Optional transaction.</param>
         /// <param name="commandTimeout">Optional command timeout.</param>
         /// <returns>A list of mapped DTOs.</returns>
-        public static async Task<IEnumerable<TDest>> ExecuteAndMapAsync<TSource, TDest>(
+        public static async Task<List<TDest>> ExecuteAndMapAsync<TSource, TDest>(
             this IDbConnection connection,
             string procedureName,
             object? param = null,
@@ -386,7 +386,7 @@ namespace Mapsicle.Dapper
         {
             var results = await connection.QueryAsync<TSource>(
                 procedureName, param, transaction, commandTimeout, CommandType.StoredProcedure);
-            return results.Select(item => item!.MapTo<TDest>()!);
+            return results.Select(item => item!.MapTo<TDest>()!).ToList();
         }
 
         #endregion

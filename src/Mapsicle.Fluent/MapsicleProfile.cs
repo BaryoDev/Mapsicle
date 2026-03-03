@@ -26,12 +26,7 @@ namespace Mapsicle.Fluent
         /// <returns>The type map expression for further configuration.</returns>
         protected ITypeMapExpression<TSource, TDest> CreateMap<TSource, TDest>()
         {
-            ITypeMapExpression<TSource, TDest>? result = null;
-            _configurations.Add(cfg =>
-            {
-                result = cfg.CreateMap<TSource, TDest>();
-            });
-            // Return a deferred proxy - actual config happens when ApplyTo is called
+            // Don't add initial action — DeferredTypeMapExpression owns the registration entirely
             return new DeferredTypeMapExpression<TSource, TDest>(_configurations);
         }
 
@@ -71,7 +66,7 @@ namespace Mapsicle.Fluent
         public DeferredTypeMapExpression(List<Action<IMapperConfigurationExpression>> configurations)
         {
             _configurations = configurations;
-            // Add a configuration that applies all deferred actions
+            // Single action that does both CreateMap + all deferred actions — no removal needed
             _configurations.Add(cfg =>
             {
                 var typeMap = cfg.CreateMap<TSource, TDest>();
@@ -80,11 +75,6 @@ namespace Mapsicle.Fluent
                     action(typeMap);
                 }
             });
-            // Remove the initial CreateMap that was added
-            if (_configurations.Count > 1)
-            {
-                _configurations.RemoveAt(_configurations.Count - 2);
-            }
         }
 
         public ITypeMapExpression<TSource, TDest> ForMember<TMember>(

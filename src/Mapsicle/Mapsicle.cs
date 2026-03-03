@@ -79,8 +79,8 @@ namespace Mapsicle
         private static readonly ConcurrentDictionary<(Type, Type), Action<object, object>> _mapCache = new();
 
         // LRU caches (optional, for memory-bounded operation)
-        private static LruCache<(Type, Type), Delegate>? _lruMapToCache;
-        private static LruCache<(Type, Type), Action<object, object>>? _lruMapCache;
+        private static volatile LruCache<(Type, Type), Delegate>? _lruMapToCache;
+        private static volatile LruCache<(Type, Type), Action<object, object>>? _lruMapCache;
 
         // PropertyInfo caches for performance - separate readable/writable for faster lookup
         private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertyCache = new();
@@ -98,7 +98,7 @@ namespace Mapsicle
 
         #region Configuration
 
-        private static bool _useLruCache;
+        private static volatile bool _useLruCache;
         private static int _maxCacheSize = 1000;
 
         /// <summary>
@@ -147,7 +147,7 @@ namespace Mapsicle
         /// <summary>
         /// Maximum mapping depth for cycle detection. Default: 32.
         /// </summary>
-        private static int _maxDepth = 32;
+        private static volatile int _maxDepth = 32;
         public static int MaxDepth
         {
             get => _maxDepth;
@@ -323,10 +323,17 @@ namespace Mapsicle
                 
                 if (sourceProps.Contains(sourceName)) continue;
                 
-                // Check flattening
+                // Check flattening - verify the nested property actually exists
                 bool hasFlattening = typeof(TSource).GetProperties()
-                    .Any(sp => destProp.Name.StartsWith(sp.Name, StringComparison.OrdinalIgnoreCase) &&
-                               destProp.Name.Length > sp.Name.Length);
+                    .Any(sp =>
+                    {
+                        if (!destProp.Name.StartsWith(sp.Name, StringComparison.OrdinalIgnoreCase) ||
+                            destProp.Name.Length <= sp.Name.Length)
+                            return false;
+                        var remainder = destProp.Name.Substring(sp.Name.Length);
+                        return sp.PropertyType.GetProperty(remainder,
+                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase) != null;
+                    });
                 if (hasFlattening) continue;
 
                 unmapped.Add(destProp.Name);
@@ -410,11 +417,28 @@ namespace Mapsicle
         #region MapTo<T> - Single Object
 
         // PERFORMANCE: Strongly-typed cache avoids boxing and enables faster lookups
+        // Thread-safety: Single volatile write of an immutable entry object ensures atomicity
         private static class TypedMapperCache<TSource, TDest>
         {
-            public static Func<TSource, TDest>? CompiledMapper;
-            public static bool RequiresDepthTracking;
-            public static volatile bool IsInitialized;
+            private static volatile TypedMapperCacheEntry<TSource, TDest>? _entry;
+
+            public static TypedMapperCacheEntry<TSource, TDest>? Entry => _entry;
+
+            public static void Initialize(Func<TSource, TDest> mapper, bool requiresDepthTracking)
+            {
+                _entry = new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking);
+            }
+        }
+
+        private sealed class TypedMapperCacheEntry<TSource, TDest>
+        {
+            public readonly Func<TSource, TDest> CompiledMapper;
+            public readonly bool RequiresDepthTracking;
+            public TypedMapperCacheEntry(Func<TSource, TDest> mapper, bool requiresDepthTracking)
+            {
+                CompiledMapper = mapper;
+                RequiresDepthTracking = requiresDepthTracking;
+            }
         }
 
         /// <summary>
@@ -424,22 +448,23 @@ namespace Mapsicle
         {
             if (source is null) return default;
 
-            // FAST PATH: Check if we have a cached strongly-typed mapper
-            if (TypedMapperCache<TSource, TDest>.IsInitialized)
+            // FAST PATH: Read entry once into local for thread-safe access
+            var entry = TypedMapperCache<TSource, TDest>.Entry;
+            if (entry != null)
             {
-                if (TypedMapperCache<TSource, TDest>.RequiresDepthTracking)
+                if (entry.RequiresDepthTracking)
                 {
                     if (!IncrementDepth()) return default;
                     try
                     {
-                        return TypedMapperCache<TSource, TDest>.CompiledMapper!(source);
+                        return entry.CompiledMapper(source);
                     }
                     finally
                     {
                         DecrementDepth();
                     }
                 }
-                return TypedMapperCache<TSource, TDest>.CompiledMapper!(source);
+                return entry.CompiledMapper(source);
             }
 
             // Cold path: Build and cache the typed mapper
@@ -449,18 +474,16 @@ namespace Mapsicle
         private static TDest? BuildAndCacheTypedMapper<TSource, TDest>(TSource source)
         {
             var sourceType = typeof(TSource);
-            var destType = typeof(TDest);
 
-            // Determine if depth tracking is needed (has nested complex types)
-            TypedMapperCache<TSource, TDest>.RequiresDepthTracking = HasNestedComplexTypes(sourceType);
-
-            // Build the strongly-typed mapper
+            // Build the strongly-typed mapper and determine depth tracking
+            bool requiresDepthTracking = HasNestedComplexTypes(sourceType);
             var mapper = BuildTypedMapper<TSource, TDest>();
-            TypedMapperCache<TSource, TDest>.CompiledMapper = mapper;
-            TypedMapperCache<TSource, TDest>.IsInitialized = true;
+
+            // Single atomic write of immutable entry
+            TypedMapperCache<TSource, TDest>.Initialize(mapper, requiresDepthTracking);
 
             // Execute with depth tracking if needed
-            if (TypedMapperCache<TSource, TDest>.RequiresDepthTracking)
+            if (requiresDepthTracking)
             {
                 if (!IncrementDepth()) return default;
                 try
@@ -734,20 +757,18 @@ namespace Mapsicle
                 var destType = k.Item2;
                 var sourceParam = Expression.Parameter(typeof(object), "source");
                 bool isSourceVisible = sourceType.IsVisible;
-                var typedSource = isSourceVisible ? Expression.Convert(sourceParam, sourceType) : null;
+                var typedSource = Expression.Convert(sourceParam, sourceType);
 
                 // --- 0. Direct Primitive/Value Mapping ---
                 if (sourceType.IsValueType || sourceType == typeof(string))
                 {
                     if (destType.IsAssignableFrom(sourceType))
                     {
-                        var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
+                        return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
                     }
                     if (destType == typeof(string))
                     {
-                        var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
-                        var toStringCall = Expression.Call(castSrc, typeof(object).GetMethod("ToString")!);
+                        var toStringCall = Expression.Call(typedSource, typeof(object).GetMethod("ToString")!);
                         return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
                     }
                     var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
@@ -755,8 +776,7 @@ namespace Mapsicle
 
                     if (underlyingDest.IsAssignableFrom(underlyingSource))
                     {
-                        var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
+                        return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
                     }
                 }
 
@@ -823,13 +843,13 @@ namespace Mapsicle
 
                         if (sourceProp != null)
                         {
-                            var binding = CreatePropertyBinding(destProp, sourceProp, typedSource!, sourceParam, isSourceVisible);
+                            var binding = CreatePropertyBinding(destProp, sourceProp, typedSource, sourceParam, isSourceVisible);
                             if (binding != null) bindings.Add(binding);
                         }
                         else
                         {
                             // Try flattening: AddressCity -> Address.City
-                            var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource!, sourceParam, isSourceVisible);
+                            var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceParam, isSourceVisible);
                             if (flattenedBinding != null) bindings.Add(flattenedBinding);
                         }
                     }
@@ -873,7 +893,7 @@ namespace Mapsicle
 
                         if (sourceProp != null)
                         {
-                            var propExp = Expression.Property(typedSource!, sourceProp);
+                            var propExp = Expression.Property(typedSource, sourceProp);
                             if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
                             {
                                 args.Add(Expression.Convert(propExp, param.ParameterType));
@@ -1017,8 +1037,9 @@ namespace Mapsicle
                 result = new List<TDest>();
             }
 
-            // Ensure typed mapper is initialized once
-            if (!TypedMapperCache<TSource, TDest>.IsInitialized)
+            // Read entry once for thread-safe access
+            var entry = TypedMapperCache<TSource, TDest>.Entry;
+            if (entry == null)
             {
                 // Initialize on first non-null item
                 using var enumerator = source.GetEnumerator();
@@ -1033,11 +1054,13 @@ namespace Mapsicle
                     // This will initialize the cache
                     result.Add(first.MapTo<TSource, TDest>()!);
 
+                    // Re-read the now-initialized entry
+                    entry = TypedMapperCache<TSource, TDest>.Entry;
                     // Now process remaining with fast path
                     while (enumerator.MoveNext())
                     {
                         var item = enumerator.Current;
-                        result.Add(item is null ? default! : TypedMapperCache<TSource, TDest>.CompiledMapper!(item)!);
+                        result.Add(item is null ? default! : entry!.CompiledMapper(item)!);
                     }
                     return result;
                 }
@@ -1045,7 +1068,7 @@ namespace Mapsicle
             }
 
             // Fast path - mapper already cached
-            var mapper = TypedMapperCache<TSource, TDest>.CompiledMapper!;
+            var mapper = entry.CompiledMapper;
             foreach (var item in source)
             {
                 result.Add(item is null ? default! : mapper(item)!);
@@ -1151,17 +1174,20 @@ namespace Mapsicle
             if (source is null) return default;
 
             var dest = new T();
-            var destProps = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanWrite && p.GetCustomAttribute<IgnoreMapAttribute>() == null);
+            var destProps = GetCachedWritableProperties(typeof(T));
+
+            // Build case-insensitive lookup once
+            var lookup = new Dictionary<string, object?>(source.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in source) lookup[kvp.Key] = kvp.Value;
 
             foreach (var prop in destProps)
             {
+                if (prop.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+
                 var mapFromAttr = prop.GetCustomAttribute<MapFromAttribute>();
                 string key = mapFromAttr?.SourcePropertyName ?? prop.Name;
 
-                // Case-insensitive key lookup
-                var matchingKey = source.Keys.FirstOrDefault(k => k.Equals(key, StringComparison.OrdinalIgnoreCase));
-                if (matchingKey != null && source.TryGetValue(matchingKey, out var value) && value != null)
+                if (lookup.TryGetValue(key, out var value) && value != null)
                 {
                     try
                     {

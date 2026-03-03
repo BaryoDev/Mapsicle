@@ -7,11 +7,6 @@ on:
         description: 'Package version (e.g., 1.0.0, 1.1.0-beta)'
         required: true
         type: string
-      skip_tests:
-        description: 'Skip running tests'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
   publish:
@@ -38,7 +33,6 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Test
-        if: ${{ !inputs.skip_tests }}
         run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: Pack Mapsicle (Core)

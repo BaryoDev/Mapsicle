@@ -5,7 +5,6 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageId>Mapsicle.DataAnnotations</PackageId>
     <Version>1.2.1</Version>
     <Authors>Arnel Isiderio Robles</Authors>

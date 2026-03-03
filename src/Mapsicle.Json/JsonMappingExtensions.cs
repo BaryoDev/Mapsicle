@@ -14,15 +14,16 @@ namespace Mapsicle.Json
     /// </summary>
     public static class JsonMappingExtensions
     {
-        private static JsonSerializerOptions? _defaultOptions;
+        private static readonly Lazy<JsonSerializerOptions> _lazyDefaultOptions = new(CreateDefaultOptions);
+        private static volatile JsonSerializerOptions? _overriddenOptions;
 
         /// <summary>
         /// Gets or sets the default JSON serializer options used when none are specified.
         /// </summary>
         public static JsonSerializerOptions DefaultOptions
         {
-            get => _defaultOptions ??= CreateDefaultOptions();
-            set => _defaultOptions = value;
+            get => _overriddenOptions ?? _lazyDefaultOptions.Value;
+            set => _overriddenOptions = value;
         }
 
         private static JsonSerializerOptions CreateDefaultOptions()

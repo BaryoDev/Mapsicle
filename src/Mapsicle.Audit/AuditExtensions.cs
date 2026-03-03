@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -11,6 +12,16 @@ namespace Mapsicle.Audit
     /// </summary>
     public static class AuditExtensions
     {
+        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertyCache = new();
+
+        private static PropertyInfo[] GetCachedProperties(Type type)
+        {
+            return _propertyCache.GetOrAdd(type, t =>
+                t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.CanRead)
+                    .ToArray());
+        }
+
         #region MapWithAudit
 
         /// <summary>
@@ -50,10 +61,10 @@ namespace Mapsicle.Audit
             // Collect property mappings
             if (mapped is not null)
             {
-                var sourceProps = source.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var sourceProps = GetCachedProperties(source.GetType());
+                var destProps = GetCachedProperties(typeof(TDest));
 
-                foreach (var destProp in destProps.Where(p => p.CanRead))
+                foreach (var destProp in destProps)
                 {
                     var destValue = destProp.GetValue(mapped);
                     var sourceProp = sourceProps.FirstOrDefault(p =>
@@ -118,10 +129,10 @@ namespace Mapsicle.Audit
             // Collect property mappings
             if (mapped is not null)
             {
-                var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-                var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var sourceProps = GetCachedProperties(typeof(TSource));
+                var destProps = GetCachedProperties(typeof(TDest));
 
-                foreach (var destProp in destProps.Where(p => p.CanRead))
+                foreach (var destProp in destProps)
                 {
                     var destValue = destProp.GetValue(mapped);
                     var sourceProp = sourceProps.FirstOrDefault(p =>
@@ -184,15 +195,14 @@ namespace Mapsicle.Audit
                 return changes;
             }
 
-            var props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead);
+            var props = GetCachedProperties(typeof(T));
 
             foreach (var prop in props)
             {
                 var oldValue = prop.GetValue(original);
                 var newValue = prop.GetValue(modified);
 
-                if (!Equals(oldValue, newValue))
+                if (!EqualityComparer<object>.Default.Equals(oldValue, newValue))
                 {
                     changes.Add(new PropertyChange
                     {

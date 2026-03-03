@@ -4,7 +4,6 @@
     <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageId>Mapsicle</PackageId>
     <Version>1.2.1</Version>
     <Title>Mapsicle</Title>
@@ -19,6 +18,10 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mapsicle.Tests" />
   </ItemGroup>
 
 </Project>

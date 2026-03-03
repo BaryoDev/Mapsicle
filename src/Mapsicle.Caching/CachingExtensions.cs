@@ -36,20 +36,14 @@ namespace Mapsicle.Caching
         {
             if (source is null) return default;
 
-            if (cache.TryGetValue(cacheKey, out TDest? cached))
+            return cache.GetOrCreate(cacheKey, entry =>
             {
-                return cached;
-            }
-
-            var mapped = source.MapTo<TDest>();
-            if (mapped is null) return default;
-
-            cache.Set(cacheKey, mapped, options ?? new MemoryCacheEntryOptions
-            {
-                SlidingExpiration = TimeSpan.FromMinutes(5)
+                entry.SetOptions(options ?? new MemoryCacheEntryOptions
+                {
+                    SlidingExpiration = TimeSpan.FromMinutes(5)
+                });
+                return source.MapTo<TDest>();
             });
-
-            return mapped;
         }
 
         /// <summary>
@@ -71,20 +65,14 @@ namespace Mapsicle.Caching
         {
             if (source is null) return default;
 
-            if (cache.TryGetValue(cacheKey, out TDest? cached))
+            return cache.GetOrCreate(cacheKey, entry =>
             {
-                return cached;
-            }
-
-            var mapped = mapper.Map<TDest>(source);
-            if (mapped is null) return default;
-
-            cache.Set(cacheKey, mapped, options ?? new MemoryCacheEntryOptions
-            {
-                SlidingExpiration = TimeSpan.FromMinutes(5)
+                entry.SetOptions(options ?? new MemoryCacheEntryOptions
+                {
+                    SlidingExpiration = TimeSpan.FromMinutes(5)
+                });
+                return mapper.Map<TDest>(source);
             });
-
-            return mapped;
         }
 
         /// <summary>
@@ -340,8 +328,13 @@ namespace Mapsicle.Caching
 
         private static string ComputeHash(string input)
         {
+            var inputBytes = Encoding.UTF8.GetBytes(input);
+#if NET5_0_OR_GREATER
+            var bytes = SHA256.HashData(inputBytes);
+#else
             using var sha256 = SHA256.Create();
-            var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
+            var bytes = sha256.ComputeHash(inputBytes);
+#endif
             return Convert.ToBase64String(bytes).Substring(0, 8);
         }
 
@@ -443,18 +436,11 @@ namespace Mapsicle.Caching
 
             var cacheKey = CachingExtensions.GenerateCacheKey(source, typeof(TDest));
 
-            if (_cache.TryGetValue(cacheKey, out TDest? cached))
+            return _cache.GetOrCreate(cacheKey, entry =>
             {
-                return cached;
-            }
-
-            var mapped = _innerMapper.Map<TSource, TDest>(source);
-            if (mapped is not null)
-            {
-                _cache.Set(cacheKey, mapped, _options.ToMemoryCacheOptions());
-            }
-
-            return mapped;
+                entry.SetOptions(_options.ToMemoryCacheOptions());
+                return _innerMapper.Map<TSource, TDest>(source);
+            });
         }
 
         /// <inheritdoc/>

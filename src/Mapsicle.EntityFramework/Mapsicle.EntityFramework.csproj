@@ -4,7 +4,6 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageId>Mapsicle.EntityFramework</PackageId>
     <Version>1.2.1</Version>
     <Title>Mapsicle.EntityFramework</Title>

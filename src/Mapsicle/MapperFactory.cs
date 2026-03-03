@@ -218,20 +218,18 @@ namespace Mapsicle
         {
             var sourceParam = Expression.Parameter(typeof(object), "source");
             bool isSourceVisible = sourceType.IsVisible;
-            var typedSource = isSourceVisible ? Expression.Convert(sourceParam, sourceType) : null;
+            var typedSource = Expression.Convert(sourceParam, sourceType);
 
             // Direct Primitive/Value Mapping
             if (sourceType.IsValueType || sourceType == typeof(string))
             {
                 if (destType.IsAssignableFrom(sourceType))
                 {
-                    var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
-                    return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
+                    return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
                 }
                 if (destType == typeof(string))
                 {
-                    var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
-                    var toStringCall = Expression.Call(castSrc, typeof(object).GetMethod("ToString")!);
+                    var toStringCall = Expression.Call(typedSource, typeof(object).GetMethod("ToString")!);
                     return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
                 }
                 var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
@@ -239,8 +237,7 @@ namespace Mapsicle
 
                 if (underlyingDest.IsAssignableFrom(underlyingSource))
                 {
-                    var castSrc = isSourceVisible ? typedSource! : Expression.Convert(sourceParam, sourceType);
-                    return Expression.Lambda<Func<object, T>>(Expression.Convert(castSrc, destType), sourceParam).Compile();
+                    return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
                 }
             }
 
@@ -271,12 +268,12 @@ namespace Mapsicle
 
                     if (sourceProp != null)
                     {
-                        var binding = CreatePropertyBinding(destProp, sourceProp, typedSource!, sourceParam, isSourceVisible);
+                        var binding = CreatePropertyBinding(destProp, sourceProp, typedSource, sourceParam, isSourceVisible);
                         if (binding != null) bindings.Add(binding);
                     }
                     else
                     {
-                        var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource!, sourceParam, isSourceVisible);
+                        var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceParam, isSourceVisible);
                         if (flattenedBinding != null) bindings.Add(flattenedBinding);
                     }
                 }
@@ -299,7 +296,7 @@ namespace Mapsicle
 
                     if (sourceProp != null)
                     {
-                        var propExp = Expression.Property(typedSource!, sourceProp);
+                        var propExp = Expression.Property(typedSource, sourceProp);
                         if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
                         {
                             args.Add(Expression.Convert(propExp, param.ParameterType));
@@ -348,25 +345,13 @@ namespace Mapsicle
                 targetItemType = destType.GetElementType()!;
             }
 
-            // Create a lambda that calls MapTo<targetItemType> on each item
-            var listType = typeof(List<>).MakeGenericType(targetItemType);
-            var result = Expression.Variable(listType, "result");
-            var enumerator = Expression.Variable(typeof(System.Collections.IEnumerator), "enumerator");
-            var item = Expression.Variable(typeof(object), "item");
+            // Call this instance's MapTo<T>(IEnumerable) instead of static Mapper
+            var mapCollectionMethod = typeof(MapperInstance)
+                .GetMethod(nameof(MapTo), new[] { typeof(System.Collections.IEnumerable) })!
+                .MakeGenericMethod(targetItemType);
 
-            var getEnumerator = Expression.Call(Expression.Convert(sourceParam, typeof(System.Collections.IEnumerable)),
-                typeof(System.Collections.IEnumerable).GetMethod("GetEnumerator")!);
-            var moveNext = Expression.Call(enumerator, typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!);
-            var current = Expression.Property(enumerator, "Current");
-
-            var addMethod = listType.GetMethod("Add")!;
-            var breakLabel = Expression.Label();
-
-            // For simplicity, fall back to direct conversion for collections
-            var call = Expression.Call(null,
-                typeof(Mapper).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(System.Collections.IEnumerable))
-                    .MakeGenericMethod(targetItemType),
+            var instanceExpr = Expression.Constant(this);
+            var call = Expression.Call(instanceExpr, mapCollectionMethod,
                 Expression.Convert(sourceParam, typeof(System.Collections.IEnumerable)));
 
             if (destType.IsArray)
