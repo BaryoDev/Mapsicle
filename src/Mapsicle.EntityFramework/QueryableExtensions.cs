@@ -36,9 +36,16 @@ namespace Mapsicle.EntityFramework
 
             var projection = GetOrBuildProjection<TDest>(sourceType, destType, configuration);
 
-            // Use Select with the built expression
+            // Use Select with the built expression.
+            // Queryable has two 2-parameter Select overloads (selector and indexed selector);
+            // pick the non-indexed one by its Expression<Func<TSource, TResult>> selector arity
+            // instead of relying on reflection ordering.
             var selectMethod = typeof(Queryable).GetMethods()
-                .First(m => m.Name == "Select" && m.GetParameters().Length == 2)
+                .First(m => m.Name == "Select"
+                    && m.GetParameters().Length == 2
+                    && m.GetParameters()[1].ParameterType // Expression<Func<TSource, TResult>>
+                        .GetGenericArguments()[0]         // Func<TSource, TResult>
+                        .GetGenericArguments().Length == 2)
                 .MakeGenericMethod(sourceType, destType);
 
             return (IQueryable<TDest>)selectMethod.Invoke(null, new object[] { source, projection })!;

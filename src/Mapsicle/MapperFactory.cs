@@ -402,6 +402,15 @@ namespace Mapsicle
                     {
                         assignments.Add(Expression.Assign(destPropExp, Expression.Convert(propExp, targetType)));
                     }
+                    else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+                    {
+                        // Nested object - route through this instance's MapTo so it uses the
+                        // instance cache and depth tracking (mirrors static Mapper behavior)
+                        var mapMethod = typeof(MapperInstance).GetMethod(nameof(MapTo), new[] { typeof(object) })!
+                            .MakeGenericMethod(targetType);
+                        var recursiveCall = Expression.Call(Expression.Constant(this), mapMethod, Expression.Convert(propExp, typeof(object)));
+                        assignments.Add(Expression.Assign(destPropExp, recursiveCall));
+                    }
                     else if (targetType == typeof(string))
                     {
                         var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
@@ -446,6 +455,15 @@ namespace Mapsicle
             if (targetType.IsAssignableFrom(srcType))
             {
                 return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
+            }
+            else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+            {
+                // Nested object - route through this instance's MapTo so it uses the
+                // instance cache and depth tracking (mirrors static Mapper behavior)
+                var mapMethod = typeof(MapperInstance).GetMethod(nameof(MapTo), new[] { typeof(object) })!
+                    .MakeGenericMethod(targetType);
+                var recursiveCall = Expression.Call(Expression.Constant(this), mapMethod, Expression.Convert(propExp, typeof(object)));
+                return Expression.Bind(destProp, recursiveCall);
             }
             else if (targetType == typeof(string))
             {

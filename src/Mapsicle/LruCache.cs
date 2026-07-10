@@ -6,14 +6,18 @@ using System.Threading;
 namespace Mapsicle
 {
     /// <summary>
-    /// Thread-safe LRU cache with bounded capacity and lock-free reads.
-    /// Uses ConcurrentDictionary for lock-free reads, with lazy LRU tracking.
+    /// Thread-safe bounded cache with lock-free reads and approximate LRU eviction.
+    /// Reads mark entries as recently used; eviction uses a second-chance (CLOCK) scan,
+    /// so frequently-read entries survive eviction instead of being removed in pure
+    /// insertion (FIFO) order.
     /// </summary>
     internal sealed class LruCache<TKey, TValue> where TKey : notnull
     {
         private readonly int _capacity;
         private readonly ConcurrentDictionary<TKey, TValue> _cache;
         private readonly ConcurrentQueue<TKey> _accessOrder = new();
+        // Presence of a key marks it as "recently used" for the second-chance eviction scan
+        private readonly ConcurrentDictionary<TKey, byte> _recentlyUsed = new();
         private int _approximateCount;
         private readonly object _evictionLock = new();
 
@@ -33,7 +37,7 @@ namespace Mapsicle
             // OPTIMIZATION: Lock-free read path (hot path)
             if (_cache.TryGetValue(key, out var existing))
             {
-                // Skip LRU update for reads - lazy tracking
+                MarkRecentlyUsed(key);
                 return existing;
             }
 
@@ -50,7 +54,7 @@ namespace Mapsicle
                 Interlocked.Increment(ref _approximateCount);
             }
 
-            // Track access for LRU (non-blocking)
+            // Track access for eviction ordering (non-blocking)
             _accessOrder.Enqueue(key);
 
             // Lazy eviction - only when significantly over capacity
@@ -64,8 +68,18 @@ namespace Mapsicle
         /// </summary>
         public bool TryGetValue(TKey key, out TValue value)
         {
-            // Completely lock-free
-            return _cache.TryGetValue(key, out value!);
+            if (_cache.TryGetValue(key, out value!))
+            {
+                MarkRecentlyUsed(key);
+                return true;
+            }
+            return false;
+        }
+
+        private void MarkRecentlyUsed(TKey key)
+        {
+            // TryAdd only writes when the mark is absent, keeping repeat reads cheap
+            _recentlyUsed.TryAdd(key, 0);
         }
 
         private void TryEvict()
@@ -80,9 +94,19 @@ namespace Mapsicle
 
             try
             {
-                // Evict oldest entries
-                while (_approximateCount > _capacity && _accessOrder.TryDequeue(out var oldKey))
+                // Second-chance scan: recently-used entries get re-enqueued once instead of
+                // evicted, so hot entries survive. Bound the scan so concurrent readers
+                // re-marking entries cannot keep this loop alive indefinitely.
+                int remainingScans = (_approximateCount * 2) + 8;
+                while (_approximateCount > _capacity && remainingScans-- > 0 && _accessOrder.TryDequeue(out var oldKey))
                 {
+                    if (_recentlyUsed.TryRemove(oldKey, out _) && _cache.ContainsKey(oldKey))
+                    {
+                        // Recently read - give it a second chance at the back of the queue
+                        _accessOrder.Enqueue(oldKey);
+                        continue;
+                    }
+
                     if (_cache.TryRemove(oldKey, out _))
                     {
                         Interlocked.Decrement(ref _approximateCount);
@@ -100,6 +124,7 @@ namespace Mapsicle
             lock (_evictionLock)
             {
                 _cache.Clear();
+                _recentlyUsed.Clear();
                 while (_accessOrder.TryDequeue(out _)) { }
                 Interlocked.Exchange(ref _approximateCount, 0);
             }

@@ -430,6 +430,8 @@ namespace Mapsicle.Fluent
             var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance);
             var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
+            typeMap?.GetBeforeMap()?.Invoke(source, destination);
+
             foreach (var destProp in destProps)
             {
                 if (!destProp.CanWrite) continue;
@@ -457,6 +459,8 @@ namespace Mapsicle.Fluent
                     destProp.SetValue(destination, sourceProp.GetValue(source));
                 }
             }
+
+            typeMap?.GetAfterMap()?.Invoke(source, destination);
 
             return destination;
         }

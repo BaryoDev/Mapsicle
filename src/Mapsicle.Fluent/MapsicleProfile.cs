@@ -64,17 +64,26 @@ namespace Mapsicle.Fluent
         private readonly List<Action<ITypeMapExpression<TSource, TDest>>> _deferredActions = new();
 
         public DeferredTypeMapExpression(List<Action<IMapperConfigurationExpression>> configurations)
+            : this(configurations, register: true)
+        {
+        }
+
+        private DeferredTypeMapExpression(List<Action<IMapperConfigurationExpression>> configurations, bool register)
         {
             _configurations = configurations;
-            // Single action that does both CreateMap + all deferred actions — no removal needed
-            _configurations.Add(cfg =>
+            if (register)
             {
-                var typeMap = cfg.CreateMap<TSource, TDest>();
-                foreach (var action in _deferredActions)
-                {
-                    action(typeMap);
-                }
-            });
+                // Single action that does both CreateMap + all deferred actions — no removal needed
+                _configurations.Add(cfg => Apply(cfg.CreateMap<TSource, TDest>()));
+            }
+        }
+
+        private void Apply(ITypeMapExpression<TSource, TDest> typeMap)
+        {
+            foreach (var action in _deferredActions)
+            {
+                action(typeMap);
+            }
         }
 
         public ITypeMapExpression<TSource, TDest> ForMember<TMember>(
@@ -120,8 +129,12 @@ namespace Mapsicle.Fluent
 
         public ITypeMapExpression<TDest, TSource> ReverseMap()
         {
-            _deferredActions.Add(typeMap => typeMap.ReverseMap());
-            return new DeferredTypeMapExpression<TDest, TSource>(_configurations);
+            // The returned expression must configure the map produced by typeMap.ReverseMap();
+            // registering a second CreateMap<TDest, TSource> here would leave an unconfigured
+            // duplicate in the configuration that fails AssertConfigurationIsValid.
+            var reverse = new DeferredTypeMapExpression<TDest, TSource>(_configurations, register: false);
+            _deferredActions.Add(typeMap => reverse.Apply(typeMap.ReverseMap()));
+            return reverse;
         }
     }
 

@@ -87,6 +87,9 @@ namespace Mapsicle
         private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _readablePropertyCache = new();
         private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _writablePropertyCache = new();
 
+        // Per-type "can this type participate in a cycle" answers so warm paths can skip depth tracking safely
+        private static readonly ConcurrentDictionary<Type, bool> _needsDepthTrackingCache = new();
+
         // OPTIMIZATION: Use ThreadStatic instead of AsyncLocal for zero-allocation depth tracking
         [ThreadStatic]
         private static int _mappingDepth;
@@ -166,6 +169,7 @@ namespace Mapsicle
             _propertyCache.Clear();
             _readablePropertyCache.Clear();
             _writablePropertyCache.Clear();
+            _needsDepthTrackingCache.Clear();
             System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
             System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
 
@@ -199,6 +203,7 @@ namespace Mapsicle
                 _propertyCache.Clear();
                 _readablePropertyCache.Clear();
                 _writablePropertyCache.Clear();
+                _needsDepthTrackingCache.Clear();
                 System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
                 System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
             }
@@ -498,6 +503,11 @@ namespace Mapsicle
             return mapper(source);
         }
 
+        private static bool NeedsDepthTracking(Type type)
+        {
+            return _needsDepthTrackingCache.GetOrAdd(type, HasNestedComplexTypes);
+        }
+
         private static bool HasNestedComplexTypes(Type type)
         {
             var props = GetCachedReadableProperties(type);
@@ -726,8 +736,10 @@ namespace Mapsicle
             // OPTIMIZATION: Fast path - inline cache check without method call
             if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
             {
-                // Skip depth tracking for simple types (no nested objects)
-                if (_mappingDepth == 0 || !HasNestedComplexTypes(sourceType))
+                // Depth tracking can only be skipped for types that cannot form cycles.
+                // Skipping based on _mappingDepth == 0 would also disable tracking in recursive
+                // calls (they see depth 0 too), turning circular graphs into stack overflows.
+                if (!NeedsDepthTracking(sourceType))
                 {
                     return ((Func<object, T>)cached)(source);
                 }
@@ -1057,10 +1069,18 @@ namespace Mapsicle
                     // Re-read the now-initialized entry
                     entry = TypedMapperCache<TSource, TDest>.Entry;
                     // Now process remaining with fast path
+                    // (route through MapTo when depth tracking is required so cyclic items can't overflow the stack)
                     while (enumerator.MoveNext())
                     {
                         var item = enumerator.Current;
-                        result.Add(item is null ? default! : entry!.CompiledMapper(item)!);
+                        if (item is null)
+                        {
+                            result.Add(default!);
+                        }
+                        else
+                        {
+                            result.Add(entry!.RequiresDepthTracking ? item.MapTo<TSource, TDest>()! : entry.CompiledMapper(item)!);
+                        }
                     }
                     return result;
                 }
@@ -1068,10 +1088,19 @@ namespace Mapsicle
             }
 
             // Fast path - mapper already cached
+            // (route through MapTo when depth tracking is required so cyclic items can't overflow the stack)
             var mapper = entry.CompiledMapper;
+            bool trackDepth = entry.RequiresDepthTracking;
             foreach (var item in source)
             {
-                result.Add(item is null ? default! : mapper(item)!);
+                if (item is null)
+                {
+                    result.Add(default!);
+                }
+                else
+                {
+                    result.Add(trackDepth ? item.MapTo<TSource, TDest>()! : mapper(item)!);
+                }
             }
             return result;
         }
@@ -1097,6 +1126,7 @@ namespace Mapsicle
             // OPTIMIZATION: Cache the mapper delegate once and reuse for all items
             Type? itemType = null;
             Func<object, T>? cachedMapper = null;
+            bool trackDepth = false;
 
             foreach (var item in source)
             {
@@ -1115,6 +1145,7 @@ namespace Mapsicle
                     if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
                     {
                         cachedMapper = (Func<object, T>)cached;
+                        trackDepth = NeedsDepthTracking(itemType);
                     }
                     else
                     {
@@ -1124,12 +1155,34 @@ namespace Mapsicle
                         if (!_useLruCache && _mapToCache.TryGetValue(key, out cached))
                         {
                             cachedMapper = (Func<object, T>)cached;
+                            trackDepth = NeedsDepthTracking(itemType);
                         }
                         continue;
                     }
                 }
 
-                result.Add(cachedMapper(item)!);
+                // Items with nested complex objects must map under depth tracking so a
+                // cyclic graph in any item hits MaxDepth instead of overflowing the stack
+                if (trackDepth)
+                {
+                    if (!IncrementDepth())
+                    {
+                        result.Add(default!);
+                        continue;
+                    }
+                    try
+                    {
+                        result.Add(cachedMapper(item)!);
+                    }
+                    finally
+                    {
+                        DecrementDepth();
+                    }
+                }
+                else
+                {
+                    result.Add(cachedMapper(item)!);
+                }
             }
             return result;
         }

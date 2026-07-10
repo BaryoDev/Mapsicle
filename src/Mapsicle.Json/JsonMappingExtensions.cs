@@ -129,7 +129,8 @@ namespace Mapsicle.Json
             this string? json,
             JsonSerializerOptions? options = null)
         {
-            if (string.IsNullOrEmpty(json)) return default;
+            // Explicit null check (not IsNullOrEmpty) so the netstandard2.0 compiler can narrow json to non-null
+            if (json is null || json.Length == 0) return default;
 
             var intermediate = JsonSerializer.Deserialize<TIntermediate>(json, options ?? DefaultOptions);
             if (intermediate is null) return default;
@@ -151,7 +152,8 @@ namespace Mapsicle.Json
             string? json,
             JsonSerializerOptions? options = null)
         {
-            if (string.IsNullOrEmpty(json)) return default;
+            // Explicit null check (not IsNullOrEmpty) so the netstandard2.0 compiler can narrow json to non-null
+            if (json is null || json.Length == 0) return default;
 
             var intermediate = JsonSerializer.Deserialize<TIntermediate>(json, options ?? DefaultOptions);
             if (intermediate is null) return default;
@@ -243,7 +245,8 @@ namespace Mapsicle.Json
             this string? json,
             JsonSerializerOptions? options = null)
         {
-            if (string.IsNullOrEmpty(json)) return new List<TDest>();
+            // Explicit null check (not IsNullOrEmpty) so the netstandard2.0 compiler can narrow json to non-null
+            if (json is null || json.Length == 0) return new List<TDest>();
 
             var intermediates = JsonSerializer.Deserialize<List<TIntermediate>>(json, options ?? DefaultOptions);
             if (intermediates is null) return new List<TDest>();

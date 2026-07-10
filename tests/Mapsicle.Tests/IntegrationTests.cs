@@ -74,6 +74,13 @@ namespace Mapsicle.Tests
             public DateTime OrderDate { get; set; }
         }
 
+        public class OrderSummary
+        {
+            public int Id { get; set; }
+            public UserDto? Customer { get; set; }
+            public DateTime OrderDate { get; set; }
+        }
+
         #endregion
 
         #region Multiple Mapper Configurations
@@ -99,6 +106,57 @@ namespace Mapsicle.Tests
             Assert.NotNull(dto2);
             Assert.Equal("John", dto1.FirstName);
             Assert.Equal("John", dto2.FirstName);
+        }
+
+        /// <summary>
+        /// Regression: MapperFactory instances used to silently drop nested complex-object
+        /// properties (the class-to-class binding branch existed only in the static Mapper),
+        /// leaving them null with no error.
+        /// </summary>
+        [Fact]
+        public void MapperFactory_NestedObjectProperty_ShouldBeMapped()
+        {
+            using var mapper = MapperFactory.Create();
+
+            var order = new Order
+            {
+                Id = 1,
+                Customer = new User { Id = 2, FirstName = "Jane", LastName = "Doe", Email = "jane@test.com" },
+                OrderDate = new DateTime(2026, 1, 1)
+            };
+
+            // Customer is User on the source but UserDto on the destination, so it must
+            // go through the nested class-to-class mapping branch (not reference assignment)
+            var summary = mapper.MapTo<OrderSummary>(order);
+
+            Assert.NotNull(summary);
+            Assert.Equal(1, summary.Id);
+            Assert.NotNull(summary.Customer);
+            Assert.Equal("Jane", summary.Customer!.FirstName);
+            Assert.Equal("jane@test.com", summary.Customer.Email);
+        }
+
+        /// <summary>
+        /// Regression: same nested-object gap in the in-place Map(source, destination) path.
+        /// </summary>
+        [Fact]
+        public void MapperFactory_Map_NestedObjectProperty_ShouldBeMapped()
+        {
+            using var mapper = MapperFactory.Create();
+
+            var source = new Order
+            {
+                Id = 5,
+                Customer = new User { Id = 7, FirstName = "Sam", Email = "sam@test.com" },
+                OrderDate = new DateTime(2026, 2, 2)
+            };
+            var destination = new OrderSummary();
+
+            mapper.Map(source, destination);
+
+            Assert.Equal(5, destination.Id);
+            Assert.NotNull(destination.Customer);
+            Assert.Equal("Sam", destination.Customer!.FirstName);
         }
 
         /// <summary>

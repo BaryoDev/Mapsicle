@@ -87,6 +87,28 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
+        public void Eviction_ShouldPreferKeepingRecentlyReadKeys()
+        {
+            var cache = new LruCache<int, string>(4);
+
+            for (int i = 0; i < 4; i++)
+            {
+                cache.GetOrAdd(i, k => $"value{k}");
+            }
+
+            // Keep key 0 hot while inserting enough new keys to force several eviction passes.
+            // Under the old FIFO eviction, key 0 (oldest insertion) was always evicted first.
+            for (int i = 4; i < 12; i++)
+            {
+                cache.TryGetValue(0, out _);
+                cache.GetOrAdd(i, k => $"value{k}");
+            }
+
+            Assert.True(cache.TryGetValue(0, out var hot), "recently-read key should survive eviction");
+            Assert.Equal("value0", hot);
+        }
+
+        [Fact]
         public void Clear_ShouldResetCache()
         {
             var cache = new LruCache<string, int>(10);

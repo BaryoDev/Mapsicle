@@ -75,6 +75,76 @@ namespace Mapsicle.Tests
         }
 
         /// <summary>
+        /// Regression: MaxDepth protection must stay active once the mapper delegate is cached.
+        /// The warm-cache fast path used to skip depth tracking whenever depth was 0, which is
+        /// true for every top-level call AND every recursive re-entry, so the second mapping of
+        /// a cyclic graph overflowed the stack.
+        /// </summary>
+        [Fact]
+        public void CircularReference_WarmCache_ShouldNotThrowStackOverflow()
+        {
+            var originalMaxDepth = Mapper.MaxDepth;
+
+            try
+            {
+                Mapper.MaxDepth = 10;
+
+                var parent = new CircularParent { Id = 1, Name = "Parent" };
+                var child = new CircularChild { Id = 2, Name = "Child", Parent = parent };
+                parent.Child = child;
+
+                // First call builds and caches the delegate (cold path)
+                var first = parent.MapTo<CircularParent>();
+                Assert.NotNull(first);
+
+                // Second call hits the warm cache and must still enforce MaxDepth
+                var second = parent.MapTo<CircularParent>();
+                Assert.NotNull(second);
+                Assert.Equal(1, second.Id);
+            }
+            finally
+            {
+                Mapper.MaxDepth = originalMaxDepth;
+            }
+        }
+
+        /// <summary>
+        /// Regression: collection mapping reuses a cached delegate for items after the first;
+        /// those items must still map under depth tracking so a cyclic item cannot overflow the stack.
+        /// </summary>
+        [Fact]
+        public void CircularReference_InCollection_WarmCache_ShouldNotThrowStackOverflow()
+        {
+            var originalMaxDepth = Mapper.MaxDepth;
+
+            try
+            {
+                Mapper.MaxDepth = 10;
+
+                var items = new List<CircularParent>();
+                for (int i = 0; i < 3; i++)
+                {
+                    var parent = new CircularParent { Id = i, Name = $"Parent{i}" };
+                    var child = new CircularChild { Id = i + 100, Name = $"Child{i}", Parent = parent };
+                    parent.Child = child;
+                    items.Add(parent);
+                }
+
+                // Warm the cache, then map the whole collection (items 2+ use the cached delegate)
+                _ = items[0].MapTo<CircularParent>();
+                var untyped = ((System.Collections.IEnumerable)items).MapTo<CircularParent>();
+                Assert.Equal(3, untyped.Count);
+
+                var typed = items.MapTo<CircularParent, CircularParent>();
+                Assert.Equal(3, typed.Count);
+            }
+            finally
+            {
+                Mapper.MaxDepth = originalMaxDepth;
+            }
+        }
+
+        /// <summary>
         /// Regression: Verify that circular references return default at max depth.
         /// </summary>
         [Fact]
