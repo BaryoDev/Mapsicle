@@ -2,7 +2,7 @@
 
   <!-- Shared metadata for all Mapsicle packages. Bump the version here only. -->
   <PropertyGroup>
-    <Version>1.2.2</Version>
+    <Version>1.2.3</Version>
     <Authors>Arnel Isiderio Robles</Authors>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
