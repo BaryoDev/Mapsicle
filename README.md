@@ -1,5 +1,6 @@
 # Mapsicle 🍦
 
+[![CI](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml/badge.svg)](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/Mapsicle.svg)](https://www.nuget.org/packages/Mapsicle)
 [![Downloads](https://img.shields.io/nuget/dt/Mapsicle.svg)](https://www.nuget.org/packages/Mapsicle)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
@@ -20,6 +21,8 @@
 | **Mapsicle.Caching**         | Memory/Distributed cache support  | Mapsicle.Fluent   |
 | **Mapsicle.Audit**           | Change tracking/diff detection    | Mapsicle.Fluent   |
 | **Mapsicle.DataAnnotations** | DataAnnotations validation        | Mapsicle.Fluent   |
+| **Mapsicle.Dapper**          | Dapper query-and-map helpers      | Mapsicle.Fluent   |
+| **Mapsicle.Serilog**         | Mapping diagnostics via Serilog   | Mapsicle          |
 
 > The core `Mapsicle` package has zero dependencies. Extension packages introduce their respective third-party dependencies (listed in the table above).
 
@@ -203,7 +206,7 @@ List<User> users = GetUsers();
 List<UserDto> dtos = users.MapTo<UserDto>();  // Entire list mapped
 ```
 
-**Requirements:** .NET Standard 2.0+ or .NET 6.0+
+**Requirements:** .NET Standard 2.0+ or .NET 6.0+ (`Mapsicle.AspNetCore` and `Mapsicle.EntityFramework` require .NET 8.0+)
 **Installation:** `dotnet add package Mapsicle`
 
 ### Which Package Do I Need?
