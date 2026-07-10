@@ -1,0 +1,30 @@
+<Project>
+
+  <!-- Shared metadata for all Mapsicle packages. Bump the version here only. -->
+  <PropertyGroup>
+    <Version>1.2.2</Version>
+    <Authors>Arnel Isiderio Robles</Authors>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <!-- SourceLink, symbol packages, and deterministic CI builds -->
+  <PropertyGroup>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\README.md" Pack="true" PackagePath="\" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>

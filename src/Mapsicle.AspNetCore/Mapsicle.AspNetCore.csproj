@@ -2,18 +2,10 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <PackageId>Mapsicle.AspNetCore</PackageId>
-    <Version>1.2.1</Version>
-    <Authors>Arnel Isiderio Robles</Authors>
     <Description>ASP.NET Core integration for Mapsicle - Minimal API extensions, result mapping, and model binding</Description>
-    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
     <PackageTags>mapper;mapping;aspnetcore;minimalapi;automapper-alternative</PackageTags>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,10 +15,6 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

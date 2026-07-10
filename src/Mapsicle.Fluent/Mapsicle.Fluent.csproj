@@ -2,18 +2,10 @@
 
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
-    <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
     <PackageId>Mapsicle.Fluent</PackageId>
-    <Version>1.2.1</Version>
     <Title>Mapsicle.Fluent</Title>
-    <Authors>Arnel Isiderio Robles</Authors>
     <Description>Fluent configuration API for Mapsicle. Adds expression-based mapping, ForMember, Ignore, Condition, and configuration validation.</Description>
     <PackageTags>mapper;mapping;fluent;automapper-alternative;expression;configuration</PackageTags>
-    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,10 +14,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

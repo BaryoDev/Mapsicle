@@ -29,47 +29,20 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
+      # Version must be applied at build time so the compiled assemblies carry the
+      # release AssemblyVersion/FileVersion, not the csproj default. Pack reuses
+      # these binaries via --no-build.
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build --configuration Release --no-restore /p:Version=${{ inputs.version }}
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
 
-      - name: Pack Mapsicle (Core)
-        run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Fluent
-        run: dotnet pack src/Mapsicle.Fluent/Mapsicle.Fluent.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.EntityFramework
-        run: dotnet pack src/Mapsicle.EntityFramework/Mapsicle.EntityFramework.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Validation
-        run: dotnet pack src/Mapsicle.Validation/Mapsicle.Validation.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.NamingConventions
-        run: dotnet pack src/Mapsicle.NamingConventions/Mapsicle.NamingConventions.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Serilog
-        run: dotnet pack src/Mapsicle.Serilog/Mapsicle.Serilog.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Dapper
-        run: dotnet pack src/Mapsicle.Dapper/Mapsicle.Dapper.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Json
-        run: dotnet pack src/Mapsicle.Json/Mapsicle.Json.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.AspNetCore
-        run: dotnet pack src/Mapsicle.AspNetCore/Mapsicle.AspNetCore.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Caching
-        run: dotnet pack src/Mapsicle.Caching/Mapsicle.Caching.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.Audit
-        run: dotnet pack src/Mapsicle.Audit/Mapsicle.Audit.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
-
-      - name: Pack Mapsicle.DataAnnotations
-        run: dotnet pack src/Mapsicle.DataAnnotations/Mapsicle.DataAnnotations.csproj --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+      - name: Pack all packages
+        run: |
+          for proj in src/*/*.csproj; do
+            dotnet pack "$proj" --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+          done
 
       - name: List packages
         run: ls -la ./packages
