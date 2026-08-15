@@ -1,21 +1,107 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - run: dotnet restore
-      - run: dotnet build --configuration Release --no-restore
-      - run: dotnet test --configuration Release --no-build --verbosity normal
+      - run: dotnet restore Mapsicle.sln
+      - run: dotnet build Mapsicle.sln --configuration Release --no-restore
+      - run: dotnet test Mapsicle.sln --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: '**/TestResults/*.trx'
+          retention-days: 7
+
+  format:
+    name: formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet restore Mapsicle.sln
+      - name: Verify formatting
+        run: dotnet format Mapsicle.sln --verify-no-changes --severity error --no-restore
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore with NuGet audit as error
+        run: dotnet restore Mapsicle.sln /p:NuGetAudit=true /p:NuGetAuditMode=all /p:WarningsNotAsErrors= /p:TreatWarningsAsErrors=true
+
+  core-has-no-dependencies:
+    name: core package stays dependency-free
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --output ./pack
+      - name: Fail if the core nuspec declares a dependency
+        run: |
+          set -euo pipefail
+          nupkg=$(ls ./pack/Mapsicle.*.nupkg | grep -v symbols | head -n1)
+          unzip -p "$nupkg" 'Mapsicle.nuspec' > core.nuspec
+          if grep -q '<dependency ' core.nuspec; then
+            echo "::error::src/Mapsicle must ship with zero package dependencies. Found:"
+            grep '<dependency ' core.nuspec
+            exit 1
+          fi
+          echo "Core package declares no dependencies."
+
+  benchmarks:
+    name: benchmark (advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Core benchmarks, short job
+        run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --quick
+      - name: Upload benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: tests/Mapsicle.Benchmarks/BenchmarkDotNet.Artifacts/**
+          retention-days: 14
+          if-no-files-found: ignore
