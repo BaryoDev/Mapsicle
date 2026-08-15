@@ -1,14 +1,15 @@
+using System.Collections.Concurrent;
 using AutoMapper;
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Running;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
-using Microsoft.EntityFrameworkCore;
+using BenchmarkDotNet.Running;
 using Mapsicle;
-using Mapsicle.Fluent;
 using Mapsicle.EntityFramework;
+using Mapsicle.Fluent;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Riok.Mapperly.Abstractions;
-using System.Collections.Concurrent;
 
 namespace Mapsicle.Benchmarks;
 
@@ -69,7 +70,7 @@ public class Program
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         // Setup AutoMapper for comparison
-        var autoConfig = new AutoMapper.MapperConfiguration(cfg => cfg.CreateMap<UserEntity, UserDto>());
+        var autoConfig = new AutoMapper.MapperConfiguration(cfg => cfg.CreateMap<UserEntity, UserDto>(), NullLoggerFactory.Instance);
         var autoMapper = autoConfig.CreateMapper();
 
         var user = new UserEntity { Id = 1, FirstName = "Test", LastName = "User", Email = "test@test.com" };
@@ -485,15 +486,22 @@ public class CoreMapperBenchmarks
     {
         _user = new UserEntity
         {
-            Id = 1, FirstName = "Alice", LastName = "Smith",
-            Email = "alice@test.com", IsActive = true, CreatedAt = DateTime.Now,
+            Id = 1,
+            FirstName = "Alice",
+            LastName = "Smith",
+            Email = "alice@test.com",
+            IsActive = true,
+            CreatedAt = DateTime.Now,
             Address = new AddressEntity { City = "NYC", Country = "USA", Street = "123 Main", State = "NY", ZipCode = "10001" }
         };
 
         _users = Enumerable.Range(1, 100).Select(i => new UserEntity
         {
-            Id = i, FirstName = $"User{i}", LastName = $"Last{i}",
-            Email = $"user{i}@test.com", IsActive = i % 2 == 0
+            Id = i,
+            FirstName = $"User{i}",
+            LastName = $"Last{i}",
+            Email = $"user{i}@test.com",
+            IsActive = i % 2 == 0
         }).ToList();
 
         var config = new AutoMapper.MapperConfiguration(cfg =>
@@ -503,7 +511,7 @@ public class CoreMapperBenchmarks
             cfg.CreateMap<UserEntity, UserFlatDto>()
                 .ForMember(d => d.AddressCity, o => o.MapFrom(s => s.Address != null ? s.Address.City : ""))
                 .ForMember(d => d.AddressCountry, o => o.MapFrom(s => s.Address != null ? s.Address.Country : ""));
-        });
+        }, NullLoggerFactory.Instance);
         _autoMapper = config.CreateMapper();
 
         // Initialize Mapperly mappers (source-generated, no runtime overhead)
@@ -518,8 +526,11 @@ public class CoreMapperBenchmarks
     [Benchmark(Baseline = true)]
     public UserDto Manual_Single() => new()
     {
-        Id = _user.Id, FirstName = _user.FirstName, LastName = _user.LastName,
-        Email = _user.Email, IsActive = _user.IsActive
+        Id = _user.Id,
+        FirstName = _user.FirstName,
+        LastName = _user.LastName,
+        Email = _user.Email,
+        IsActive = _user.IsActive
     };
 
     [Benchmark]
@@ -577,7 +588,7 @@ public class FluentMapperBenchmarks
         var autoConfig = new AutoMapper.MapperConfiguration(cfg =>
         {
             cfg.CreateMap<UserEntity, UserDto>();
-        });
+        }, NullLoggerFactory.Instance);
         _autoMapper = autoConfig.CreateMapper();
 
         _mapperlyMapper = new MapperlyUserMapper();
@@ -616,15 +627,18 @@ public class EfCoreBenchmarks
 
         _context.Users.AddRange(Enumerable.Range(1, 100).Select(i => new UserEntity
         {
-            Id = i, FirstName = $"User{i}", LastName = $"Last{i}",
-            Email = $"user{i}@test.com", IsActive = i % 2 == 0
+            Id = i,
+            FirstName = $"User{i}",
+            LastName = $"Last{i}",
+            Email = $"user{i}@test.com",
+            IsActive = i % 2 == 0
         }));
         _context.SaveChanges();
 
         var config = new AutoMapper.MapperConfiguration(cfg =>
         {
             cfg.CreateMap<UserEntity, UserDto>();
-        });
+        }, NullLoggerFactory.Instance);
         _autoMapper = config.CreateMapper();
     }
 
@@ -640,8 +654,11 @@ public class EfCoreBenchmarks
     {
         return _context.Users.Select(u => new UserDto
         {
-            Id = u.Id, FirstName = u.FirstName, LastName = u.LastName,
-            Email = u.Email, IsActive = u.IsActive
+            Id = u.Id,
+            FirstName = u.FirstName,
+            LastName = u.LastName,
+            Email = u.Email,
+            IsActive = u.IsActive
         }).ToList();
     }
 
@@ -696,7 +713,7 @@ public class EdgeCaseBenchmarks
             cfg.CreateMap<ChildNode, ChildNodeDto>();
             cfg.CreateMap<DeepEntity, DeepDto>().MaxDepth(32);
             cfg.CreateMap<UserEntity, UserDto>();
-        });
+        }, NullLoggerFactory.Instance);
         _autoMapper = config.CreateMapper();
 
         // Initialize Mapperly mappers
@@ -830,7 +847,7 @@ public class RealWorldScenarioBenchmarks
                 .ForMember(d => d.ShippingCity, o => o.MapFrom(s => s.ShippingAddress.City))
                 .ForMember(d => d.ShippingCountry, o => o.MapFrom(s => s.ShippingAddress.Country))
                 .ForMember(d => d.ItemCount, o => o.MapFrom(s => s.Lines.Count));
-        });
+        }, NullLoggerFactory.Instance);
         _autoMapper = autoConfig.CreateMapper();
 
         // Initialize Mapperly mapper (using manual implementation for complex mapping)
@@ -902,7 +919,7 @@ public class ConcurrencyBenchmarks
         var config = new AutoMapper.MapperConfiguration(cfg =>
         {
             cfg.CreateMap<UserEntity, UserDto>();
-        });
+        }, NullLoggerFactory.Instance);
         _autoMapper = config.CreateMapper();
 
         _mapperlyMapper = new MapperlyUserMapper();
@@ -1040,10 +1057,10 @@ public class CacheBenchmarks
     public int CacheHitRatio()
     {
         Mapper.ClearCache();
-        
+
         // Warm up cache
         _ = _user.MapTo<UserDto>();
-        
+
         // Perform many mappings (should hit cache)
         int count = 0;
         for (int i = 0; i < 10000; i++)
@@ -1064,7 +1081,7 @@ public class CacheBenchmarks
             Mapper.UseLruCache = true;
             Mapper.MaxCacheSize = 10; // Very small cache to force evictions
             Mapper.ClearCache();
-            
+
             // Map many times to cause evictions
             var results = new List<UserDto>();
             for (int i = 0; i < 100; i++)
@@ -1084,13 +1101,13 @@ public class CacheBenchmarks
     public List<UserDto> PropertyInfoCacheEffectiveness()
     {
         Mapper.ClearCache();
-        
+
         // First mapping builds PropertyInfo cache
         var first = _users.Take(10).MapTo<UserDto>();
-        
+
         // Subsequent mappings benefit from cached PropertyInfo
         var second = _users.Skip(10).Take(990).MapTo<UserDto>();
-        
+
         return first.Concat(second).ToList();
     }
 }
