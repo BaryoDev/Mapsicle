@@ -322,12 +322,12 @@ namespace Mapsicle
             foreach (var destProp in destProps)
             {
                 if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-                
+
                 var mapFrom = destProp.GetCustomAttribute<MapFromAttribute>();
                 var sourceName = mapFrom?.SourcePropertyName ?? destProp.Name;
-                
+
                 if (sourceProps.Contains(sourceName)) continue;
-                
+
                 // Check flattening - verify the nested property actually exists
                 bool hasFlattening = typeof(TSource).GetProperties()
                     .Any(sp =>
@@ -936,7 +936,7 @@ namespace Mapsicle
                 return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();
             });
 
-            return mapFunction(source);
+                return mapFunction(source);
             }
             finally
             {

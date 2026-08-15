@@ -1,6 +1,6 @@
 using System.Collections.Generic;
-using Xunit;
 using Mapsicle;
+using Xunit;
 
 namespace Mapsicle.Tests
 {

@@ -1,8 +1,8 @@
+using Mapsicle.Caching;
+using Mapsicle.Fluent;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
-using Mapsicle.Caching;
-using Mapsicle.Fluent;
 using Xunit;
 
 namespace Mapsicle.Caching.Tests;

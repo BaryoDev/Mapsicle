@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Mapsicle.EntityFramework;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
-using Mapsicle.EntityFramework;
 
 namespace Mapsicle.EntityFramework.Tests
 {
@@ -148,7 +148,7 @@ namespace Mapsicle.EntityFramework.Tests
                 .ToList();
 
             Assert.Equal(2, dtos.Count);
-            
+
             var techOrder = dtos.First(d => d.Id == 1);
             Assert.Equal("TechCorp", techOrder.CustomerName);
             Assert.Equal("tech@corp.com", techOrder.CustomerEmail);

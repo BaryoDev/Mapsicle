@@ -202,7 +202,7 @@ namespace Mapsicle.Tests
 
             Assert.Equal(100, firstResult.Count);
             Assert.Equal(100, secondResult.Count);
-            
+
             // Cache should have entries for the mapping
             Assert.True(firstCacheInfo.Total > 0);
         }
@@ -357,7 +357,7 @@ namespace Mapsicle.Tests
         public void UnmappedProperties_ShouldBeSilent()
         {
             var source = new { Id = 1, Name = "Test" };
-            
+
             // ExtraDto has an extra property that won't be mapped
             var dest = source.MapTo<ExtraDto>();
 
@@ -453,7 +453,7 @@ namespace Mapsicle.Tests
                 }
 
                 var cacheInfo = Mapper.CacheInfo();
-                
+
                 // With unbounded cache, entries can grow beyond typical LRU limits
                 Assert.True(cacheInfo.Total >= 0);
             }

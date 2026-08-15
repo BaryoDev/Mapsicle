@@ -1,6 +1,6 @@
 using System;
-using Xunit;
 using Mapsicle.Fluent;
+using Xunit;
 
 namespace Mapsicle.Fluent.Tests
 {
@@ -82,7 +82,7 @@ namespace Mapsicle.Fluent.Tests
             });
 
             var mapper = config.CreateMapper();
-            
+
             // Map Car as Vehicle
             Vehicle car = new Car { Id = 1, Make = "Toyota", Doors = 4 };
             var carDto = mapper.Map<CarDto>(car);

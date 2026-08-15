@@ -1,8 +1,8 @@
-using Xunit;
-using Mapsicle;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Mapsicle;
+using Xunit;
 
 namespace Mapsicle.Tests
 {

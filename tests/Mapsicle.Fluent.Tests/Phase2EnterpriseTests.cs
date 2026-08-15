@@ -1,6 +1,6 @@
 using System;
-using Xunit;
 using Mapsicle.Fluent;
+using Xunit;
 
 namespace Mapsicle.Fluent.Tests
 {

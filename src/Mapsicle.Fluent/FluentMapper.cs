@@ -124,7 +124,7 @@ namespace Mapsicle.Fluent
     {
         ITypeMapExpression<TSource, TDest> CreateMap<TSource, TDest>();
         void CreateMap<TSource, TDest>(Action<ITypeMapExpression<TSource, TDest>> configure);
-        
+
         /// <summary>
         /// Creates a global type converter that applies to all mappings between the given types.
         /// </summary>
@@ -177,19 +177,19 @@ namespace Mapsicle.Fluent
         ITypeMapExpression<TSource, TDest> ForMember<TMember>(
             Expression<Func<TDest, TMember>> destinationMember,
             Action<IMemberConfigurationExpression<TSource, TDest, TMember>> memberOptions);
-        
+
         ITypeMapExpression<TSource, TDest> ForAllMembers(Action<IMemberConfigurationExpression<TSource, TDest, object>> memberOptions);
-        
+
         /// <summary>
         /// Executes before mapping occurs.
         /// </summary>
         ITypeMapExpression<TSource, TDest> BeforeMap(Action<TSource, TDest> action);
-        
+
         /// <summary>
         /// Executes after mapping completes.
         /// </summary>
         ITypeMapExpression<TSource, TDest> AfterMap(Action<TSource, TDest> action);
-        
+
         /// <summary>
         /// Includes a derived type mapping. For polymorphic scenarios.
         /// </summary>
@@ -201,7 +201,7 @@ namespace Mapsicle.Fluent
         /// Specifies a factory function to construct the destination object.
         /// </summary>
         ITypeMapExpression<TSource, TDest> ConstructUsing(Func<TSource, TDest> factory);
-        
+
         ITypeMapExpression<TDest, TSource> ReverseMap();
     }
 
@@ -264,7 +264,7 @@ namespace Mapsicle.Fluent
         {
             var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanWrite);
-            
+
             foreach (var prop in destProps)
             {
                 var memberConfig = new MemberConfigurationExpression<TSource, TDest, object>(this, prop.Name);
@@ -317,7 +317,7 @@ namespace Mapsicle.Fluent
         }
 
         internal void AddIgnore(string memberName) => _ignoredMembers.Add(memberName);
-        
+
         internal void AddCustomMapping(string memberName, Func<object, object> mapping)
         {
             _customMappings[memberName] = mapping;
@@ -353,7 +353,7 @@ namespace Mapsicle.Fluent
         void Condition(Func<TSource, bool> condition);
     }
 
-    internal class MemberConfigurationExpression<TSource, TDest, TMember> 
+    internal class MemberConfigurationExpression<TSource, TDest, TMember>
         : IMemberConfigurationExpression<TSource, TDest, TMember>
     {
         private readonly TypeMapConfiguration<TSource, TDest> _typeMap;
@@ -425,7 +425,7 @@ namespace Mapsicle.Fluent
         public TDest Map<TSource, TDest>(TSource source, TDest destination)
         {
             if (source is null || destination is null) return destination;
-            
+
             var typeMap = _config.GetTypeMap(typeof(TSource), typeof(TDest));
             var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance);
             var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
@@ -451,9 +451,9 @@ namespace Mapsicle.Fluent
                 }
 
                 // Standard property matching
-                var sourceProp = sourceProps.FirstOrDefault(p => 
+                var sourceProp = sourceProps.FirstOrDefault(p =>
                     p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && p.CanRead);
-                
+
                 if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
                 {
                     destProp.SetValue(destination, sourceProp.GetValue(source));
@@ -558,7 +558,7 @@ namespace Mapsicle.Fluent
         private Action<object, TDest> GetOrBuildOverrideAction<TDest>(Type sourceType, ITypeMapConfiguration typeMap)
         {
             var key = (sourceType, typeof(TDest));
-            
+
             return (Action<object, TDest>)_compiledMappers.GetOrAdd(key, _ =>
             {
                 var destType = typeof(TDest);
@@ -615,7 +615,7 @@ namespace Mapsicle.Fluent
                 // Return combined action
                 if (actions.Count == 0) return (Action<object, TDest>)((s, d) => { });
                 if (actions.Count == 1) return actions[0];
-                
+
                 Action<object, TDest> combined = (s, d) =>
                 {
                     foreach (var action in actions) action(s, d);

@@ -1,6 +1,6 @@
 using System;
-using Xunit;
 using Mapsicle.Fluent;
+using Xunit;
 
 namespace Mapsicle.Fluent.Tests
 {
@@ -119,7 +119,7 @@ namespace Mapsicle.Fluent.Tests
             });
 
             var mapper = config.CreateMapper();
-            
+
             var activeUser = new User { Id = 1, IsActive = true };
             var inactiveUser = new User { Id = 2, IsActive = false };
 

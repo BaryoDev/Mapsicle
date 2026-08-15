@@ -83,7 +83,7 @@ namespace Mapsicle.Tests
             // Create a 1MB+ string
             var longString = new string('A', 1024 * 1024);
             var source = new StringModel { Value = longString };
-            
+
             var dest = source.MapTo<StringModel>();
 
             Assert.NotNull(dest);
@@ -97,7 +97,7 @@ namespace Mapsicle.Tests
             // Create a 10MB string
             var longString = new string('B', 10 * 1024 * 1024);
             var source = new StringModel { Value = longString };
-            
+
             var dest = source.MapTo<StringModel>();
 
             Assert.NotNull(dest);
@@ -243,19 +243,19 @@ namespace Mapsicle.Tests
         {
             // Save original max depth
             var originalMaxDepth = Mapper.MaxDepth;
-            
+
             try
             {
                 Mapper.MaxDepth = 32;
-                
+
                 // Create 32 levels of nesting
                 var source = CreateNestedModel(32);
-                
+
                 var dest = source.MapTo<NestedModel>();
 
                 Assert.NotNull(dest);
                 Assert.Equal(1, dest.Level);
-                
+
                 // Verify first few levels
                 var current = dest;
                 for (int i = 1; i <= 10 && current != null; i++)
@@ -276,15 +276,15 @@ namespace Mapsicle.Tests
             var originalMaxDepth = Mapper.MaxDepth;
             var logs = new List<string>();
             var originalLogger = Mapper.Logger;
-            
+
             try
             {
                 Mapper.MaxDepth = 5;
                 Mapper.Logger = msg => logs.Add(msg);
-                
+
                 // Create more than 5 levels
                 var source = CreateNestedModel(10);
-                
+
                 var dest = source.MapTo<NestedModel>();
 
                 // Should not crash, should handle gracefully

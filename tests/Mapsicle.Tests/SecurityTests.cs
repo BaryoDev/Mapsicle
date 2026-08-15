@@ -52,8 +52,8 @@ namespace Mapsicle.Tests
         [Fact]
         public void MapTo_PropertyWithSqlInjectionPattern_ShouldTreatAsString()
         {
-            var source = new UserInput 
-            { 
+            var source = new UserInput
+            {
                 Name = "'; DROP TABLE Users; --",
                 Email = "test@test.com"
             };
@@ -72,8 +72,8 @@ namespace Mapsicle.Tests
         [Fact]
         public void MapTo_ValueWithScriptInjection_ShouldTreatAsString()
         {
-            var source = new UserInput 
-            { 
+            var source = new UserInput
+            {
                 Name = "<script>alert('XSS')</script>",
                 Query = "javascript:void(0)"
             };
@@ -92,8 +92,8 @@ namespace Mapsicle.Tests
         [Fact]
         public void MapTo_FormatStringInjection_ShouldTreatAsString()
         {
-            var source = new UserInput 
-            { 
+            var source = new UserInput
+            {
                 Name = "{0} {1} %s %x",
                 Email = "{System.Environment.UserName}"
             };
@@ -250,9 +250,9 @@ namespace Mapsicle.Tests
                 }
 
                 var cacheInfo = Mapper.CacheInfo();
-                
+
                 // Cache should be bounded by MaxCacheSize when LRU is enabled
-                Assert.True(cacheInfo.Total <= Mapper.MaxCacheSize * 2, 
+                Assert.True(cacheInfo.Total <= Mapper.MaxCacheSize * 2,
                     $"Cache size {cacheInfo.Total} exceeds expected limit");
             }
             finally
@@ -286,7 +286,7 @@ namespace Mapsicle.Tests
                 }
 
                 var cacheInfo = Mapper.CacheInfo();
-                
+
                 // Cache should evict old entries
                 Assert.True(cacheInfo.Total <= Mapper.MaxCacheSize * 2);
             }
@@ -309,7 +309,7 @@ namespace Mapsicle.Tests
             mapper.Dispose();
 
             // Should throw ObjectDisposedException
-            Assert.Throws<ObjectDisposedException>(() => 
+            Assert.Throws<ObjectDisposedException>(() =>
                 mapper.MapTo<UserInput>(new UserInput()));
         }
 
@@ -320,7 +320,7 @@ namespace Mapsicle.Tests
         public void MapperFactory_MultipleDispose_ShouldBeIdempotent()
         {
             var mapper = MapperFactory.Create();
-            
+
             // Multiple dispose calls should not throw
             mapper.Dispose();
             mapper.Dispose();
@@ -341,7 +341,7 @@ namespace Mapsicle.Tests
         public void MapTo_FromObjectType_ShouldHandleGracefully()
         {
             object source = new UserInput { Name = "Test", Email = "test@test.com" };
-            
+
             // Should handle object type safely
             var dest = source.MapTo<UserInput>();
 
@@ -355,7 +355,7 @@ namespace Mapsicle.Tests
         public void MapTo_WithDynamicType_ShouldHandleSafely()
         {
             dynamic source = new UserInput { Name = "Dynamic", Email = "dynamic@test.com" };
-            
+
             // Should handle dynamic type
             var dest = ((object)source).MapTo<UserInput>();
 
@@ -369,7 +369,7 @@ namespace Mapsicle.Tests
         public void MapTo_IncompatibleTypes_ShouldNotThrow()
         {
             var source = new { Id = "NotAnInt", Name = 12345 };
-            
+
             // Should not throw, just skip incompatible properties
             var dest = source.MapTo<UserInput>();
 
@@ -406,10 +406,10 @@ namespace Mapsicle.Tests
                 }
 
                 var cacheInfo = Mapper.CacheInfo();
-                
+
                 // Should maintain cache size limit
                 Assert.True(cacheInfo.Total <= Mapper.MaxCacheSize * 2);
-                
+
                 // Should still function correctly
                 var final = new UserInput { Name = "Final" };
                 var finalDest = final.MapTo<UserInput>();

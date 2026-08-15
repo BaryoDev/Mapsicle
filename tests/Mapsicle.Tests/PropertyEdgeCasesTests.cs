@@ -33,9 +33,9 @@ namespace Mapsicle.Tests
         public class SetterOnlyModel
         {
             private string _value = string.Empty;
-            public string WriteOnlyProperty 
-            { 
-                set => _value = value; 
+            public string WriteOnlyProperty
+            {
+                set => _value = value;
             }
             public string NormalProperty { get; set; } = string.Empty;
         }
@@ -279,13 +279,13 @@ namespace Mapsicle.Tests
         [Fact]
         public void MapTo_ComplexAnonymousType_ShouldMap()
         {
-            var source = new 
-            { 
-                Id = 42, 
-                Name = "Complex", 
+            var source = new
+            {
+                Id = 42,
+                Name = "Complex",
                 Nested = new { Value = "NestedValue" }
             };
-            
+
             var dest = source.MapTo<ComplexModel>();
 
             Assert.NotNull(dest);
@@ -322,10 +322,10 @@ namespace Mapsicle.Tests
         public class BackingFieldModel
         {
             private string _backingField = string.Empty;
-            public string PublicProperty 
-            { 
-                get => _backingField; 
-                set => _backingField = value; 
+            public string PublicProperty
+            {
+                get => _backingField;
+                set => _backingField = value;
             }
         }
 

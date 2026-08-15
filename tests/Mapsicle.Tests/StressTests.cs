@@ -56,18 +56,18 @@ namespace Mapsicle.Tests
             {
                 try
                 {
-                    var user = new User 
-                    { 
-                        Id = mappingCount, 
-                        Name = $"User{mappingCount}", 
-                        Email = $"user{mappingCount}@test.com" 
+                    var user = new User
+                    {
+                        Id = mappingCount,
+                        Name = $"User{mappingCount}",
+                        Email = $"user{mappingCount}@test.com"
                     };
-                    
+
                     var dto = user.MapTo<UserDto>();
-                    
+
                     Assert.NotNull(dto);
                     Assert.Equal(user.Id, dto.Id);
-                    
+
                     mappingCount++;
                 }
                 catch (Exception ex)
@@ -134,7 +134,7 @@ namespace Mapsicle.Tests
         public void MemoryPressure_LargeObjectGraphs_ShouldHandle()
         {
             var originalMaxDepth = Mapper.MaxDepth;
-            
+
             try
             {
                 Mapper.MaxDepth = 20;

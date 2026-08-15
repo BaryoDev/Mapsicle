@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using Xunit;
 using Mapsicle.Fluent;
+using Xunit;
 
 namespace Mapsicle.Fluent.Tests
 {
@@ -123,13 +123,13 @@ namespace Mapsicle.Fluent.Tests
             {
                 cfg.CreateMap<BaseEntity, BaseDto>()
                     .Include<DerivedEntity, DerivedDto>();
-                    
+
                 cfg.CreateMap<DerivedEntity, DerivedDto>();
             });
 
             var mapper = config.CreateMapper();
             var derived = new DerivedEntity { Id = 1, Name = "Test", Extra = "Extra" };
-            
+
             var dto = mapper.Map<DerivedDto>(derived);
 
             Assert.NotNull(dto);
@@ -176,7 +176,7 @@ namespace Mapsicle.Fluent.Tests
             });
 
             var mapper = config.CreateMapper();
-            
+
             // Forward mapping
             var user = new User { Id = 1, FirstName = "John", LastName = "Doe", Email = "john@test.com" };
             var dto = mapper.Map<UserDto>(user);
@@ -204,7 +204,7 @@ namespace Mapsicle.Fluent.Tests
 
             var mapper = config.CreateMapper();
             var dto = new UserDto { Id = 1, Email = "test@test.com", DisplayName = "Display" };
-            
+
             var user = mapper.Map<User>(dto);
 
             Assert.NotNull(user);
@@ -368,14 +368,14 @@ namespace Mapsicle.Fluent.Tests
             var config = new MapperConfiguration(cfg =>
             {
                 cfg.CreateMap<Product, Product>()
-                    .ConstructUsing(src => 
-                        src.Price > 100 
-                            ? new Product { Name = "Expensive" } 
+                    .ConstructUsing(src =>
+                        src.Price > 100
+                            ? new Product { Name = "Expensive" }
                             : new Product { Name = "Affordable" });
             });
 
             var mapper = config.CreateMapper();
-            
+
             var expensiveProduct = new Product { Id = 1, Price = 150m };
             var affordableProduct = new Product { Id = 2, Price = 50m };
 

@@ -1,9 +1,9 @@
 using FluentValidation;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Mapsicle.AspNetCore;
 using Mapsicle.Fluent;
 using Mapsicle.Validation;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Xunit;
 
 namespace Mapsicle.AspNetCore.Tests;

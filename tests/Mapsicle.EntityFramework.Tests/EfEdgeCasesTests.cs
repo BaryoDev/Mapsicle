@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.EntityFrameworkCore;
-using Xunit;
 using Mapsicle.EntityFramework;
 using Mapsicle.Fluent;
+using Microsoft.EntityFrameworkCore;
+using Xunit;
 
 namespace Mapsicle.EntityFramework.Tests
 {
@@ -41,12 +41,12 @@ namespace Mapsicle.EntityFramework.Tests
 
             // Seed products
             _context.Products.AddRange(
-                new ProductEntity 
-                { 
-                    Id = 1, 
-                    Name = "Laptop", 
-                    Price = 999.99m, 
-                    CategoryId = 1, 
+                new ProductEntity
+                {
+                    Id = 1,
+                    Name = "Laptop",
+                    Price = 999.99m,
+                    CategoryId = 1,
                     Category = electronics,
                     Tags = new List<TagEntity>
                     {
@@ -54,12 +54,12 @@ namespace Mapsicle.EntityFramework.Tests
                         new TagEntity { Id = 2, Name = "Portable" }
                     }
                 },
-                new ProductEntity 
-                { 
-                    Id = 2, 
-                    Name = "Book: C# Programming", 
-                    Price = 49.99m, 
-                    CategoryId = 2, 
+                new ProductEntity
+                {
+                    Id = 2,
+                    Name = "Book: C# Programming",
+                    Price = 49.99m,
+                    CategoryId = 2,
                     Category = books,
                     Tags = new List<TagEntity>
                     {
@@ -306,7 +306,7 @@ namespace Mapsicle.EntityFramework.Tests
         {
             // Get products and detach from context
             var products = _context.Products.Include(p => p.Category).ToList();
-            
+
             foreach (var product in products)
             {
                 _context.Entry(product).State = EntityState.Detached;

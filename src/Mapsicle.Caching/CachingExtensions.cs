@@ -6,9 +6,9 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Mapsicle.Fluent;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
-using Mapsicle.Fluent;
 
 namespace Mapsicle.Caching
 {

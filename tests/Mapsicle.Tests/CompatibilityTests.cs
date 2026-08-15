@@ -13,7 +13,7 @@ namespace Mapsicle.Tests
 
         // Record types (C# 9+)
         public record UserRecord(int Id, string Name, string Email);
-        
+
         public record ProductRecord(int Id, string Name)
         {
             public decimal Price { get; init; }
@@ -173,12 +173,12 @@ namespace Mapsicle.Tests
         public void MapTo_InitOnlyProperties_ShouldSetDuringConstruction()
         {
             var source = new NormalClass
-            { 
-                Id = 100, 
-                Name = "InitTest", 
-                CreatedAt = new DateTime(2024, 1, 1) 
+            {
+                Id = 100,
+                Name = "InitTest",
+                CreatedAt = new DateTime(2024, 1, 1)
             };
-            
+
             var dest = source.MapTo<InitOnlyModel>();
 
             Assert.NotNull(dest);
@@ -362,10 +362,10 @@ namespace Mapsicle.Tests
         {
             var array = new[] { 1, 2, 3, 4, 5 };
             var segment = new ArraySegment<int>(array, 1, 3);
-            
+
             // MapTo on array segment should work like any enumerable
             var result = segment.MapTo<int>();
-            
+
             Assert.Equal(3, result.Count);
             Assert.Equal(2, result[0]);
             Assert.Equal(3, result[1]);

@@ -1,12 +1,12 @@
 using System;
 using System.Threading.Tasks;
 using FluentValidation;
+using Mapsicle.Fluent;
+using Mapsicle.Validation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
-using Mapsicle.Fluent;
-using Mapsicle.Validation;
 
 namespace Mapsicle.AspNetCore
 {

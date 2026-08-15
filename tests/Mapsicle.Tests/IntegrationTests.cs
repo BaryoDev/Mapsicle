@@ -196,15 +196,15 @@ namespace Mapsicle.Tests
             {
                 try
                 {
-                    var user = new User 
-                    { 
-                        Id = i, 
-                        FirstName = $"User{i}", 
-                        LastName = "Test", 
-                        Email = $"user{i}@test.com" 
+                    var user = new User
+                    {
+                        Id = i,
+                        FirstName = $"User{i}",
+                        LastName = "Test",
+                        Email = $"user{i}@test.com"
                     };
                     var dto = user.MapTo<UserDto>();
-                    
+
                     Assert.NotNull(dto);
                     Assert.Equal(i, dto.Id);
                 }
@@ -236,7 +236,7 @@ namespace Mapsicle.Tests
                     using var mapper = MapperFactory.Create();
                     var user = new User { Id = i, FirstName = $"User{i}", LastName = "Test" };
                     var dto = mapper.MapTo<UserDto>(user);
-                    
+
                     Assert.NotNull(dto);
                 }
                 catch (Exception ex)
@@ -297,7 +297,7 @@ namespace Mapsicle.Tests
             {
                 var pageData = users.Skip(page * pageSize).Take(pageSize).ToList();
                 var pageDtos = pageData.MapTo<UserDto>();
-                
+
                 Assert.Equal(pageSize, pageDtos.Count);
                 totalProcessed += pageDtos.Count;
             }
@@ -318,13 +318,13 @@ namespace Mapsicle.Tests
                 OrderDate = DateTime.Now,
                 Lines = new List<OrderLine>
                 {
-                    new OrderLine 
-                    { 
+                    new OrderLine
+                    {
                         Product = new Product { Id = 1, Name = "Laptop", Price = 999.99m },
                         Quantity = 1
                     },
-                    new OrderLine 
-                    { 
+                    new OrderLine
+                    {
                         Product = new Product { Id = 2, Name = "Mouse", Price = 29.99m },
                         Quantity = 2
                     }
@@ -441,7 +441,7 @@ namespace Mapsicle.Tests
             }
 
             // After disposal, mapper should not be usable
-            Assert.Throws<ObjectDisposedException>(() => 
+            Assert.Throws<ObjectDisposedException>(() =>
                 mapper.MapTo<UserDto>(new User()));
         }
 
@@ -452,7 +452,7 @@ namespace Mapsicle.Tests
         public void Disposal_MultipleCalls_ShouldBeIdempotent()
         {
             var mapper = MapperFactory.Create();
-            
+
             // Multiple dispose calls should not throw
             mapper.Dispose();
             mapper.Dispose();
