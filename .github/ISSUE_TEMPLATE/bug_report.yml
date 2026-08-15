@@ -1,0 +1,57 @@
+name: Bug report
+description: A mapping produced the wrong result, or threw.
+labels: ["bug"]
+body:
+  - type: input
+    id: package
+    attributes:
+      label: Package and version
+      placeholder: "Mapsicle 1.2.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The source type, the destination type, and the mapping call. Fifteen lines beats any description.
+      render: csharp
+      placeholder: |
+        public class Source { public int Count { get; set; } }
+        public class Dest   { public long Count { get; set; } }
+
+        var dest = new Source { Count = 42 }.MapTo<Dest>();
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: Expected
+      placeholder: "dest.Count == 42"
+    validations:
+      required: true
+
+  - type: input
+    id: actual
+    attributes:
+      label: Actual
+      placeholder: "dest.Count == 0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api
+    attributes:
+      label: Which API
+      multiple: true
+      options:
+        - "Mapper.MapTo<T>(object)"
+        - "Mapper.MapTo<TSource, TDest>()"
+        - "Mapper.Map(destination)"
+        - "MapperFactory.Create()"
+        - "Mapsicle.Fluent IMapper"
+        - "Mapsicle.EntityFramework ProjectTo"
+        - "other / not sure"
+    validations:
+      required: true
