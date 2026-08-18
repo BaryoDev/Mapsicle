@@ -1,51 +1,114 @@
 name: Publish to NuGet
 
+# The version comes from the tag, never from a typed input, so what was published
+# is always recoverable from git. A dispatch run exists only to exercise this
+# workflow without publishing: a release path that can only be tested by
+# releasing has never been tested.
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Package version (e.g., 1.0.0, 1.1.0-beta)'
-        required: true
-        type: string
+      dry_run:
+        description: 'Build, test, pack and verify trusted publishing. Publish nothing.'
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Lets the runner mint the OIDC token nuget.org exchanges for a
+      # short-lived key. No long-lived secret is involved.
+      id-token: write
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      - name: Validate version format
+      - name: Read the version from the tag
+        id: version
         run: |
-          if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
-            echo "Invalid version format. Use semantic versioning (e.g., 1.0.0 or 1.0.0-beta)"
-            exit 1
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # A dispatch run publishes nothing, so the number only has to be well formed.
+            VERSION="0.0.0-dryrun"
           fi
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Tag $GITHUB_REF_NAME does not look like vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
 
-      - name: Restore dependencies
-        run: dotnet restore
+      - run: dotnet restore Mapsicle.sln
 
-      # Version must be applied at build time so the compiled assemblies carry the
-      # release AssemblyVersion/FileVersion, not the csproj default. Pack reuses
-      # these binaries via --no-build.
+      # Version applied at build time so the assemblies carry the release
+      # AssemblyVersion, not the csproj default. Pack reuses these via --no-build.
       - name: Build
-        run: dotnet build --configuration Release --no-restore /p:Version=${{ inputs.version }}
+        run: dotnet build Mapsicle.sln -c Release --no-restore /p:Version=${{ steps.version.outputs.version }}
 
       - name: Test
-        run: dotnet test --configuration Release --no-build --verbosity normal
+        run: dotnet test Mapsicle.sln -c Release --no-build --verbosity normal
 
-      - name: Pack all packages
+      # The same checks ci.yml runs. This job used to run its own tests and
+      # nothing else, so it could publish while the audit or formatting was red.
+      - name: Dependency audit
+        run: dotnet restore Mapsicle.sln /p:NuGetAudit=true /p:NuGetAuditMode=all /p:WarningsNotAsErrors= /p:TreatWarningsAsErrors=true
+
+      - name: Formatting
+        run: dotnet format Mapsicle.sln --verify-no-changes --no-restore
+
+      - name: Pack
         run: |
           for proj in src/*/*.csproj; do
-            dotnet pack "$proj" --configuration Release --no-build --output ./packages /p:Version=${{ inputs.version }}
+            dotnet pack "$proj" -c Release --no-build --output ./packages \
+              /p:Version=${{ steps.version.outputs.version }}
           done
+          ls -la ./packages
 
-      - name: List packages
-        run: ls -la ./packages
+      # Requested here rather than earlier: the key expires after an hour and
+      # each OIDC token buys exactly one key.
+      #
+      # Runs on dry runs too, so a dry run actually verifies the trusted
+      # publishing policy. Obtaining a key publishes nothing.
+      - name: Exchange OIDC token for a short-lived NuGet key
+        id: nuget_login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER || 'arnelirobles' }}
 
-      - name: Push to NuGet
-        run: dotnet nuget push ./packages/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate
+      - name: Confirm the key was issued
+        env:
+          # Through the environment rather than interpolated into the script. An
+          # expression is substituted into the shell source before the shell parses
+          # it, so a value containing shell syntax would run rather than compare.
+          NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::No API key returned. Check the trusted publishing policy on nuget.org."
+            echo "Repository Owner must be BaryoDev, Repository must be Mapsicle, and Workflow File must be publish.yml with no path."
+            exit 1
+          fi
+          echo "Trusted publishing OK: short-lived key issued."
+
+      - name: Publish
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push ./packages/*.nupkg \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
