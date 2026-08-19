@@ -5,6 +5,37 @@ All notable changes to Mapsicle are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-08-19
+
+Security release. One shipped change, deliberately: anyone taking this for the advisory
+should not have to take a behaviour change with it.
+
+### Security
+
+- **EntityFramework**: `Microsoft.EntityFrameworkCore` moves from 8.0.0 to 8.0.30, clearing
+  [GHSA-qj66-m88j-hmgj](https://github.com/advisories/GHSA-qj66-m88j-hmgj) (high) in the
+  transitively resolved `Microsoft.Extensions.Caching.Memory` 8.0.0. Every install of
+  `Mapsicle.EntityFramework` 1.2.3 and earlier inherited it. Staying on the 8.0 band:
+  the package targets `net8.0`, and EF Core 9 is a separate decision. ([#10](https://github.com/BaryoDev/Mapsicle/issues/10))
+
+### Changed
+
+- `using` directives reordered by `dotnet format` in `Mapsicle.AspNetCore` and
+  `Mapsicle.Caching`. No behavioural change; recorded because it is the only other
+  difference in shipped source since 1.2.3.
+- First release published through NuGet Trusted Publishing (OIDC), from a `v*` tag rather
+  than a stored API key. ([#18](https://github.com/BaryoDev/Mapsicle/issues/18))
+
+### Known issues, not fixed here
+
+Verified present in this release and targeted at 1.3.0:
+
+- Widening numeric conversions silently produce `0`: `int` to `long`, `int` to `decimal`,
+  `decimal` to `double`. `int` to `int?` and `int` to `int` are unaffected, which is what
+  makes it easy to miss. ([#5](https://github.com/BaryoDev/Mapsicle/issues/5))
+- Mapping a null reference-typed property to a `string` destination throws
+  `NullReferenceException`. ([#2](https://github.com/BaryoDev/Mapsicle/issues/2))
+
 ## [1.2.3] - 2026-07-10
 
 ### Fixed
