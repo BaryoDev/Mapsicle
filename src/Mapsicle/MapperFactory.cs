@@ -148,6 +148,15 @@ namespace Mapsicle
                     continue;
                 }
 
+                // Same reason as the static Mapper: the cached delegate casts to one runtime type,
+                // so a mixed collection threw InvalidCastException on the first item of a different
+                // type. Map that item through its own delegate instead.
+                if (itemMapper is not null && item.GetType() != itemType)
+                {
+                    result.Add(MapTo<T>(item)!);
+                    continue;
+                }
+
                 // Lazily get mapper for first non-null item type
                 if (itemMapper is null)
                 {
@@ -229,7 +238,7 @@ namespace Mapsicle
                 }
                 if (destType == typeof(string))
                 {
-                    var toStringCall = Expression.Call(typedSource, typeof(object).GetMethod("ToString")!);
+                    var toStringCall = PropertyConversion.BuildToString(typedSource, sourceType);
                     return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
                 }
                 var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
@@ -303,7 +312,7 @@ namespace Mapsicle
                         }
                         else if (param.ParameterType == typeof(string))
                         {
-                            args.Add(Expression.Call(propExp, typeof(object).GetMethod("ToString")!));
+                            args.Add(PropertyConversion.BuildToString(propExp, sourceProp.PropertyType));
                         }
                         else if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
                         {
@@ -413,7 +422,7 @@ namespace Mapsicle
                     }
                     else if (targetType == typeof(string))
                     {
-                        var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
+                        var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
                         assignments.Add(Expression.Assign(destPropExp, toStringCall));
                     }
                 }
@@ -449,45 +458,26 @@ namespace Mapsicle
                 propExp = Expression.Convert(call, sourceProp.PropertyType);
             }
 
-            var targetType = destProp.PropertyType;
-            var srcType = sourceProp.PropertyType;
+            var value = PropertyConversion.TryBuild(
+                propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
 
-            if (targetType.IsAssignableFrom(srcType))
-            {
-                return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
-            }
-            else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-            {
-                // Nested object - route through this instance's MapTo so it uses the
-                // instance cache and depth tracking (mirrors static Mapper behavior)
-                var mapMethod = typeof(MapperInstance).GetMethod(nameof(MapTo), new[] { typeof(object) })!
-                    .MakeGenericMethod(targetType);
-                var recursiveCall = Expression.Call(Expression.Constant(this), mapMethod, Expression.Convert(propExp, typeof(object)));
-                return Expression.Bind(destProp, recursiveCall);
-            }
-            else if (targetType == typeof(string))
-            {
-                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
-                return Expression.Bind(destProp, toStringCall);
-            }
-            else if (srcType.IsEnum && (targetType == typeof(int) || targetType == typeof(long)))
-            {
-                return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
-            }
-            else
-            {
-                var underlyingTarget = Nullable.GetUnderlyingType(targetType);
-                var underlyingSource = Nullable.GetUnderlyingType(srcType);
-
-                if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
-                {
-                    var coalesce = Expression.Coalesce(propExp, Expression.Default(targetType));
-                    return Expression.Bind(destProp, coalesce);
-                }
-            }
-
-            return null;
+            return value is null ? null : Expression.Bind(destProp, value);
         }
+
+        /// <summary>
+        /// Recurses through <em>this instance's</em> MapTo, so a nested object uses the instance
+        /// cache and depth tracking rather than the static mapper's.
+        /// </summary>
+        private Expression BuildNestedMapCall(Expression propExp, Type targetType)
+        {
+            var mapMethod = MapToObjectOverload.MakeGenericMethod(targetType);
+            return Expression.Call(Expression.Constant(this), mapMethod, Expression.Convert(propExp, typeof(object)));
+        }
+
+        private static readonly MethodInfo MapToObjectOverload =
+            typeof(MapperInstance).GetMethod(nameof(MapTo), new[] { typeof(object) })
+            ?? throw new InvalidOperationException(
+                "MapperInstance.MapTo<T>(object) was not found. Renaming or changing that overload breaks nested mapping.");
 
         private MemberBinding? TryCreateFlattenedBinding(PropertyInfo destProp, PropertyInfo[] sourceProps,
             Expression typedSource, ParameterExpression sourceParam, bool isSourceVisible)
