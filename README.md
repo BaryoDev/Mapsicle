@@ -32,7 +32,38 @@ Zero configuration by default. Configure only where a mapping is genuinely not c
 
 ## Why Choose Mapsicle?
 
-> ⚠️ **AutoMapper is now commercial software.** As of July 2025, AutoMapper requires a paid license for commercial use. Mapsicle is **100% free and MPL 2.0 licensed** forever.
+> **AutoMapper is no longer permissively licensed.** Since July 2025 it is
+> [RPL-1.5](https://opensource.org/license/rpl-1-5/) or a paid licence from Lucky Penny Software.
+> RPL-1.5 is strong reciprocal: it obliges you to publish the source of software built with it,
+> including software only deployed internally. Mapsicle is MPL 2.0.
+
+### When Mapsicle is the right choice, and when it is not
+
+Speed is the weakest argument for this library, so it is not the one to lead with. Against a source
+generator Mapsicle loses on speed and always will. What it offers is mappings that do not have to
+be known when you compile.
+
+**Reach for Mapsicle when:**
+
+| Situation | Why the alternatives do not fit |
+| :-------- | :------------------------------ |
+| Mapping a `Dictionary<string, object>` into a type | Mapperly has nothing to generate against. AutoMapper needs the pair configured. |
+| A collection whose items have different runtime types | Same: nothing to generate, and the shape is only known at runtime. |
+| Types arriving from plugins, reflection or configuration | Compile-time generation is not available at all. |
+| Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws at startup on an unconfigured pair. |
+| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth`. AutoMapper throws; Mapperly is a compile error. |
+| The licence has to be permissive | This is the reason most people are reading this page. |
+
+**Reach for something else when:**
+
+| Situation | Choose |
+| :-------- | :----- |
+| Every mapping is known at compile time and you will declare them | **Mapperly.** 2.5x to 3x faster and indistinguishable from hand-written code. |
+| Collection throughput is what your workload is bounded by | **Mapperly**, then AutoMapper. Mapsicle is 1.33x slower than AutoMapper here. |
+| You need AOT with no runtime code generation | **Mapperly.** Mapsicle compiles expression trees at first use. |
+
+Mapsicle is about 1.4x faster than AutoMapper on single objects, on both x64 and arm64. That is
+real and it is measured below, but it is a supporting argument rather than the reason to switch.
 
 ### Quick Comparison
 
