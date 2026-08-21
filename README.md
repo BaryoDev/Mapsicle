@@ -240,32 +240,45 @@ Real benchmarks on Apple M1, .NET 8.0, BenchmarkDotNet v0.13.12:
 
 ### Core Mapping Performance
 
-BenchmarkDotNet, short job, .NET 8, Apple silicon. Reproduce with
+BenchmarkDotNet, short job, .NET 8, measured on two architectures because one is not evidence of
+anything portable. Reproduce with
 `dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --core`.
 
-| Scenario             |    Manual |   Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
-| :------------------- | --------: | ---------: | ---------: | --------: | :------------ |
-| **Single object**    | 12.2 ns   | **33.1 ns** |    49.0 ns |  12.5 ns  | 1.48x faster  |
-| **Flattening**       | n/a       | **38.4 ns** |    54.1 ns |  15.2 ns  | 1.41x faster  |
-| **Collection (100)** | n/a       | **2,428 ns** |  1,823 ns | 1,451 ns  | 1.33x slower  |
+**Single object, five properties:**
 
-Allocation per operation is identical to hand-written code for single objects and flattening
-(48 B and 56 B, which is the destination and nothing else). On collections Mapsicle allocates
-5,696 B against AutoMapper's 6,992 B, about 19 percent less, while taking longer.
+| Runtime | Manual  | Mapsicle    | AutoMapper | Mapperly | Mapsicle vs AutoMapper |
+| :------ | ------: | ----------: | ---------: | -------: | :--------------------- |
+| x64 Linux (CI runner) | 18.3 ns | **60.4 ns** | 82.7 ns | 18.2 ns | 1.37x faster |
+| arm64 macOS           | 12.2 ns | **33.1 ns** | 49.0 ns | 12.5 ns | 1.48x faster |
 
-**Read that last row rather than skipping it.** Mapsicle is slower than AutoMapper when mapping
-collections. If collection throughput is what your workload is bounded by, and configuration cost
-is acceptable to you, Mapperly is faster than both because it generates the mapping at compile time
-and has no runtime work to do at all.
+The gap to hand-written code is wider than the gap to AutoMapper. Mapperly matches manual because
+it generates the mapping at compile time and does no work at runtime; Mapsicle and AutoMapper both
+invoke a compiled delegate and pay for the indirection.
 
-Two caveats worth more than the table:
+**Other scenarios, arm64:**
 
-- These are one machine and a short job. The flattening row in particular has wide error bars at
-  this job length. Run it on your hardware before it decides anything.
+| Scenario             |   Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
+| :------------------- | ---------: | ---------: | --------: | :------------ |
+| **Flattening**       | **38.4 ns** |    54.1 ns |  15.2 ns  | 1.41x faster  |
+| **Collection (100)** | **2,428 ns** |  1,823 ns | 1,451 ns  | 1.33x slower  |
+
+Allocation per operation matches hand-written code for single objects and flattening (48 B and
+56 B, the destination and nothing else). On collections Mapsicle allocates 5,696 B against
+AutoMapper's 6,992 B, about 19 percent less, while taking longer.
+
+**Read that collection row rather than skipping it.** Mapsicle is slower than AutoMapper mapping
+collections. If collection throughput is what your workload is bounded by, Mapperly is faster than
+both.
+
+Two things worth more than the table:
+
+- The flattening row has wide error bars at this job length. Run it on your hardware before it
+  decides anything.
 - An earlier version of this table claimed 2.1x on single objects and rough parity on collections.
-  Neither held when the benchmark was re-run. That went unnoticed because the CI job measured the
-  comparison, printed it and exited zero regardless. It now fails the build when a ratio moves,
-  which is why these numbers can be trusted more than the ones they replaced.
+  Neither held when the benchmark was re-run. It went unnoticed because CI measured the comparison,
+  printed it and exited zero regardless. CI now fails when the comparison changes direction, and it
+  reads BenchmarkDotNet's own summary rather than a stopwatch loop, so the published numbers and
+  the gated numbers come from one source.
 
 ### Edge Case Performance
 

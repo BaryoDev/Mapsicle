@@ -65,10 +65,11 @@ more than one runtime type, this is worth taking.
   they had drifted: two of the defects above lived in all three, and 1.2.3 shipped a mapper that
   dropped nested objects only when built by `MapperFactory`. Every call site now routes through
   `PropertyConversion`. ([#12](https://github.com/BaryoDev/Mapsicle/issues/12))
-- **The README's performance table now matches what the benchmark measures.** It claimed 2.1x on
-  single objects and rough parity on collections. Re-measured: 1.48x on single objects, and
-  collections are about a third slower than AutoMapper while allocating 19 percent less. The
-  document had contradicted itself, since Known Limitations already said collections were slower.
+- **The README's performance table now matches what the benchmark measures, on two
+  architectures.** It claimed 2.1x on single objects and rough parity on collections. Re-measured:
+  1.37x on x64 Linux and 1.48x on arm64 macOS for single objects, and collections about a third
+  slower than AutoMapper while allocating 19 percent less. The document had contradicted itself,
+  since Known Limitations already said collections were slower.
   ([#16](https://github.com/BaryoDev/Mapsicle/issues/16))
 - Package versions move to `Directory.Packages.props`. They were declared independently in thirteen
   test projects, so one advisory meant a sweep.
