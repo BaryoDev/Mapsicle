@@ -86,10 +86,14 @@ jobs:
           echo "Core package declares no dependencies."
 
   # The project is sold on two claims: it is free where AutoMapper is not, and it is faster.
-  # This job checks the second one. It used to be advisory: it measured the ratio, printed it, and
-  # exited 0 regardless, which is how the README came to claim 2x on a path its own benchmark
-  # measured at parity. The bounds are set well outside run-to-run noise, so a failure means a real
-  # regression rather than a busy runner.
+  # This job checks the second one, using BenchmarkDotNet rather than a stopwatch loop. It was
+  # advisory once: it measured the ratio, printed it and exited 0 regardless, which is how the
+  # README came to publish a number its own benchmark did not support. The first version of this
+  # gate used a hand-rolled loop, which on the same machine reported 290ns per map where
+  # BenchmarkDotNet reported 33ns, so the gate is only as trustworthy as its instrument.
+  #
+  # Bounded at parity plus a tenth. The README publishes a number; this asserts only that the
+  # direction of the comparison holds, which is what survives a change of hardware.
   claims:
     name: performance claims hold
     runs-on: ubuntu-latest
@@ -100,7 +104,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - name: Compare against AutoMapper and fail if a claim no longer holds
-        run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --quick
+        run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --gate
       - name: Upload benchmark output
         if: always()
         uses: actions/upload-artifact@v4
