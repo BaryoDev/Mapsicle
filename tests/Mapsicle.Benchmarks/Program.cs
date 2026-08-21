@@ -20,7 +20,20 @@ namespace Mapsicle.Benchmarks;
 /// </summary>
 public class Program
 {
-    public static void Main(string[] args)
+    /// <summary>
+    /// Claims from the README that this run found to be untrue. A non-empty list fails the build.
+    /// </summary>
+    private static readonly List<string> ClaimFailures = new();
+
+    /// <summary>
+    /// Returns a non-zero exit code when a claim the project is sold on fails to hold.
+    /// </summary>
+    /// <remarks>
+    /// The README leads with "faster than AutoMapper", and until this returned an exit
+    /// code the suite measured exactly that and then printed it into a log nobody reads.
+    /// A claim nothing checks is a claim that quietly stops being true.
+    /// </remarks>
+    public static int Main(string[] args)
     {
         Console.WriteLine("=================================================");
         Console.WriteLine("  Mapsicle Complete Benchmark Suite");
@@ -63,6 +76,21 @@ public class Program
             BenchmarkRunner.Run<ConcurrencyBenchmarks>(config);
             BenchmarkRunner.Run<CacheBenchmarks>(config);
         }
+
+        if (ClaimFailures.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("=================================================");
+            Console.WriteLine("  CLAIM CHECK FAILED");
+            foreach (var failure in ClaimFailures)
+            {
+                Console.WriteLine($"  - {failure}");
+            }
+            Console.WriteLine("=================================================");
+            return 1;
+        }
+
+        return 0;
     }
 
     static void RunSmokeTests()
@@ -121,6 +149,22 @@ public class Program
         var ratio = autoMapperTime > 0 ? (double)mapsicleTime / autoMapperTime : 0;
         Console.WriteLine($"\n  Mapsicle/AutoMapper ratio: {ratio:F2}x {(ratio < 1 ? "(FASTER)" : ratio > 1 ? "(slower)" : "(equal)")}");
 
+        // Bounds, not targets. A shared CI runner's wall clock is noisy, and a bound set at the
+        // measured value fails on a busy machine and teaches everyone to rerun until green, which
+        // is worse than no gate at all. Both are set well outside the run-to-run spread, so a
+        // failure here means a real change rather than a slow afternoon.
+        //
+        // Measured over three runs on an M-series laptop: untyped 29-30ms, AutoMapper 31-33ms,
+        // typed 19-20ms. So the untyped path is roughly at parity and the typed path is about
+        // 1.6x faster. The README used to claim 2x on the untyped path, which its own benchmark
+        // did not support. That went unnoticed for as long as this printed a number and exited 0.
+        if (autoMapperTime > 0 && ratio > 1.10)
+        {
+            ClaimFailures.Add(
+                $"Untyped MapTo took {mapsicleTime}ms against AutoMapper's {autoMapperTime}ms " +
+                $"(ratio {ratio:F2}x). The README says it is comparable or better.");
+        }
+
         // Strongly-typed performance test
         Console.WriteLine("\n--- Strongly-Typed Mapper Performance (100,000 iterations) ---");
         _ = user.MapTo<UserEntity, UserDto>(); // Ensure typed cache is built
@@ -129,6 +173,20 @@ public class Program
             _ = user.MapTo<UserEntity, UserDto>();
         var typedTime = sw.ElapsedMilliseconds;
         Console.WriteLine($"  Mapsicle<S,D>: {typedTime}ms ({100000.0 / typedTime * 1000:N0} ops/sec)");
+
+        // The typed path is the one the README's speed claim rests on. Measured at roughly 1.6x
+        // AutoMapper; gated at 1.25x so ordinary runner noise cannot fail it.
+        if (autoMapperTime > 0 && typedTime > 0)
+        {
+            var typedRatio = (double)typedTime / autoMapperTime;
+            Console.WriteLine($"  Mapsicle<S,D>/AutoMapper ratio: {typedRatio:F2}x");
+            if (typedRatio > 0.80)
+            {
+                ClaimFailures.Add(
+                    $"Typed MapTo<TSource,TDest> took {typedTime}ms against AutoMapper's {autoMapperTime}ms " +
+                    $"(ratio {typedRatio:F2}x). The README claims it is meaningfully faster.");
+            }
+        }
 
         // Fluent tests
         Console.WriteLine("\n--- Other Tests ---");

@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to .claude/settings.local.json to opt in. That file is gitignored, so the hook runs for you and for nobody else.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/allocation-guard.sh" }
+        ]
+      }
+    ]
+  }
+}

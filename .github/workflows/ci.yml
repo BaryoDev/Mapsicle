@@ -85,9 +85,13 @@ jobs:
           fi
           echo "Core package declares no dependencies."
 
-  benchmarks:
-    name: benchmark (advisory)
-    if: github.event_name == 'pull_request'
+  # The project is sold on two claims: it is free where AutoMapper is not, and it is faster.
+  # This job checks the second one. It used to be advisory: it measured the ratio, printed it, and
+  # exited 0 regardless, which is how the README came to claim 2x on a path its own benchmark
+  # measured at parity. The bounds are set well outside run-to-run noise, so a failure means a real
+  # regression rather than a busy runner.
+  claims:
+    name: performance claims hold
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -95,7 +99,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Core benchmarks, short job
+      - name: Compare against AutoMapper and fail if a claim no longer holds
         run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --quick
       - name: Upload benchmark output
         if: always()
@@ -105,3 +109,22 @@ jobs:
           path: tests/Mapsicle.Benchmarks/BenchmarkDotNet.Artifacts/**
           retention-days: 14
           if-no-files-found: ignore
+
+  # AutoMapper is RPL-1.5 or a paid licence, and the entire reason to choose Mapsicle is that it is
+  # MPL-2.0. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so the
+  # comparison is fine. A reference reaching src/ would make the shipped packages carry a reciprocal
+  # licence obligation and destroy the positioning, so it is worth more than a code review.
+  licence-boundary:
+    name: no commercially licensed dependency in src
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if a shipped project references AutoMapper
+        run: |
+          set -euo pipefail
+          if grep -rn 'PackageReference[^>]*Include="AutoMapper"' src/ ; then
+            echo "::error::AutoMapper is RPL-1.5 or paid. It may be compared against in tests/, never shipped from src/."
+            exit 1
+          fi
+          echo "No commercially licensed package referenced from src/."
