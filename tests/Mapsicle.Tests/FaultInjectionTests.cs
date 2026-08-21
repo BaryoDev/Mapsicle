@@ -172,9 +172,19 @@ namespace Mapsicle.Tests
                 }
             })).ToArray();
 
-            await Task.WhenAll(mappers);
-            Volatile.Write(ref stop, true);
-            await clearer;
+            try
+            {
+                await Task.WhenAll(mappers);
+            }
+            finally
+            {
+                // In a finally because Task.WhenAll rethrows. Without it, a throwing mapper task
+                // leaves the clearer looping past the end of this test, calling Mapper.ClearCache()
+                // underneath whatever runs next. A background task that outlives its test is a
+                // source of failures nobody can attribute.
+                Volatile.Write(ref stop, true);
+                await clearer;
+            }
 
             Assert.True(failures.Count == 0, string.Join("; ", failures.Take(5)));
         }

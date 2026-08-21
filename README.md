@@ -52,8 +52,8 @@ be known when you compile.
 | Mapping a `Dictionary<string, object>` into a type | Mapperly has nothing to generate against. AutoMapper needs the pair configured. |
 | A collection whose items have different runtime types | Same: nothing to generate, and the shape is only known at runtime. |
 | Types arriving from plugins, reflection or configuration | Compile-time generation is not available at all. |
-| Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws when it reaches an unconfigured pair, or at startup if you call `AssertConfigurationIsValid()`. |
-| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper throws. Mapperly handles them when you set `UseReferenceHandling`. |
+| Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws when it reaches an unconfigured pair. `AssertConfigurationIsValid()` validates the maps you configured, so it does not catch a pair you never registered. |
+| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper needs `PreserveReferences()` or `MaxDepth(...)`, and an unhandled cycle can still overflow the stack. Mapperly needs `UseReferenceHandling`. |
 | The licence has to be permissive | This is the reason most people are reading this page. |
 
 **Reach for something else when:**
@@ -71,13 +71,13 @@ real and it is measured below, but it is a supporting argument rather than the r
 
 | Feature              | Mapsicle         | AutoMapper   | Mapperly     |
 | :------------------- | :--------------- | :----------- | :----------- |
-| **License**          | **MPL 2.0 (Free)**   | Commercial   | MIT (Free)   |
+| **License**          | **MPL 2.0**   | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
 | **Architecture**     | Runtime + Caching | Runtime + Expressions | Source Generator |
 | **Setup Required**   | **None**         | Profiles, DI | Partial class |
 | **Dependencies**     | **0** (core)     | 5+           | 0 (compile-time) |
 | **Compile-time Safety** | Partial       | No           | **Full**     |
 | **AOT Compatible**   | Partial          | No           | **Yes**      |
-| **Circular Refs**    | **Handled by default** | Throws | Opt in via `UseReferenceHandling` |
+| **Circular Refs**    | **Handled by default** | Opt in via `PreserveReferences()` or `MaxDepth(...)` | Opt in via `UseReferenceHandling` |
 | **Memory Bounded**   | **LRU Option**   | No           | N/A          |
 | **Cache Statistics** | **Yes**          | No           | N/A          |
 | **Integrated Validation** | **Yes**     | No           | No           |
@@ -331,7 +331,7 @@ Two things worth more than the table:
 | Scenario                     | Mapsicle      | AutoMapper    | Mapperly      | Notes                     |
 | :--------------------------- | :------------ | :------------ | :------------ | :------------------------ |
 | **Deep Nesting (15 levels)** | ✅ Safe        | ✅ Safe        | ✅ Safe        | All handle with limits    |
-| **Circular References**      | ✅ Handled     | ❌ Crashes     | ❌ Compile error | **Mapsicle wins**     |
+| **Circular References**      | Handled by default | Opt in via `PreserveReferences()` | Opt in via `UseReferenceHandling` | Only Mapsicle needs no configuration |
 | **Large Collection (10K)**   | **4 ms**      | 4 ms          | ~3.5 ms       | Mapperly fastest          |
 | **Parallel (1000 threads)**  | ✅ Thread-safe | ✅ Thread-safe | ✅ Thread-safe | All thread-safe           |
 | **Cold Start**               | Medium        | Slow          | **None**      | Mapperly pre-compiled     |
@@ -1041,7 +1041,7 @@ public class UserService
 - Post-mapping validation → `Mapsicle.Validation`
 
 ⚠️ **Behavioral Differences:**
-- **Circular references**: AutoMapper throws exception, Mapsicle returns default value
+- **Circular references**: Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper needs `PreserveReferences()` or `MaxDepth(...)` to handle them.
 - **Unmapped properties**: Both ignore, but Mapsicle has `GetUnmappedProperties<T, U>()` for validation
 - **Null handling**: Both return null for null source, but Mapsicle is more aggressive with null-safe navigation
 
