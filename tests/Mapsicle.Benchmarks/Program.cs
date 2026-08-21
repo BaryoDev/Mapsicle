@@ -46,6 +46,15 @@ public class Program
             Console.WriteLine("Running quick smoke tests...\n");
             RunSmokeTests();
         }
+        else if (args.Length > 0 && args[0] == "--core")
+        {
+            // The single suite behind the README's headline table, on a short job so the numbers
+            // can actually be refreshed when a claim is edited rather than only in principle.
+            BenchmarkRunner.Run<CoreMapperBenchmarks>(
+                DefaultConfig.Instance
+                    .WithOptions(ConfigOptions.DisableOptimizationsValidator)
+                    .AddJob(Job.ShortRun));
+        }
         else if (args.Length > 0 && args[0] == "--edge")
         {
             BenchmarkRunner.Run<EdgeCaseBenchmarks>();
