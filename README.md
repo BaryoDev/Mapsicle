@@ -32,10 +32,12 @@ Zero configuration by default. Configure only where a mapping is genuinely not c
 
 ## Why Choose Mapsicle?
 
-> **AutoMapper is no longer permissively licensed.** Since July 2025 it is
-> [RPL-1.5](https://opensource.org/license/rpl-1-5/) or a paid licence from Lucky Penny Software.
-> RPL-1.5 is strong reciprocal: it obliges you to publish the source of software built with it,
-> including software only deployed internally. Mapsicle is MPL 2.0.
+> **AutoMapper 15.0 and later are no longer permissively licensed.** They are governed by
+> [RPL-1.5](https://opensource.org/license/rpl-1-5/) or a licence agreement from Lucky Penny
+> Software, which includes a free Community License for those who qualify. Earlier versions keep
+> their original licence. RPL-1.5 is strong reciprocal: its source obligations reach software that
+> is only deployed internally, not just software you distribute. Check the terms against your own
+> situation rather than taking this paragraph as advice. Mapsicle is MPL 2.0.
 
 ### When Mapsicle is the right choice, and when it is not
 
@@ -50,8 +52,8 @@ be known when you compile.
 | Mapping a `Dictionary<string, object>` into a type | Mapperly has nothing to generate against. AutoMapper needs the pair configured. |
 | A collection whose items have different runtime types | Same: nothing to generate, and the shape is only known at runtime. |
 | Types arriving from plugins, reflection or configuration | Compile-time generation is not available at all. |
-| Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws at startup on an unconfigured pair. |
-| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth`. AutoMapper throws; Mapperly is a compile error. |
+| Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws when it reaches an unconfigured pair, or at startup if you call `AssertConfigurationIsValid()`. |
+| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper throws. Mapperly handles them when you set `UseReferenceHandling`. |
 | The licence has to be permissive | This is the reason most people are reading this page. |
 
 **Reach for something else when:**
@@ -75,7 +77,7 @@ real and it is measured below, but it is a supporting argument rather than the r
 | **Dependencies**     | **0** (core)     | 5+           | 0 (compile-time) |
 | **Compile-time Safety** | Partial       | No           | **Full**     |
 | **AOT Compatible**   | Partial          | No           | **Yes**      |
-| **Circular Refs**    | **Handled**      | Crash        | N/A          |
+| **Circular Refs**    | **Handled by default** | Throws | Opt in via `UseReferenceHandling` |
 | **Memory Bounded**   | **LRU Option**   | No           | N/A          |
 | **Cache Statistics** | **Yes**          | No           | N/A          |
 | **Integrated Validation** | **Yes**     | No           | No           |
@@ -1908,21 +1910,6 @@ Four of those suites exist because a passing test count on its own says very lit
 Allocation budgets run under `dotnet test` rather than only in a benchmark, so a change that
 starts boxing a value or allocating a closure on a warm path fails CI instead of being noticed in a
 profiler later.
-
-------------------------- | -----: | :------------------ |
-| Mapsicle                   |    210 | Core + Stability    |
-| Mapsicle.Fluent            |     35 | Fluent + Enterprise |
-| Mapsicle.EntityFramework   |     19 | EF Core             |
-| Mapsicle.Validation        |     13 | FluentValidation    |
-| Mapsicle.NamingConventions |     55 | Naming Conventions  |
-| Mapsicle.Serilog           |     22 | Serilog Logging     |
-| Mapsicle.Dapper            |     25 | Dapper Integration  |
-| Mapsicle.Json              |     26 | JSON Serialization  |
-| Mapsicle.AspNetCore        |     23 | ASP.NET Core        |
-| Mapsicle.Caching           |     21 | Caching Integration |
-| Mapsicle.Audit             |     26 | Change Tracking     |
-| Mapsicle.DataAnnotations   |     24 | DataAnnotations     |
-| **Total**                  | **499** |                     |
 
 ---
 

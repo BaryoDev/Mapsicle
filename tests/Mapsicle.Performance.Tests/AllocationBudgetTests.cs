@@ -203,6 +203,13 @@ namespace Mapsicle.Performance.Tests
                 hundredth = mapper.Map(source, new Dest());
             }
 
+            // Asserted against the source, not just against each other. Comparing the two
+            // destinations only proves determinism, and a plan whose every Step.Assign is null
+            // leaves both at their field initializers and satisfies that comparison.
+            Assert.Equal(source.FirstName, first.FirstName);
+            Assert.Equal(source.Email, first.Email);
+            Assert.Equal(source.IsActive, first.IsActive);
+
             Assert.Equal(first.FirstName, hundredth.FirstName);
             Assert.Equal(first.Email, hundredth.Email);
             Assert.Equal(first.IsActive, hundredth.IsActive);

@@ -99,7 +99,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # This job runs benchmark code from the pull request with dotnet run, and does no
+      # authenticated git operation afterwards, so it has no reason to keep GITHUB_TOKEN in the
+      # local git config where that code could read it.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -125,10 +130,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fail if a shipped project references AutoMapper
+        # Parsed as XML rather than grepped. A PackageReference can span lines or use single
+        # quotes, and a grep would miss both, which would make this gate look like protection
+        # while providing none. That is the exact failure mode the rest of this pipeline exists
+        # to remove, so it would be a poor place to leave one.
         run: |
           set -euo pipefail
-          if grep -rn 'PackageReference[^>]*Include="AutoMapper"' src/ ; then
-            echo "::error::AutoMapper is RPL-1.5 or paid. It may be compared against in tests/, never shipped from src/."
-            exit 1
-          fi
-          echo "No commercially licensed package referenced from src/."
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+
+          BANNED = {"automapper"}
+          found = []
+          for path in glob.glob("src/**/*.csproj", recursive=True) + glob.glob("src/**/*.props", recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError as e:
+                  print(f"::error::{path} could not be parsed: {e}")
+                  sys.exit(1)
+              for ref in root.iter():
+                  if ref.tag.split("}")[-1] != "PackageReference":
+                      continue
+                  include = (ref.get("Include") or ref.get("Update") or "").strip()
+                  if include.lower() in BANNED:
+                      found.append(f"{path}: {include}")
+
+          if found:
+            print("::error::AutoMapper is RPL-1.5 or a Lucky Penny Software licence. Compare against it in tests/, never ship it from src/.")
+            for f in found:
+                print(f"  {f}")
+            sys.exit(1)
+
+          print("No commercially licensed package referenced from src/.")
+          PY

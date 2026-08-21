@@ -143,7 +143,7 @@ namespace Mapsicle.Tests
         /// wrong data.
         /// </summary>
         [Fact]
-        public void ClearingTheCacheDuringConcurrentMapping_StaysCorrect()
+        public async Task ClearingTheCacheDuringConcurrentMapping_StaysCorrect()
         {
             Mapper.ClearCache();
 
@@ -172,9 +172,9 @@ namespace Mapsicle.Tests
                 }
             })).ToArray();
 
-            Task.WaitAll(mappers);
+            await Task.WhenAll(mappers);
             Volatile.Write(ref stop, true);
-            clearer.Wait();
+            await clearer;
 
             Assert.True(failures.Count == 0, string.Join("; ", failures.Take(5)));
         }

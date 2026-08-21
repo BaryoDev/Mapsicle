@@ -49,6 +49,10 @@ namespace Mapsicle.Tests
         [Fact]
         public void Issue2_MapperInstance_NullReferenceProperty_ToString_DoesNotThrow()
         {
+            // Cleared even though this uses an instance mapper: nested mapping recurses through
+            // the instance, but these types are also mapped by the static-path tests in the same
+            // collection, and a shared cache entry would let this pass without exercising the fix.
+            Mapper.ClearCache();
             using var mapper = MapperFactory.Create();
 
             var dest = mapper.MapTo<Issue2Dest>(new Issue2Source { Website = null });
@@ -136,6 +140,42 @@ namespace Mapsicle.Tests
             Assert.Equal(0L, dest!.Value);
         }
 
+        // Both sides nullable. Found in review: the widening branch converted the source to the
+        // non-nullable target underlying type first, so a null source threw
+        // InvalidOperationException from Expression.Convert on an empty Nullable<T>. The original
+        // tests only covered int? to long, which takes a different branch.
+        [Fact]
+        public void Issue5_NullableToNullable_WithAValue_Widens()
+        {
+            Mapper.ClearCache();
+
+            var dest = new Issue5NullableIntSource { Value = 7 }.MapTo<Issue5NullableLongDest>();
+
+            Assert.Equal(7L, dest!.Value);
+        }
+
+        [Fact]
+        public void Issue5_NullableToNullable_WithoutAValue_StaysNullAndDoesNotThrow()
+        {
+            Mapper.ClearCache();
+
+            var dest = new Issue5NullableIntSource { Value = null }.MapTo<Issue5NullableLongDest>();
+
+            Assert.Null(dest!.Value);
+        }
+
+        // Equal underlying types across the nullable boundary, which is not a widening pair and so
+        // must be handled by the assignability branch rather than falling through to unmapped.
+        [Fact]
+        public void Issue5_NonNullableToItsOwnNullable_Maps()
+        {
+            Mapper.ClearCache();
+
+            var dest = new Issue5IntSource { Value = 5 }.MapTo<Issue5NullableIntDest>();
+
+            Assert.Equal(5, dest!.Value);
+        }
+
         // Narrowing must stay unmapped. This is the guard against a fix that widens the rule until
         // long.MaxValue silently becomes -1 in an int.
         [Fact]
@@ -204,6 +244,7 @@ namespace Mapsicle.Tests
         [Fact]
         public void Issue6_MapperInstance_MixedRuntimeTypes_MapsEveryItem()
         {
+            Mapper.ClearCache();
             using var mapper = MapperFactory.Create();
 
             var animals = new List<Issue6Animal>
@@ -358,6 +399,7 @@ namespace Mapsicle.Tests
         [Fact]
         public void Issue4_NestedObjectMapping_ThroughAMapperInstance()
         {
+            Mapper.ClearCache();
             using var mapper = MapperFactory.Create();
 
             var dest = mapper.MapTo<Issue4Dest>(new Issue4Source { Inner = new Issue4Inner { Value = 7 } });
@@ -377,6 +419,8 @@ namespace Mapsicle.Tests
         public class Issue5DecimalSource { public decimal Value { get; set; } }
         public class Issue5DoubleSource { public double Value { get; set; } }
         public class Issue5LongDest { public long Value { get; set; } }
+        public class Issue5NullableLongDest { public long? Value { get; set; } }
+        public class Issue5NullableIntDest { public int? Value { get; set; } }
         public class Issue5IntDest { public int Value { get; set; } }
         public class Issue5DecimalDest { public decimal Value { get; set; } }
         public class Issue5DoubleDest { public double Value { get; set; } }

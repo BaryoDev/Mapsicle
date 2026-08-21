@@ -189,10 +189,22 @@ namespace Mapsicle
                 return null;
             }
 
+            var sourceIsNullable = Nullable.GetUnderlyingType(srcType) != null;
+            var targetIsNullable = Nullable.GetUnderlyingType(targetType) != null;
+
+            // int? -> long?: a single lifted conversion, which carries null through as null. Doing
+            // this the way the branch below does, by converting to the underlying type first, throws
+            // InvalidOperationException on a null source, because Expression.Convert on an empty
+            // Nullable<T> has no value to convert.
+            if (sourceIsNullable && targetIsNullable)
+            {
+                return Expression.Convert(propExp, targetType);
+            }
+
             // int? -> long: convert only when there is a value, otherwise leave the destination default.
-            // Expression.Convert on a null Nullable<T> throws InvalidOperationException, so the HasValue
-            // test has to happen before the conversion rather than being folded into it.
-            if (Nullable.GetUnderlyingType(srcType) != null && Nullable.GetUnderlyingType(targetType) == null)
+            // The HasValue test has to happen before the conversion rather than being folded into it,
+            // for the same reason.
+            if (sourceIsNullable)
             {
                 return Expression.Condition(
                     Expression.Property(propExp, "HasValue"),

@@ -216,9 +216,11 @@ public class ValidationCoverageTests
 
         var ex = Assert.Throws<ValidationException>(() => result.GetValueOrThrow());
 
-        // An exception that says only "validation failed" makes a caller re-run the validation to
-        // find out what happened.
-        Assert.NotEmpty(ex.Message);
+        // Naming the failing properties, not merely being non-empty. "Validation failed" is a
+        // non-empty message and is exactly the outcome this test exists to rule out, because it
+        // makes a caller re-run the validation to discover what happened.
+        Assert.Contains(nameof(CoverageDto.Name), ex.Message);
+        Assert.Contains(nameof(CoverageDto.Email), ex.Message);
     }
 
     [Fact]

@@ -339,7 +339,11 @@ namespace Mapsicle
                 // is the point: this check answering "mapped" where TryCreateFlattenedBinding
                 // answers "skip" is a validator that certifies a property the mapper will leave at
                 // its default.
-                bool hasFlattening = typeof(TSource).GetProperties()
+                // The same readable-property set the mapper flattens over. An unfiltered
+                // GetProperties() also returns write-only and indexed properties, which the mapper
+                // never considers, so the validator could call a destination mapped from a source
+                // property the mapper will not read.
+                bool hasFlattening = GetCachedReadableProperties(typeof(TSource))
                     .Any(sp => PropertyConversion.TryFindFlattenedSource(
                         destProp, sp, GetCachedReadableProperties(sp.PropertyType), out _));
                 if (hasFlattening) continue;

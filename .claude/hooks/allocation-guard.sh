@@ -26,12 +26,16 @@ case "$file" in
 esac
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# Branch on the exit status, not on the output containing "Failed!". A restore failure, a build
+# failure or an aborted run all exit non-zero without printing that word, and grepping for it would
+# report success for every one of them.
 out=$(cd "$repo" && dotnet test tests/Mapsicle.Performance.Tests/Mapsicle.Performance.Tests.csproj \
         -c Release --nologo 2>&1)
+status=$?
 
-if printf '%s' "$out" | grep -q "Failed!"; then
-  echo "Allocation budget failed after editing $(basename "$file"):" >&2
-  printf '%s\n' "$out" | grep -E "allocated|Failed " | head -5 >&2
+if [ $status -ne 0 ]; then
+  echo "Allocation budgets did not pass after editing $(basename "$file") (exit $status):" >&2
+  printf '%s\n' "$out" | grep -E "allocated|Failed |error" | head -5 >&2
   exit 2
 fi
 exit 0

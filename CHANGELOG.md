@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.0] - 2026-08-21
 
-Correctness release. Six defects, two of which corrupted data silently and three of which threw
+Correctness release. Seven defects, two of which corrupted data silently and three of which threw
 from inside a compiled delegate. If you map numbers, nullable references, or collections holding
 more than one runtime type, this is worth taking.
 

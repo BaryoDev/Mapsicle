@@ -475,7 +475,12 @@ namespace Mapsicle.Fluent
         /// </remarks>
         private static class InPlacePlan<TSource, TDest>
         {
-            private static Plan? _plan;
+            // volatile because the Plan holds a Step[] whose elements hold compiled delegates. On a
+            // weak memory model such as arm64, a plain write can let another thread observe the
+            // Plan reference before the array element writes are visible, and read a default Step
+            // with a null Assign. That would silently skip properties rather than fail loudly,
+            // which is the worst shape a mapping bug can take.
+            private static volatile Plan? _plan;
 
             internal static Plan Get() => _plan ??= Build();
 

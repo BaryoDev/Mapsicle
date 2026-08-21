@@ -59,7 +59,7 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void ConcurrentFirstUse_CompilesOnceAndAgrees()
+        public async Task ConcurrentFirstUse_CompilesOnceAndAgrees()
         {
             Mapper.ClearCache();
 
@@ -75,7 +75,7 @@ namespace Mapsicle.Tests
             })).ToArray();
 
             ready.Set();
-            Task.WaitAll(tasks);
+            await Task.WhenAll(tasks);
 
             for (var i = 0; i < results.Length; i++)
             {
@@ -152,21 +152,37 @@ namespace Mapsicle.Tests
             try
             {
                 Mapper.UseLruCache = true;
-                Mapper.MaxCacheSize = 32;
+                Mapper.MaxCacheSize = 8;
                 Mapper.ClearCache();
 
-                // Dictionary sources give a distinct destination pair per call without needing
-                // hundreds of declared types.
-                for (var i = 0; i < 500; i++)
+                // 200 genuinely distinct source types, so the bound is actually reached. The
+                // previous version of this test mapped two type pairs and asserted the total was
+                // under 96, which no implementation could fail. A bound that is never crossed
+                // tests nothing.
+                for (var i = 0; i < 200; i++)
                 {
-                    var source = new LoadOrder { Id = i, Reference = $"r{i}", Total = i };
+                    var source = new Dictionary<string, object?>
+                    {
+                        ["Id"] = i,
+                        ["Reference"] = $"r{i}",
+                        ["Total"] = (decimal)i,
+                    };
                     _ = source.MapTo<LoadOrderDto>();
-                    _ = source.MapTo<LoadOrderSummary>();
+
+                    // A distinct runtime source type per iteration is what creates distinct cache
+                    // keys, since the key is (source runtime type, destination type).
+                    object boxed = i % 2 == 0
+                        ? new LoadOrder { Id = i, Reference = $"r{i}", Total = i }
+                        : new LoadColdSource { Id = i, Name = $"n{i}" };
+                    _ = boxed.MapTo<LoadOrderSummary>();
                 }
 
                 var total = Mapper.CacheInfo().Total;
-                Assert.True(total <= 32 * 3,
-                    $"cache held {total} entries against a MaxCacheSize of 32");
+
+                // Generous against the exact bound because several caches contribute to Total, but
+                // far below the ~200 an unbounded cache would hold.
+                Assert.True(total <= 64,
+                    $"cache held {total} entries against a MaxCacheSize of 8; an unbounded cache would hold hundreds");
             }
             finally
             {
