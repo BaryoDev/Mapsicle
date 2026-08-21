@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mapsicle\Mapsicle.csproj" />
+    <ProjectReference Include="..\..\src\Mapsicle.Fluent\Mapsicle.Fluent.csproj" />
   </ItemGroup>
 
 </Project>

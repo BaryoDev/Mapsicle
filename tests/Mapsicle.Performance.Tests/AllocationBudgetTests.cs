@@ -164,5 +164,48 @@ namespace Mapsicle.Performance.Tests
             // instance rather than the type) shows up here as unbounded growth.
             Assert.Equal(afterFirst, Mapper.CacheInfo().Total);
         }
+        /// <summary>
+        /// Mapsicle.Fluent's in-place map, which used to reflect on every call.
+        /// </summary>
+        /// <remarks>
+        /// Measured at 616 B/call and roughly 33x the core before the property pairing was resolved
+        /// once per type pair and the assignment compiled. Zero is now the correct number, so the
+        /// budget is zero: this path writes into an object the caller already owns and has nothing
+        /// legitimate to allocate. Any allocation here means the reflection came back.
+        /// </remarks>
+        [Fact]
+        public void FluentInPlaceMap_AllocatesNothing()
+        {
+            var config = new Mapsicle.Fluent.MapperConfiguration(c => c.CreateMap<Source, Dest>());
+            var mapper = config.CreateMapper();
+            var source = NewSource();
+            var destination = new Dest();
+
+            var bytes = BytesPerCall(() => mapper.Map(source, destination));
+
+            Assert.True(bytes == 0, $"Fluent Map(source, destination) allocated {bytes} B/call, budget 0 B");
+        }
+
+        /// <summary>
+        /// The same pairing is resolved once, not once per call.
+        /// </summary>
+        [Fact]
+        public void FluentInPlaceMap_ProducesTheSameResultOnEveryCall()
+        {
+            var config = new Mapsicle.Fluent.MapperConfiguration(c => c.CreateMap<Source, Dest>());
+            var mapper = config.CreateMapper();
+            var source = NewSource();
+
+            var first = mapper.Map(source, new Dest());
+            var hundredth = new Dest();
+            for (var i = 0; i < 100; i++)
+            {
+                hundredth = mapper.Map(source, new Dest());
+            }
+
+            Assert.Equal(first.FirstName, hundredth.FirstName);
+            Assert.Equal(first.Email, hundredth.Email);
+            Assert.Equal(first.IsActive, hundredth.IsActive);
+        }
     }
 }
