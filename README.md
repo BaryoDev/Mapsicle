@@ -251,9 +251,22 @@ anything portable. Reproduce with
 | x64 Linux (CI runner) | 18.3 ns | **60.4 ns** | 82.7 ns | 18.2 ns | 1.37x faster |
 | arm64 macOS           | 12.2 ns | **33.1 ns** | 49.0 ns | 12.5 ns | 1.48x faster |
 
-The gap to hand-written code is wider than the gap to AutoMapper. Mapperly matches manual because
-it generates the mapping at compile time and does no work at runtime; Mapsicle and AutoMapper both
-invoke a compiled delegate and pay for the indirection.
+**Mapperly is not a competitor, it is a different trade, and it wins the one this table measures.**
+At 18.2 ns against hand-written code's 18.3 ns it is not close to manual, it is indistinguishable
+from it, because a source generator emits ordinary C# assignments at compile time and leaves no
+delegate, no cache lookup and no indirection at runtime. Mapsicle and AutoMapper both build an
+expression tree, compile it, cache it, look it up and invoke through it. That apparatus is the
+entire 2.5x to 3x gap, and no runtime mapper can close it, because the apparatus is what makes it
+a runtime mapper.
+
+What you buy with it: Mapperly needs a `partial class` with a `[Mapper]` attribute and a declared
+method for every pair, all known at compile time. It cannot map a `Dictionary<string, object>` into
+a type chosen at runtime, or a collection whose items turn out to have different runtime types,
+because there is nothing for it to generate against. Mapsicle needs no configuration and resolves
+types as it meets them.
+
+**If your mappings are all known at compile time and you are willing to declare them, choose
+Mapperly.** Mapsicle is for the case where they are not, and its comparison is with AutoMapper.
 
 **Other scenarios, arm64:**
 
