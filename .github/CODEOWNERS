@@ -1,0 +1,15 @@
+# Every path needs a maintainer review. Two of these matter more than the rest.
+#
+# .claude/ holds a hook script. A hook is executable content that a contributor's tooling may run
+# locally, so a change to it deserves the same scrutiny as a change to a build target, and more
+# than a change to source. It is deliberately not wired up by committed configuration, which is
+# the primary control; this is the second one.
+#
+# .github/workflows/ holds the gates that check the two claims the project is sold on. A change
+# that weakens one is worth noticing.
+
+*                       @arnelirobles
+/.claude/               @arnelirobles
+/.github/               @arnelirobles
+/src/Mapsicle/          @arnelirobles
+/Directory.Packages.props  @arnelirobles

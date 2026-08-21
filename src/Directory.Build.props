@@ -2,7 +2,7 @@
 
   <!-- Shared metadata for all Mapsicle packages. Bump the version here only. -->
   <PropertyGroup>
-    <Version>1.2.3</Version>
+    <Version>1.3.0</Version>
     <Authors>Arnel Isiderio Robles</Authors>
     <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
@@ -24,7 +24,7 @@
 
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)..\README.md" Pack="true" PackagePath="\" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
   </ItemGroup>
 
 </Project>

@@ -427,42 +427,134 @@ namespace Mapsicle.Fluent
             if (source is null || destination is null) return destination;
 
             var typeMap = _config.GetTypeMap(typeof(TSource), typeof(TDest));
-            var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-            var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            var plan = InPlacePlan<TSource, TDest>.Get();
 
             typeMap?.GetBeforeMap()?.Invoke(source, destination);
 
-            foreach (var destProp in destProps)
+            var steps = plan.Steps;
+            for (var i = 0; i < steps.Length; i++)
             {
-                if (!destProp.CanWrite) continue;
-                if (typeMap?.IsIgnored(destProp.Name) == true) continue;
+                var step = steps[i];
 
-                // Check condition
-                var condition = typeMap?.GetCondition(destProp.Name);
+                if (typeMap?.IsIgnored(step.DestName) == true) continue;
+
+                var condition = typeMap?.GetCondition(step.DestName);
                 if (condition != null && !condition(source!)) continue;
 
-                // Check custom mapping
-                var customMapping = typeMap?.GetCustomMapping(destProp.Name);
+                var customMapping = typeMap?.GetCustomMapping(step.DestName);
                 if (customMapping != null)
                 {
-                    var value = customMapping(source!);
-                    destProp.SetValue(destination, value);
+                    // Arbitrary Func<object, object> from configuration, so this one still goes
+                    // through reflection. It is the uncommon path.
+                    step.DestProp.SetValue(destination, customMapping(source!));
                     continue;
                 }
 
-                // Standard property matching
-                var sourceProp = sourceProps.FirstOrDefault(p =>
-                    p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase) && p.CanRead);
-
-                if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
-                {
-                    destProp.SetValue(destination, sourceProp.GetValue(source));
-                }
+                step.Assign?.Invoke(source, destination);
             }
 
             typeMap?.GetAfterMap()?.Invoke(source, destination);
 
             return destination;
+        }
+
+        /// <summary>
+        /// The property pairing for one source/destination pair, resolved once and compiled.
+        /// </summary>
+        /// <remarks>
+        /// This method used to reflect over both types on every call: two
+        /// <c>GetProperties()</c> array allocations, a LINQ closure per destination property, and a
+        /// <c>PropertyInfo.SetValue</c> per assignment. Measured at 616 bytes and roughly 33 times
+        /// the cost of the core mapper's in-place <c>Map</c>, which allocates nothing.
+        ///
+        /// The pairing depends only on the two types, so it is resolved once per closed pair and the
+        /// assignment compiled to a delegate. Everything that depends on configuration rather than
+        /// on the types (ignores, conditions, custom mappings, before and after hooks) is still
+        /// evaluated per call, so behaviour is unchanged including for a configuration built after
+        /// the first map.
+        /// </remarks>
+        private static class InPlacePlan<TSource, TDest>
+        {
+            // volatile because the Plan holds a Step[] whose elements hold compiled delegates. On a
+            // weak memory model such as arm64, a plain write can let another thread observe the
+            // Plan reference before the array element writes are visible, and read a default Step
+            // with a null Assign. That would silently skip properties rather than fail loudly,
+            // which is the worst shape a mapping bug can take.
+            private static volatile Plan? _plan;
+
+            internal static Plan Get() => _plan ??= Build();
+
+            internal sealed class Plan
+            {
+                internal readonly Step[] Steps;
+                internal Plan(Step[] steps) => Steps = steps;
+            }
+
+            internal readonly struct Step
+            {
+                internal readonly string DestName;
+                internal readonly PropertyInfo DestProp;
+                internal readonly Action<TSource, TDest>? Assign;
+
+                internal Step(PropertyInfo destProp, Action<TSource, TDest>? assign)
+                {
+                    DestProp = destProp;
+                    DestName = destProp.Name;
+                    Assign = assign;
+                }
+            }
+
+            private static Plan Build()
+            {
+                var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+                var steps = new List<Step>(destProps.Length);
+
+                foreach (var destProp in destProps)
+                {
+                    if (!destProp.CanWrite) continue;
+
+                    PropertyInfo? sourceProp = null;
+                    foreach (var candidate in sourceProps)
+                    {
+                        if (candidate.CanRead &&
+                            candidate.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            sourceProp = candidate;
+                            break;
+                        }
+                    }
+
+                    Action<TSource, TDest>? assign = null;
+                    if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
+                    {
+                        assign = CompileAssign(sourceProp, destProp);
+                    }
+
+                    // Kept even with no standard assignment: configuration may supply a custom
+                    // mapping for this destination property, and dropping the step would silently
+                    // stop honouring it.
+                    steps.Add(new Step(destProp, assign));
+                }
+
+                return new Plan(steps.ToArray());
+            }
+
+            private static Action<TSource, TDest> CompileAssign(PropertyInfo sourceProp, PropertyInfo destProp)
+            {
+                var src = Expression.Parameter(typeof(TSource), "source");
+                var dst = Expression.Parameter(typeof(TDest), "destination");
+
+                Expression value = Expression.Property(src, sourceProp);
+                if (destProp.PropertyType != sourceProp.PropertyType)
+                {
+                    value = Expression.Convert(value, destProp.PropertyType);
+                }
+
+                var body = Expression.Assign(Expression.Property(dst, destProp), value);
+                return Expression.Lambda<Action<TSource, TDest>>(body, src, dst).Compile();
+            }
         }
 
         private TDest? MapInternal<TDest>(object source, Type sourceType)

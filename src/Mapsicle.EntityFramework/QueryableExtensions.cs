@@ -14,9 +14,36 @@ namespace Mapsicle.EntityFramework
     /// </summary>
     public static class QueryableExtensions
     {
-        // Thread-safe cache using ConcurrentDictionary
-        // Key includes config hash to handle configuration changes
-        private static readonly ConcurrentDictionary<(Type, Type, int), LambdaExpression> _projectionCache = new();
+        // Projections built with no configuration. One entry per type pair, for the life of the
+        // process, which is correct: there is nothing per-caller to key on.
+        private static readonly ConcurrentDictionary<(Type, Type), LambdaExpression> _defaultProjectionCache = new();
+
+        // Projections built from a MapperConfiguration, held in a table keyed weakly by that
+        // configuration.
+        //
+        // This used to be one static dictionary keyed partly on RuntimeHelpers.GetHashCode of the
+        // configuration, which is its identity hash. Every MapperConfiguration instance therefore
+        // got its own entry and nothing ever removed it, so an application constructing a
+        // configuration per request or per scope grew this dictionary without bound for the life of
+        // the process. Fifty structurally identical configurations produced fifty entries.
+        //
+        // A ConditionalWeakTable holds no strong reference to its key, so a configuration's
+        // projections become collectable at the same moment the configuration itself does. It does
+        // not deduplicate two structurally identical configurations, which would need a stable
+        // fingerprint over the configuration model; that is a larger change and this one removes
+        // the unbounded growth, which is the reported harm.
+        private static readonly ConditionalWeakTable<MapperConfiguration, ConcurrentDictionary<(Type, Type), LambdaExpression>>
+            _configuredProjectionCache = new();
+
+        private static ConcurrentDictionary<(Type, Type), LambdaExpression> CacheFor(MapperConfiguration? configuration)
+        {
+            if (configuration is null)
+            {
+                return _defaultProjectionCache;
+            }
+
+            return _configuredProjectionCache.GetValue(configuration, static _ => new ConcurrentDictionary<(Type, Type), LambdaExpression>());
+        }
 
         /// <summary>
         /// Projects each element of a query to a new form using the configured mapping.
@@ -67,10 +94,9 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var configHash = configuration is null ? 0 : RuntimeHelpers.GetHashCode(configuration);
-            var key = (typeof(TSource), typeof(TDest), configHash);
+            var key = (typeof(TSource), typeof(TDest));
 
-            return (Expression<Func<TSource, TDest>>)_projectionCache.GetOrAdd(key, _ =>
+            return (Expression<Func<TSource, TDest>>)CacheFor(configuration).GetOrAdd(key, _ =>
                 BuildProjectionExpression<TSource, TDest>(configuration));
         }
 
@@ -80,10 +106,9 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
             where TDest : new()
         {
-            var configHash = configuration is null ? 0 : RuntimeHelpers.GetHashCode(configuration);
-            var key = (sourceType, destType, configHash);
+            var key = (sourceType, destType);
 
-            return _projectionCache.GetOrAdd(key, _ =>
+            return CacheFor(configuration).GetOrAdd(key, _ =>
                 BuildProjectionExpressionNonGeneric(sourceType, destType, configuration));
         }
 
@@ -303,13 +328,33 @@ namespace Mapsicle.EntityFramework
         /// </summary>
         public static void ClearProjectionCache()
         {
-            _projectionCache.Clear();
+            _defaultProjectionCache.Clear();
+            foreach (var entry in _configuredProjectionCache)
+            {
+                entry.Value.Clear();
+            }
         }
 
         /// <summary>
         /// Gets the current cache size. Useful for diagnostics.
         /// </summary>
-        public static int CacheSize => _projectionCache.Count;
+        /// <remarks>
+        /// Counts projections held for configurations that are still reachable, plus the
+        /// unconfigured ones. A configuration that has been collected contributes nothing, which is
+        /// the property that makes this bounded.
+        /// </remarks>
+        public static int CacheSize
+        {
+            get
+            {
+                var total = _defaultProjectionCache.Count;
+                foreach (var entry in _configuredProjectionCache)
+                {
+                    total += entry.Value.Count;
+                }
+                return total;
+            }
+        }
 
         /// <summary>
         /// Replaces a parameter expression in an expression tree with another expression.

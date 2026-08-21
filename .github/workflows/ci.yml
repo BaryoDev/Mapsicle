@@ -85,18 +85,31 @@ jobs:
           fi
           echo "Core package declares no dependencies."
 
-  benchmarks:
-    name: benchmark (advisory)
-    if: github.event_name == 'pull_request'
+  # The project is sold on two claims: it is free where AutoMapper is not, and it is faster.
+  # This job checks the second one, using BenchmarkDotNet rather than a stopwatch loop. It was
+  # advisory once: it measured the ratio, printed it and exited 0 regardless, which is how the
+  # README came to publish a number its own benchmark did not support. The first version of this
+  # gate used a hand-rolled loop, which on the same machine reported 290ns per map where
+  # BenchmarkDotNet reported 33ns, so the gate is only as trustworthy as its instrument.
+  #
+  # Bounded at parity plus a tenth. The README publishes a number; this asserts only that the
+  # direction of the comparison holds, which is what survives a change of hardware.
+  claims:
+    name: performance claims hold
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # This job runs benchmark code from the pull request with dotnet run, and does no
+      # authenticated git operation afterwards, so it has no reason to keep GITHUB_TOKEN in the
+      # local git config where that code could read it.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Core benchmarks, short job
-        run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --quick
+      - name: Compare against AutoMapper and fail if a claim no longer holds
+        run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --gate
       - name: Upload benchmark output
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,3 +118,47 @@ jobs:
           path: tests/Mapsicle.Benchmarks/BenchmarkDotNet.Artifacts/**
           retention-days: 14
           if-no-files-found: ignore
+
+  # AutoMapper is RPL-1.5 or a paid licence, and the entire reason to choose Mapsicle is that it is
+  # MPL-2.0. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so the
+  # comparison is fine. A reference reaching src/ would make the shipped packages carry a reciprocal
+  # licence obligation and destroy the positioning, so it is worth more than a code review.
+  licence-boundary:
+    name: no commercially licensed dependency in src
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if a shipped project references AutoMapper
+        # Parsed as XML rather than grepped. A PackageReference can span lines or use single
+        # quotes, and a grep would miss both, which would make this gate look like protection
+        # while providing none. That is the exact failure mode the rest of this pipeline exists
+        # to remove, so it would be a poor place to leave one.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+
+          BANNED = {"automapper"}
+          found = []
+          for path in glob.glob("src/**/*.csproj", recursive=True) + glob.glob("src/**/*.props", recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError as e:
+                  print(f"::error::{path} could not be parsed: {e}")
+                  sys.exit(1)
+              for ref in root.iter():
+                  if ref.tag.split("}")[-1] != "PackageReference":
+                      continue
+                  include = (ref.get("Include") or ref.get("Update") or "").strip()
+                  if include.lower() in BANNED:
+                      found.append(f"{path}: {include}")
+
+          if found:
+            print("::error::AutoMapper is RPL-1.5 or a Lucky Penny Software licence. Compare against it in tests/, never ship it from src/.")
+            for f in found:
+                print(f"  {f}")
+            sys.exit(1)
+
+          print("No commercially licensed package referenced from src/.")
+          PY

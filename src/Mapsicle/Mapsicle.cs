@@ -170,6 +170,7 @@ namespace Mapsicle
             _readablePropertyCache.Clear();
             _writablePropertyCache.Clear();
             _needsDepthTrackingCache.Clear();
+            ResetTypedCaches();
             System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
             System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
 
@@ -204,6 +205,7 @@ namespace Mapsicle
                 _readablePropertyCache.Clear();
                 _writablePropertyCache.Clear();
                 _needsDepthTrackingCache.Clear();
+                ResetTypedCaches();
                 System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
                 System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
             }
@@ -214,15 +216,20 @@ namespace Mapsicle
         /// </summary>
         public static MapperCacheInfo CacheInfo()
         {
+            // Typed mappers count toward MapToEntries. They are compiled MapTo delegates held for
+            // the lifetime of the process, so reporting a total that excluded them meant CacheInfo()
+            // said 0 while delegates were cached, which is exactly when someone is looking at it.
+            var typed = _typedCacheResetters.Count;
+
             if (_useLruCache && _lruMapToCache != null && _lruMapCache != null)
             {
                 return new MapperCacheInfo(
-                    _lruMapToCache.Count,
+                    _lruMapToCache.Count + typed,
                     _lruMapCache.Count,
                     System.Threading.Interlocked.Read(ref _cacheHits),
                     System.Threading.Interlocked.Read(ref _cacheMisses));
             }
-            return new MapperCacheInfo(_mapToCache.Count, _mapCache.Count);
+            return new MapperCacheInfo(_mapToCache.Count + typed, _mapCache.Count);
         }
 
         /// <summary>
@@ -328,17 +335,17 @@ namespace Mapsicle
 
                 if (sourceProps.Contains(sourceName)) continue;
 
-                // Check flattening - verify the nested property actually exists
-                bool hasFlattening = typeof(TSource).GetProperties()
-                    .Any(sp =>
-                    {
-                        if (!destProp.Name.StartsWith(sp.Name, StringComparison.OrdinalIgnoreCase) ||
-                            destProp.Name.Length <= sp.Name.Length)
-                            return false;
-                        var remainder = destProp.Name.Substring(sp.Name.Length);
-                        return sp.PropertyType.GetProperty(remainder,
-                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase) != null;
-                    });
+                // Flattening, decided by exactly the rule the mapper uses. Asking the same helper
+                // is the point: this check answering "mapped" where TryCreateFlattenedBinding
+                // answers "skip" is a validator that certifies a property the mapper will leave at
+                // its default.
+                // The same readable-property set the mapper flattens over. An unfiltered
+                // GetProperties() also returns write-only and indexed properties, which the mapper
+                // never considers, so the validator could call a destination mapped from a source
+                // property the mapper will not read.
+                bool hasFlattening = GetCachedReadableProperties(typeof(TSource))
+                    .Any(sp => PropertyConversion.TryFindFlattenedSource(
+                        destProp, sp, GetCachedReadableProperties(sp.PropertyType), out _));
                 if (hasFlattening) continue;
 
                 unmapped.Add(destProp.Name);
@@ -421,6 +428,53 @@ namespace Mapsicle
 
         #region MapTo<T> - Single Object
 
+        // Reset actions for the strongly-typed caches below, one per closed generic pair that has
+        // been initialized. The cache itself stays a static field on TypedMapperCache<TSource,TDest>
+        // because that is what makes the typed path fast: a static field read, no dictionary lookup
+        // and no tuple key. But a per-closed-generic static is unreachable from ClearCache(), so
+        // every typed mapper was invisible to CacheInfo(), survived ClearCache(), and was never
+        // bounded by MaxCacheSize. In an application that closes generics over many type pairs that
+        // is a permanent, unreportable retention of compiled delegates.
+        //
+        // Registering a reset action costs one dictionary insert per pair, once, at compile time.
+        // The warm read path is untouched.
+        private static readonly ConcurrentDictionary<(Type, Type), Action> _typedCacheResetters = new();
+        private static readonly ConcurrentQueue<(Type, Type)> _typedCacheOrder = new();
+
+        /// <summary>
+        /// Number of compiled mappers held by the strongly-typed cache.
+        /// </summary>
+        internal static int TypedCacheCount => _typedCacheResetters.Count;
+
+        private static void ResetTypedCaches()
+        {
+            foreach (var reset in _typedCacheResetters.Values)
+            {
+                reset();
+            }
+            _typedCacheResetters.Clear();
+            while (_typedCacheOrder.TryDequeue(out _)) { }
+        }
+
+        /// <summary>
+        /// Applies MaxCacheSize to the typed cache by evicting in registration order.
+        /// </summary>
+        /// <remarks>
+        /// First-in rather than least-recently-used: a static field read leaves no access record to
+        /// order by, and adding one would put a write on the path this cache exists to keep fast.
+        /// The bound is what matters here; which entry goes is a secondary concern.
+        /// </remarks>
+        private static void TrimTypedCache()
+        {
+            while (_typedCacheResetters.Count > _maxCacheSize && _typedCacheOrder.TryDequeue(out var oldest))
+            {
+                if (_typedCacheResetters.TryRemove(oldest, out var reset))
+                {
+                    reset();
+                }
+            }
+        }
+
         // PERFORMANCE: Strongly-typed cache avoids boxing and enables faster lookups
         // Thread-safety: Single volatile write of an immutable entry object ensures atomicity
         private static class TypedMapperCache<TSource, TDest>
@@ -432,6 +486,16 @@ namespace Mapsicle
             public static void Initialize(Func<TSource, TDest> mapper, bool requiresDepthTracking)
             {
                 _entry = new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking);
+
+                var key = (typeof(TSource), typeof(TDest));
+                if (_typedCacheResetters.TryAdd(key, static () => _entry = null))
+                {
+                    _typedCacheOrder.Enqueue(key);
+                    if (_useLruCache)
+                    {
+                        TrimTypedCache();
+                    }
+                }
             }
         }
 
@@ -578,67 +642,22 @@ namespace Mapsicle
         private static MemberBinding? CreateTypedPropertyBinding<TSource>(PropertyInfo destProp, PropertyInfo sourceProp, ParameterExpression sourceParam)
         {
             var propExp = Expression.Property(sourceParam, sourceProp);
-            var targetType = destProp.PropertyType;
-            var srcType = sourceProp.PropertyType;
 
-            if (targetType.IsAssignableFrom(srcType))
-            {
-                return Expression.Bind(destProp, srcType == targetType ? propExp : Expression.Convert(propExp, targetType));
-            }
-            else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-            {
-                // Nested object - use recursive MapTo
-                var mapMethod = typeof(Mapper).GetMethod("MapTo", new[] { typeof(object) })!.MakeGenericMethod(targetType);
-                var recursiveCall = Expression.Call(null, mapMethod, Expression.Convert(propExp, typeof(object)));
-                return Expression.Bind(destProp, recursiveCall);
-            }
-            else if (targetType == typeof(string))
-            {
-                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
-                return Expression.Bind(destProp, toStringCall);
-            }
-            else if (srcType.IsEnum && (targetType == typeof(int) || targetType == typeof(long)))
-            {
-                return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
-            }
-            else
-            {
-                var underlyingTarget = Nullable.GetUnderlyingType(targetType);
-                var underlyingSource = Nullable.GetUnderlyingType(srcType);
-                if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
-                {
-                    var coalesce = Expression.Coalesce(propExp, Expression.Default(targetType));
-                    return Expression.Bind(destProp, coalesce);
-                }
-            }
-            return null;
+            var value = PropertyConversion.TryBuild(
+                propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
+
+            return value is null ? null : Expression.Bind(destProp, value);
         }
 
         private static MemberBinding? TryCreateTypedFlattenedBinding<TSource>(PropertyInfo destProp, PropertyInfo[] sourceProps, ParameterExpression sourceParam)
         {
-            string destName = destProp.Name;
-
             for (int i = 0; i < sourceProps.Length; i++)
             {
                 var sourceProp = sourceProps[i];
-                if (!sourceProp.PropertyType.IsClass || sourceProp.PropertyType == typeof(string)) continue;
-                if (!destName.StartsWith(sourceProp.Name, StringComparison.OrdinalIgnoreCase)) continue;
-
-                string remainder = destName.Substring(sourceProp.Name.Length);
-                if (string.IsNullOrEmpty(remainder)) continue;
-
                 var nestedProps = GetCachedReadableProperties(sourceProp.PropertyType);
-                PropertyInfo? nestedProp = null;
-                for (int j = 0; j < nestedProps.Length; j++)
-                {
-                    if (nestedProps[j].Name.Equals(remainder, StringComparison.OrdinalIgnoreCase))
-                    {
-                        nestedProp = nestedProps[j];
-                        break;
-                    }
-                }
 
-                if (nestedProp != null && destProp.PropertyType.IsAssignableFrom(nestedProp.PropertyType))
+                if (PropertyConversion.TryFindFlattenedSource(destProp, sourceProp, nestedProps, out var nestedProp)
+                    && nestedProp != null)
                 {
                     var parentAccess = Expression.Property(sourceParam, sourceProp);
                     var nestedAccess = Expression.Property(parentAccess, nestedProp);
@@ -696,7 +715,7 @@ namespace Mapsicle
                         }
                         else if (param.ParameterType == typeof(string))
                         {
-                            args.Add(Expression.Call(propExp, typeof(object).GetMethod("ToString")!));
+                            args.Add(PropertyConversion.BuildToString(propExp, sourceProp.PropertyType));
                         }
                         else
                         {
@@ -780,7 +799,7 @@ namespace Mapsicle
                     }
                     if (destType == typeof(string))
                     {
-                        var toStringCall = Expression.Call(typedSource, typeof(object).GetMethod("ToString")!);
+                        var toStringCall = PropertyConversion.BuildToString(typedSource, sourceType);
                         return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
                     }
                     var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
@@ -912,7 +931,7 @@ namespace Mapsicle
                             }
                             else if (param.ParameterType == typeof(string))
                             {
-                                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
+                                var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
                                 args.Add(toStringCall);
                             }
                             else if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
@@ -1004,7 +1023,7 @@ namespace Mapsicle
                         }
                         else if (targetType == typeof(string))
                         {
-                            var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
+                            var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
                             assignments.Add(Expression.Assign(destPropExp, toStringCall));
                         }
                     }
@@ -1133,6 +1152,18 @@ namespace Mapsicle
                 if (item is null)
                 {
                     result.Add(default!);
+                    continue;
+                }
+
+                // The cached delegate is compiled for exactly one runtime type, and its first
+                // instruction is a cast to that type. A collection declared List<Animal> may hold a
+                // Dog and then a Cat, in which case applying Dog's delegate to the Cat threw
+                // InvalidCastException from inside the compiled lambda. Fall back to the per-item
+                // path for the odd item out; the homogeneous case, which is nearly all of them,
+                // still pays only one reference comparison.
+                if (cachedMapper is not null && item.GetType() != itemType)
+                {
+                    result.Add(item.MapTo<T>()!);
                     continue;
                 }
 
@@ -1307,44 +1338,36 @@ namespace Mapsicle
                 propExp = Expression.Convert(call, sourceProp.PropertyType);
             }
 
-            var targetType = destProp.PropertyType;
-            var srcType = sourceProp.PropertyType;
+            var value = PropertyConversion.TryBuild(
+                propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
 
-            if (targetType.IsAssignableFrom(srcType))
-            {
-                return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
-            }
-            else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-            {
-                var mapMethod = typeof(Mapper).GetMethods()
-                    .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
-                    .MakeGenericMethod(targetType);
-                var recursiveCall = Expression.Call(null, mapMethod, propExp);
-                return Expression.Bind(destProp, recursiveCall);
-            }
-            else if (targetType == typeof(string))
-            {
-                var toStringCall = Expression.Call(propExp, typeof(object).GetMethod("ToString")!);
-                return Expression.Bind(destProp, toStringCall);
-            }
-            else if (srcType.IsEnum && (targetType == typeof(int) || targetType == typeof(long)))
-            {
-                return Expression.Bind(destProp, Expression.Convert(propExp, targetType));
-            }
-            else
-            {
-                var underlyingTarget = Nullable.GetUnderlyingType(targetType);
-                var underlyingSource = Nullable.GetUnderlyingType(srcType);
-
-                if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
-                {
-                    var coalesce = Expression.Coalesce(propExp, Expression.Default(targetType));
-                    return Expression.Bind(destProp, coalesce);
-                }
-            }
-
-            return null;
+            return value is null ? null : Expression.Bind(destProp, value);
         }
+
+        /// <summary>
+        /// The recursive <c>MapTo&lt;T&gt;(object)</c> call used for a nested complex object.
+        /// </summary>
+        /// <remarks>
+        /// Selected by exact signature. This used to be
+        /// <c>GetMethods().First(m =&gt; m.Name == "MapTo" &amp;&amp; ...)</c>, and three public overloads
+        /// satisfy that predicate: the <c>object</c> one, the <c>IEnumerable</c> one and the
+        /// <c>IDictionary</c> one. <see cref="Type.GetMethods()"/> does not guarantee order, so
+        /// which overload got picked was not decided by the code. It happened to be the right one
+        /// on .NET 8; a different order would have produced either a delegate-build failure or, via
+        /// the <c>IDictionary</c> overload's <c>where T : new()</c> constraint, an
+        /// <see cref="ArgumentException"/> from <c>MakeGenericMethod</c> for any destination
+        /// without a public parameterless constructor.
+        /// </remarks>
+        private static Expression BuildNestedMapCall(Expression propExp, Type targetType)
+        {
+            var mapMethod = MapToObjectOverload.MakeGenericMethod(targetType);
+            return Expression.Call(null, mapMethod, Expression.Convert(propExp, typeof(object)));
+        }
+
+        private static readonly MethodInfo MapToObjectOverload =
+            typeof(Mapper).GetMethod(nameof(MapTo), new[] { typeof(object) })
+            ?? throw new InvalidOperationException(
+                "Mapper.MapTo<T>(object) was not found. Renaming or changing that overload breaks nested mapping.");
 
         /// <summary>
         /// Attempts to create a binding for flattened properties (e.g., AddressCity -> Address.City).
@@ -1352,34 +1375,17 @@ namespace Mapsicle
         private static MemberBinding? TryCreateFlattenedBinding(PropertyInfo destProp, PropertyInfo[] sourceProps,
             Expression typedSource, ParameterExpression sourceParam, bool isSourceVisible)
         {
-            string destName = destProp.Name;
-
             // Try to find nested properties by splitting the destination name
             // OPTIMIZATION: Use for loop instead of foreach
             for (int i = 0; i < sourceProps.Length; i++)
             {
                 var sourceProp = sourceProps[i];
-                if (!sourceProp.PropertyType.IsClass || sourceProp.PropertyType == typeof(string)) continue;
-                if (!destName.StartsWith(sourceProp.Name, StringComparison.OrdinalIgnoreCase)) continue;
-
-                string remainder = destName.Substring(sourceProp.Name.Length);
-                if (string.IsNullOrEmpty(remainder)) continue;
 
                 // OPTIMIZATION: Use cached readable properties for nested type
                 var nestedProps = GetCachedReadableProperties(sourceProp.PropertyType);
 
-                // OPTIMIZATION: Use for loop with manual search instead of LINQ FirstOrDefault
-                PropertyInfo? nestedProp = null;
-                for (int j = 0; j < nestedProps.Length; j++)
-                {
-                    if (nestedProps[j].Name.Equals(remainder, StringComparison.OrdinalIgnoreCase))
-                    {
-                        nestedProp = nestedProps[j];
-                        break;
-                    }
-                }
-
-                if (nestedProp != null && destProp.PropertyType.IsAssignableFrom(nestedProp.PropertyType))
+                if (PropertyConversion.TryFindFlattenedSource(destProp, sourceProp, nestedProps, out var nestedProp)
+                    && nestedProp != null)
                 {
                     // Build: source.Address?.City ?? default
                     var parentAccess = Expression.Property(typedSource, sourceProp);

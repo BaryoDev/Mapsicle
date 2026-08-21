@@ -1,4 +1,4 @@
-# Mapsicle 🍦
+# Mapsicle
 
 [![CI](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml/badge.svg)](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/Mapsicle.svg)](https://www.nuget.org/packages/Mapsicle)
@@ -26,25 +26,58 @@
 
 > The core `Mapsicle` package has zero dependencies. Extension packages introduce their respective third-party dependencies (listed in the table above).
 
-> *"The fastest mapping is the one you don't have to configure."*
+Zero configuration by default. Configure only where a mapping is genuinely not conventional.
 
 ---
 
-## 🚀 Why Choose Mapsicle?
+## Why Choose Mapsicle?
 
-> ⚠️ **AutoMapper is now commercial software.** As of July 2025, AutoMapper requires a paid license for commercial use. Mapsicle is **100% free and MPL 2.0 licensed** forever.
+> **AutoMapper 15.0 and later are no longer permissively licensed.** They are governed by
+> [RPL-1.5](https://opensource.org/license/rpl-1-5/) or a licence agreement from Lucky Penny
+> Software, which includes a free Community License for those who qualify. Earlier versions keep
+> their original licence. RPL-1.5 is strong reciprocal: its source obligations reach software that
+> is only deployed internally, not just software you distribute. Check the terms against your own
+> situation rather than taking this paragraph as advice. Mapsicle is MPL 2.0.
+
+### When Mapsicle is the right choice, and when it is not
+
+Speed is the weakest argument for this library, so it is not the one to lead with. Against a source
+generator Mapsicle loses on speed and always will. What it offers is mappings that do not have to
+be known when you compile.
+
+**Reach for Mapsicle when:**
+
+| Situation | Why the alternatives do not fit |
+| :-------- | :------------------------------ |
+| Mapping a `Dictionary<string, object>` into a type | Mapperly has nothing to generate against. AutoMapper needs the pair configured. |
+| A collection whose items have different runtime types | Same: nothing to generate, and the shape is only known at runtime. |
+| Types arriving from plugins, reflection or configuration | Compile-time generation is not available at all. |
+| Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws when it reaches an unconfigured pair. `AssertConfigurationIsValid()` validates the maps you configured, so it does not catch a pair you never registered. |
+| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper needs `PreserveReferences()` or `MaxDepth(...)`, and an unhandled cycle can still overflow the stack. Mapperly needs `UseReferenceHandling`. |
+| The licence has to be permissive | This is the reason most people are reading this page. |
+
+**Reach for something else when:**
+
+| Situation | Choose |
+| :-------- | :----- |
+| Every mapping is known at compile time and you will declare them | **Mapperly.** 2.5x to 3x faster and indistinguishable from hand-written code. |
+| Collection throughput is what your workload is bounded by | **Mapperly**, then AutoMapper. Mapsicle is 1.33x slower than AutoMapper here. |
+| You need AOT with no runtime code generation | **Mapperly.** Mapsicle compiles expression trees at first use. |
+
+Mapsicle is about 1.4x faster than AutoMapper on single objects, on both x64 and arm64. That is
+real and it is measured below, but it is a supporting argument rather than the reason to switch.
 
 ### Quick Comparison
 
 | Feature              | Mapsicle         | AutoMapper   | Mapperly     |
 | :------------------- | :--------------- | :----------- | :----------- |
-| **License**          | **MPL 2.0 (Free)**   | Commercial   | MIT (Free)   |
+| **License**          | **MPL 2.0**   | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
 | **Architecture**     | Runtime + Caching | Runtime + Expressions | Source Generator |
 | **Setup Required**   | **None**         | Profiles, DI | Partial class |
 | **Dependencies**     | **0** (core)     | 5+           | 0 (compile-time) |
 | **Compile-time Safety** | Partial       | No           | **Full**     |
 | **AOT Compatible**   | Partial          | No           | **Yes**      |
-| **Circular Refs**    | **Handled**      | Crash        | N/A          |
+| **Circular Refs**    | **Handled by default** | Opt in via `PreserveReferences()` or `MaxDepth(...)` | Opt in via `UseReferenceHandling` |
 | **Memory Bounded**   | **LRU Option**   | No           | N/A          |
 | **Cache Statistics** | **Yes**          | No           | N/A          |
 | **Integrated Validation** | **Yes**     | No           | No           |
@@ -52,7 +85,7 @@
 
 ---
 
-## 📊 Detailed Comparison: Mapsicle vs AutoMapper vs Mapperly
+## Detailed Comparison: Mapsicle vs AutoMapper vs Mapperly
 
 ### Core Mapping Features
 
@@ -174,7 +207,7 @@ Features not found in AutoMapper or Mapperly:
 
 ---
 
-## 🚦 Quick Start
+## Quick Start
 
 ### Complete Example (Copy & Paste)
 
@@ -234,26 +267,71 @@ Do you need EF Core query translation (ProjectTo)?
 
 ---
 
-## 📊 Benchmark Results
+## Benchmark Results
 
 Real benchmarks on Apple M1, .NET 8.0, BenchmarkDotNet v0.13.12:
 
 ### Core Mapping Performance
 
-| Scenario             | Manual |  Mapsicle | AutoMapper | Mapperly |      Winner       |
-| :------------------- | -----: | --------: | ---------: | -------: | :---------------: |
-| **Single Object**    |  13 ns | **26 ns** |      54 ns |    13 ns | ⭐ Mapsicle (2.1x faster than AutoMapper) |
-| **Flattening**       |  13 ns | **29 ns** |      56 ns |    15 ns | ⭐ Mapsicle (1.9x faster than AutoMapper) |
-| **Collection (100)** | 1.5 μs |    2.0 μs |     1.9 μs |   1.5 μs | ⭐ Mapperly (Mapsicle uses 18% less memory) |
+BenchmarkDotNet, short job, .NET 8, measured on two architectures because one is not evidence of
+anything portable. Reproduce with
+`dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --core`.
 
-> **Note:** Mapperly generates code at compile-time, resulting in near-manual performance. **Mapsicle is now the fastest runtime-based mapper**, outperforming AutoMapper by 2.1x for single objects and 1.9x for flattening, while using less memory for collections.
+**Single object, five properties:**
+
+| Runtime | Manual  | Mapsicle    | AutoMapper | Mapperly | Mapsicle vs AutoMapper |
+| :------ | ------: | ----------: | ---------: | -------: | :--------------------- |
+| x64 Linux (CI runner) | 18.3 ns | **60.4 ns** | 82.7 ns | 18.2 ns | 1.37x faster |
+| arm64 macOS           | 12.2 ns | **33.1 ns** | 49.0 ns | 12.5 ns | 1.48x faster |
+
+**Mapperly is not a competitor, it is a different trade, and it wins the one this table measures.**
+At 18.2 ns against hand-written code's 18.3 ns it is not close to manual, it is indistinguishable
+from it, because a source generator emits ordinary C# assignments at compile time and leaves no
+delegate, no cache lookup and no indirection at runtime. Mapsicle and AutoMapper both build an
+expression tree, compile it, cache it, look it up and invoke through it. That apparatus is the
+entire 2.5x to 3x gap, and no runtime mapper can close it, because the apparatus is what makes it
+a runtime mapper.
+
+What you buy with it: Mapperly needs a `partial class` with a `[Mapper]` attribute and a declared
+method for every pair, all known at compile time. It cannot map a `Dictionary<string, object>` into
+a type chosen at runtime, or a collection whose items turn out to have different runtime types,
+because there is nothing for it to generate against. Mapsicle needs no configuration and resolves
+types as it meets them.
+
+**If your mappings are all known at compile time and you are willing to declare them, choose
+Mapperly.** Mapsicle is for the case where they are not, and its comparison is with AutoMapper.
+
+**Other scenarios, arm64:**
+
+| Scenario             |   Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
+| :------------------- | ---------: | ---------: | --------: | :------------ |
+| **Flattening**       | **38.4 ns** |    54.1 ns |  15.2 ns  | 1.41x faster  |
+| **Collection (100)** | **2,428 ns** |  1,823 ns | 1,451 ns  | 1.33x slower  |
+
+Allocation per operation matches hand-written code for single objects and flattening (48 B and
+56 B, the destination and nothing else). On collections Mapsicle allocates 5,696 B against
+AutoMapper's 6,992 B, about 19 percent less, while taking longer.
+
+**Read that collection row rather than skipping it.** Mapsicle is slower than AutoMapper mapping
+collections. If collection throughput is what your workload is bounded by, Mapperly is faster than
+both.
+
+Two things worth more than the table:
+
+- The flattening row has wide error bars at this job length. Run it on your hardware before it
+  decides anything.
+- An earlier version of this table claimed 2.1x on single objects and rough parity on collections.
+  Neither held when the benchmark was re-run. It went unnoticed because CI measured the comparison,
+  printed it and exited zero regardless. CI now fails when the comparison changes direction, and it
+  reads BenchmarkDotNet's own summary rather than a stopwatch loop, so the published numbers and
+  the gated numbers come from one source.
 
 ### Edge Case Performance
 
 | Scenario                     | Mapsicle      | AutoMapper    | Mapperly      | Notes                     |
 | :--------------------------- | :------------ | :------------ | :------------ | :------------------------ |
 | **Deep Nesting (15 levels)** | ✅ Safe        | ✅ Safe        | ✅ Safe        | All handle with limits    |
-| **Circular References**      | ✅ Handled     | ❌ Crashes     | ❌ Compile error | **Mapsicle wins**     |
+| **Circular References**      | Handled by default | Opt in via `PreserveReferences()` | Opt in via `UseReferenceHandling` | Only Mapsicle needs no configuration |
 | **Large Collection (10K)**   | **4 ms**      | 4 ms          | ~3.5 ms       | Mapperly fastest          |
 | **Parallel (1000 threads)**  | ✅ Thread-safe | ✅ Thread-safe | ✅ Thread-safe | All thread-safe           |
 | **Cold Start**               | Medium        | Slow          | **None**      | Mapperly pre-compiled     |
@@ -294,16 +372,17 @@ Console.WriteLine($"Hits: {stats.Hits}, Misses: {stats.Misses}");
 | **Configurable Limit**   | ❌                    | ✅              | ❌          |
 | **Lock-Free Reads**      | ✅                    | ✅              | Partial    |
 
-### Smoke Test Results (10,000 mappings)
+### The claims are gated
 
-```
-✓ Core: 10,000 mappings in 19ms
-✓ Fluent: 10,000 mappings in 10ms
-✓ Deep nesting (10 levels): 1,000 mappings in 3ms
-✓ Large collection (10,000 items): 4ms
-```
+The comparison above is not only published, it is checked. `dotnet run -c Release --project
+tests/Mapsicle.Benchmarks -- --quick` runs Mapsicle against AutoMapper and returns a non-zero exit
+code when a ratio moves outside its bound. CI runs it on every pull request.
 
-> 💡 **Key Insight**: Mapsicle is now **2.1x faster than AutoMapper** for single object mapping while maintaining zero-configuration simplicity. Both vastly outperform reflection-based approaches.
+Two more gates guard the other half of the pitch:
+
+- `core-has-no-dependencies` packs `Mapsicle` and fails if the nuspec declares a single dependency.
+- `licence-boundary` fails if anything under `src/` references AutoMapper, which is RPL-1.5 or a
+  paid licence. It is compared against in `tests/`, which is never packed.
 
 ### Run Benchmarks Yourself
 
@@ -316,7 +395,7 @@ dotnet run -c Release -- --edge    # Edge cases only
 
 ---
 
-## 📦 Installation
+## Installation
 
 ```bash
 # Core package - zero config
@@ -358,7 +437,7 @@ dotnet add package Mapsicle.DataAnnotations
 
 ---
 
-## ⚡ Package 1: Mapsicle (Core)
+## Package 1: Mapsicle (Core)
 
 ### Basic Mapping
 ```csharp
@@ -407,7 +486,7 @@ var dto = mapper.MapTo<UserDto>(user);  // Uses isolated cache
 
 ---
 
-## ⚡ Package 2: Mapsicle.Fluent
+## Package 2: Mapsicle.Fluent
 
 ### Basic Configuration
 ```csharp
@@ -468,9 +547,9 @@ cfg.CreateConverter<Money, string>(m => $"{m.Currency} {m.Amount}");
 
 ---
 
-## ⚡ Package 3: Mapsicle.EntityFramework
+## Package 3: Mapsicle.EntityFramework
 
-**`ProjectTo<T>()`** that translates to SQL—no in-memory loading!
+**`ProjectTo<T>()`** that translates to SQL, no in-memory loading.
 
 ```csharp
 using Mapsicle.EntityFramework;
@@ -502,9 +581,9 @@ var orders = _context.Orders.ProjectTo<Order, OrderDto>(config).ToList();
 
 ---
 
-## ⚡ Package 4: Mapsicle.Validation
+## Package 4: Mapsicle.Validation
 
-**Post-mapping validation** using FluentValidation—validate DTOs immediately after mapping!
+**Post-mapping validation** using FluentValidation, validate DTOs immediately after mapping.
 
 ### Basic Usage
 
@@ -598,9 +677,9 @@ public class UsersController : ControllerBase
 
 ---
 
-## ⚡ Package 5: Mapsicle.NamingConventions
+## Package 5: Mapsicle.NamingConventions
 
-**Automatic naming convention conversion**—map between `snake_case`, `PascalCase`, `camelCase`, and `kebab-case`!
+**Automatic naming convention conversion**, map between `snake_case`, `PascalCase`, `camelCase`, and `kebab-case`!
 
 ### Basic Usage
 
@@ -717,7 +796,7 @@ public class UserDto
 
 ---
 
-## ⚡ Package 6: Mapsicle.Serilog
+## Package 6: Mapsicle.Serilog
 
 **Structured logging integration** for enterprise diagnostics and observability.
 
@@ -774,9 +853,9 @@ using (var scope = new MappingLoggingScope(logger, "OrderProcessing"))
 
 ---
 
-## ⚡ Package 7: Mapsicle.Dapper
+## Package 7: Mapsicle.Dapper
 
-**Seamless integration with Dapper** for mapping database query results directly to DTOs.
+**Dapper integration** for mapping database query results directly to DTOs.
 
 ### Basic Usage
 
@@ -847,18 +926,18 @@ var dtos = users.MapTo<User, UserDto>(mapper);
 
 ---
 
-## 🔧 Migration from AutoMapper
+## Migration from AutoMapper
 
 ### API Compatibility
 
 | AutoMapper                 | Mapsicle                              |
 | :------------------------- | :------------------------------------ |
-| `CreateMap<S,D>()`         | Same!                                 |
-| `ForMember().MapFrom()`    | Same!                                 |
-| `.Ignore()`                | Same!                                 |
-| `BeforeMap/AfterMap`       | Same!                                 |
-| `Include<Derived>()`       | Same!                                 |
-| `ConstructUsing()`         | Same!                                 |
+| `CreateMap<S,D>()`         | Same.                                 |
+| `ForMember().MapFrom()`    | Same.                                 |
+| `.Ignore()`                | Same.                                 |
+| `BeforeMap/AfterMap`       | Same.                                 |
+| `Include<Derived>()`       | Same.                                 |
+| `ConstructUsing()`         | Same.                                 |
 | `services.AddAutoMapper()` | `services.AddMapsicle()`              |
 | `_mapper.Map<T>()`         | `mapper.Map<T>()` or `obj.MapTo<T>()` |
 
@@ -962,13 +1041,13 @@ public class UserService
 - Post-mapping validation → `Mapsicle.Validation`
 
 ⚠️ **Behavioral Differences:**
-- **Circular references**: AutoMapper throws exception, Mapsicle returns default value
+- **Circular references**: Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper needs `PreserveReferences()` or `MaxDepth(...)` to handle them.
 - **Unmapped properties**: Both ignore, but Mapsicle has `GetUnmappedProperties<T, U>()` for validation
 - **Null handling**: Both return null for null source, but Mapsicle is more aggressive with null-safe navigation
 
 ---
 
-## 🛠️ Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -1135,7 +1214,52 @@ var dto = mapper.MapTo<UserDto>(user);
 
 ---
 
-## ⚠️ Known Limitations
+## Mapping Untrusted Input
+
+A mapper copies every matching property it can. Pointed at a request body it will set anything
+whose name lines up, including a property the caller had no business setting. This is true of
+every convention-based mapper, Mapsicle included, and it is worth stating plainly rather than
+leaving for you to discover:
+
+```csharp
+// An attacker controls the keys.
+var body = new Dictionary<string, object?>
+{
+    ["Email"] = "user@example.com",
+    ["IsAdmin"] = true,          // not a field the caller should decide
+};
+
+var account = body.MapTo<Account>();   // account.IsAdmin is now true
+```
+
+**Map untrusted input into a DTO that holds only the fields a caller may set**, then map that
+into your entity:
+
+```csharp
+public class AccountUpdateDto        // no IsAdmin, no Balance
+{
+    public string Email { get; set; } = "";
+}
+
+var dto = body.MapTo<AccountUpdateDto>();
+dto.Map(existingAccount);            // reaches nothing the DTO does not declare
+```
+
+Where a shared type is unavoidable, `[IgnoreMap]` is an enforceable control and is honoured on
+every entry point, including the dictionary path.
+
+What Mapsicle does guarantee about untrusted values:
+
+- **Values are copied, never interpreted.** Nothing in a string is parsed, executed or sanitised.
+  A value containing SQL, script or format-string syntax arrives byte for byte.
+- **A value of the wrong type is dropped**, not coerced and not thrown. A caller cannot use a type
+  mismatch to crash a request handler or to smuggle a value through a loose conversion.
+- **Unknown keys are ignored** rather than throwing.
+
+All of this is covered by `UntrustedInputTests` in `tests/Mapsicle.Tests`. A failure there means
+one of these statements stopped being true.
+
+## Known Limitations
 
 ### Feature Limitations
 
@@ -1151,13 +1275,20 @@ var dto = mapper.MapTo<UserDto>(user);
 
 ⚠️ **Partial Support:**
 - Nested flattening limited to 1 level (`Address.City` ✅, `Address.Street.Line1` ❌)
-- Collection mapping ~27% slower than AutoMapper for 100-1000 items (competitive on 10K+)
+- Collection mapping is slower than AutoMapper: 2,428 ns against 1,823 ns for 100 items, while allocating about 19 percent less. Competitive again at 10K+.
 - EF Core ProjectTo works with `ForMember` expressions, but not `ResolveUsing` delegates
 
 ### Behavioral Differences from AutoMapper
 
 - **Circular references**: Returns default value instead of throwing exception
-- **Null safety**: More aggressive null-safe navigation (fewer NullReferenceException)
+- **Null safety**: More aggressive null-safe navigation (fewer NullReferenceException). A null
+  reference-typed source mapped to a `string` destination yields `null` rather than throwing.
+- **`Map(destination)` is not atomic**: it writes properties in order, so a setter that throws
+  part-way leaves the earlier ones already written. Map into a fresh instance if you need
+  all-or-nothing.
+- **Exceptions from your accessors propagate unwrapped**: a getter throwing
+  `InvalidOperationException` surfaces as `InvalidOperationException`, not wrapped in
+  `TargetInvocationException`.
 - **Unmapped properties**: Silent (use `GetUnmappedProperties` for validation)
 - **Cache behavior**: Default is unbounded (must opt-in to LRU)
 
@@ -1173,7 +1304,7 @@ var dto = mapper.MapTo<UserDto>(user);
 
 ---
 
-## 📚 API Reference
+## API Reference
 
 ### Core Extensions (`using Mapsicle`)
 
@@ -1656,7 +1787,7 @@ var dtos = users.MapTo<User, UserDto>(mapper);
 
 ---
 
-## 📝 Complete Feature List
+## Complete Feature List
 
 ### Core Features
 - ✅ Zero-config convention mapping
@@ -1742,27 +1873,47 @@ var dtos = users.MapTo<User, UserDto>(mapper);
 
 ---
 
-## 🧪 Test Coverage
+## Test Coverage
 
-| Package                    |  Tests | Coverage            |
-| :------------------------- | -----: | :------------------ |
-| Mapsicle                   |    210 | Core + Stability    |
-| Mapsicle.Fluent            |     35 | Fluent + Enterprise |
-| Mapsicle.EntityFramework   |     19 | EF Core             |
-| Mapsicle.Validation        |     13 | FluentValidation    |
-| Mapsicle.NamingConventions |     55 | Naming Conventions  |
-| Mapsicle.Serilog           |     22 | Serilog Logging     |
-| Mapsicle.Dapper            |     25 | Dapper Integration  |
-| Mapsicle.Json              |     26 | JSON Serialization  |
-| Mapsicle.AspNetCore        |     23 | ASP.NET Core        |
-| Mapsicle.Caching           |     21 | Caching Integration |
-| Mapsicle.Audit             |     26 | Change Tracking     |
-| Mapsicle.DataAnnotations   |     24 | DataAnnotations     |
-| **Total**                  | **499** |                     |
+`dotnet test Mapsicle.sln -c Release` runs all of it, including the allocation budgets.
+
+| Package                    |   Tests | What it covers                                  |
+| :------------------------- | ------: | :---------------------------------------------- |
+| Mapsicle                   |     284 | Core, plus regression, load, fault and untrusted input |
+| Mapsicle.NamingConventions |      55 | Naming conventions                              |
+| Mapsicle.Fluent            |      39 | Fluent configuration and profiles               |
+| Mapsicle.Validation        |      27 | FluentValidation integration                    |
+| Mapsicle.Json              |      26 | JSON serialization                              |
+| Mapsicle.Audit             |      26 | Change tracking                                 |
+| Mapsicle.Dapper            |      25 | Dapper integration                              |
+| Mapsicle.DataAnnotations   |      24 | DataAnnotations validation                      |
+| Mapsicle.AspNetCore        |      23 | ASP.NET Core helpers                            |
+| Mapsicle.Serilog           |      22 | Serilog logging                                 |
+| Mapsicle.Caching           |      21 | Caching integration                             |
+| Mapsicle.EntityFramework   |      19 | EF Core ProjectTo                               |
+| Mapsicle.Performance       |       8 | Allocation budgets on warm paths                |
+| **Total**                  | **599** |                                                 |
+
+Four of those suites exist because a passing test count on its own says very little:
+
+- **`IssueRegressionTests`** carries one test per fixed defect, named by issue number. Reverted
+  against the pre-fix source, 19 of its 28 fail. The 9 that pass are the controls, and they are
+  supposed to pass either way.
+- **`UntrustedInputTests`** pins the security statements in this README, so a change to any of
+  them fails the build rather than quietly making the documentation wrong.
+- **`FaultInjectionTests`** covers what happens when a mapping fails: which exception surfaces,
+  whether it is wrapped, whether the destination is left half-written, and whether a failure
+  poisons the cache for later calls.
+- **`LoadTests`** verifies every mapping against the input that produced it, because the failure a
+  shared compiled delegate produces under concurrency is a wrong answer rather than an exception.
+
+Allocation budgets run under `dotnet test` rather than only in a benchmark, so a change that
+starts boxing a value or allocating a closure on a warm path fails CI instead of being noticed in a
+profiler later.
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 Mapsicle/
@@ -1805,16 +1956,16 @@ dotnet run --project examples/Mapsicle.Examples
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-PRs welcome! Areas for contribution:
+PRs welcome. Areas for contribution:
 - Performance optimizations
 - Additional type coercion scenarios
 - Documentation improvements
 
 ---
 
-## 📄 License
+## License
 
 MPL 2.0 License © [Arnel Isiderio Robles](https://github.com/arnelirobles)
 
