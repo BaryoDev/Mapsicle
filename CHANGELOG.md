@@ -49,6 +49,7 @@ more than one runtime type, this is worth taking.
   request grew it for the life of the process. Projections now live in a `ConditionalWeakTable`
   keyed by the configuration and become collectable with it.
   ([#9](https://github.com/BaryoDev/Mapsicle/issues/9))
+  - **`LruCache`**: `_approximateCount` no longer drifts upward during concurrent `GetOrAdd` races, because losing threads no longer incorrectly increment the counter. ([#25](https://github.com/BaryoDev/Mapsicle/issues/25))
 
 ### Performance
 
