@@ -42,14 +42,16 @@ namespace Mapsicle
             }
 
             // Cache miss - create value
+            TValue valueCheck = default!;
             bool added = false;
             var value = _cache.GetOrAdd(key, k =>
             {
                 added = true;
-                return factory(k);
+                valueCheck = factory(k);
+                return valueCheck;
             });
 
-            if (added)
+            if (added && EqualityComparer<TValue>.Default.Equals(value, valueCheck))
             {
                 Interlocked.Increment(ref _approximateCount);
             }
