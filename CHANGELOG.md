@@ -85,6 +85,14 @@ members are now mapped instead of dropped.
   in-place `Map`, kept `GetMethods().First(...)`. Three public overloads satisfy that predicate and
   `Type.GetMethods()` does not guarantee order, so the right one was picked by luck on .NET 8.
   ([#39](https://github.com/BaryoDev/Mapsicle/issues/39))
+- **`[MapFrom]` naming a property that does not exist behaved differently per entry point.**
+  `[MapFrom("DoesNotExist")]` on a destination property called `Name` mapped the source `Name`
+  through `MapTo<T>(object)` and returned null through `MapTo<TSource, TDest>()`. The typed path
+  resolved the attribute with its own inline scan that matched only the named property, while every
+  other path fell back to the destination member's own name. All paths now fall back, so an
+  attribute pointing at a property that is not there degrades to ordinary convention matching
+  instead of silently leaving the member unmapped. Found while collapsing the duplicated binding
+  loops, not by the audit. ([#41](https://github.com/BaryoDev/Mapsicle/issues/41))
 - **`LruCache.Count` drifted upward under concurrent misses.** `ConcurrentDictionary.GetOrAdd` may
   run the factory on several threads and keep one result, and the count was incremented by every
   thread whose factory ran rather than by the one whose value was kept. The count drifted
