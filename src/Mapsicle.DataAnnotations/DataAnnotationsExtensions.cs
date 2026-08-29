@@ -226,6 +226,10 @@ namespace Mapsicle.DataAnnotations
             Errors.Where(e => !string.IsNullOrEmpty(e.ErrorMessage))
                   .Select(e => e.ErrorMessage!);
 
+        /// <summary>Pairs a mapped value with its DataAnnotations validation outcome.</summary>
+        /// <param name="value">The mapped value.</param>
+        /// <param name="isValid">Whether every annotation was satisfied.</param>
+        /// <param name="errors">One entry per failed annotation, empty when valid.</param>
         public DataAnnotationsValidationResult(T? value, bool isValid, List<ValidationResult> errors)
         {
             Value = value;

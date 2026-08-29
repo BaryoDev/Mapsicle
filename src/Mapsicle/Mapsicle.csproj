@@ -1,10 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <PackageId>Mapsicle</PackageId>
     <Title>Mapsicle</Title>
-    <Description>A zero-dependency, high-performance object mapper for .NET. 2x faster than AutoMapper with zero configuration.</Description>
+    <Description>A zero-dependency object mapper for .NET that maps by convention, with no configuration and no CreateMap per pair. MPL 2.0. Handles shapes only known at runtime: dictionaries, object-typed sources, and collections of mixed runtime types.</Description>
     <PackageTags>mapper;mapping;object-mapper;performance;zero-dependency;automapper-alternative</PackageTags>
   </PropertyGroup>
 

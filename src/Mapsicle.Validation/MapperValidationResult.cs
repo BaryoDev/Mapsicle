@@ -80,6 +80,9 @@ namespace Mapsicle.Validation
         /// </summary>
         public IList<ValidationFailure> Errors { get; }
 
+        /// <summary>Thrown when validation fails, carrying every failure rather than only the first.</summary>
+        /// <param name="message">A summary of what failed.</param>
+        /// <param name="errors">Every individual validation failure.</param>
         public ValidationException(string message, IList<ValidationFailure> errors)
             : base(message)
         {

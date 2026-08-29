@@ -1,0 +1,53 @@
+class Mapsicle.Audit.AuditExtensions
+    public static Mapsicle.Audit.AuditedMappingResult<TDest> MapWithAudit<TDest>(System.Object source) where TDest : new()
+    public static Mapsicle.Audit.AuditedMappingResult<TDest> MapWithAudit<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source) where TDest : new()
+    public static Mapsicle.Audit.ChangeDetectionResult<TDest> MapAndDetectChanges<TDest>(System.Object source, TDest existingDestination) where TDest : new()
+    public static Mapsicle.Audit.ChangeDetectionResult<TDest> MapAndDetectChanges<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source, TDest existingDestination) where TDest : new()
+    public static System.Boolean WouldChangeOnMap<TDest>(System.Object source, TDest existingDestination) where TDest : new()
+    public static System.Collections.Generic.Dictionary<System.String,System.Object> GetChangedValues<TDest>(System.Object source, TDest existingDestination) where TDest : new()
+    public static System.Collections.Generic.List<Mapsicle.Audit.PropertyChange> Diff<T>(T original, T modified)
+class Mapsicle.Audit.AuditedMappingResult<T>
+    .ctor(T value, Mapsicle.Audit.MappingAudit audit)
+    public Mapsicle.Audit.MappingAudit Audit { get; }
+    public System.Boolean IsSuccess { get; }
+    public T GetValueOrThrow()
+    public T Value { get; }
+class Mapsicle.Audit.ChangeDetectionResult<T>
+    .ctor(T value, System.Collections.Generic.List<Mapsicle.Audit.PropertyChange> changes, System.Boolean hasChanges)
+    public Mapsicle.Audit.PropertyChange GetChange(System.String propertyName)
+    public System.Boolean HasChanges { get; }
+    public System.Collections.Generic.List<Mapsicle.Audit.PropertyChange> Changes { get; }
+    public T Value { get; }
+class Mapsicle.Audit.MappingAudit
+    .ctor()
+    public System.Boolean WasSuccessful { get;set; }
+    public System.Collections.Generic.IEnumerable<System.String> UnmappedProperties { get; }
+    public System.Collections.Generic.List<Mapsicle.Audit.PropertyMappingInfo> PropertyMappings { get;set; }
+    public System.DateTime MappedAt { get;set; }
+    public System.Int32 MappedPropertyCount { get; }
+    public System.Int32 UnmappedPropertyCount { get; }
+    public System.String FailureReason { get;set; }
+    public System.TimeSpan Duration { get;set; }
+    public System.Type DestinationType { get;set; }
+    public System.Type SourceType { get;set; }
+class Mapsicle.Audit.PropertyChange
+    .ctor()
+    public Mapsicle.Audit.ChangeType ChangeType { get;set; }
+    public System.Object NewValue { get;set; }
+    public System.Object OldValue { get;set; }
+    public System.String PropertyName { get;set; }
+    public System.Type PropertyType { get;set; }
+class Mapsicle.Audit.PropertyMappingInfo
+    .ctor()
+    public System.Boolean WasMapped { get;set; }
+    public System.Object DestinationValue { get;set; }
+    public System.Object SourceValue { get;set; }
+    public System.String PropertyName { get;set; }
+    public System.String SourcePropertyName { get;set; }
+    public System.Type DestinationType { get;set; }
+    public System.Type SourceType { get;set; }
+enum Mapsicle.Audit.ChangeType
+    = Created
+    = Deleted
+    = Modified
+    = value__

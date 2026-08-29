@@ -24,9 +24,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet restore Mapsicle.sln
       - run: dotnet build Mapsicle.sln --configuration Release --no-restore
       - run: dotnet test Mapsicle.sln --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
@@ -44,12 +48,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet restore Mapsicle.sln
       - name: Verify formatting
-        run: dotnet format Mapsicle.sln --verify-no-changes --severity error --no-restore
+        # No --severity filter, matching publish.yml. CI used to be the more lenient of the two,
+        # so a warning that fails the release could pass here: an xUnit1031 in a new concurrency
+        # test did exactly that and would have failed the publish after the tag was pushed.
+        run: dotnet format Mapsicle.sln --verify-no-changes --no-restore
 
   audit:
     name: dependency audit
@@ -57,9 +68,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Restore with NuGet audit as error
         run: dotnet restore Mapsicle.sln /p:NuGetAudit=true /p:NuGetAuditMode=all /p:WarningsNotAsErrors= /p:TreatWarningsAsErrors=true
 
@@ -69,10 +84,47 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --output ./pack
+      - name: Fail if the package ships without XML documentation
+        # The doc comments were always written and always thrown away, because
+        # GenerateDocumentationFile was set nowhere, so every package gave consumers bare
+        # signatures in IntelliSense. Checked here rather than trusted, for the same reason
+        # every other claim in this pipeline is checked.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, zipfile
+          nupkg = glob.glob("pack/Mapsicle.*.nupkg")
+          nupkg = [p for p in nupkg if not p.endswith(".snupkg")]
+          if not nupkg:
+              sys.exit("no package was produced")
+          z = zipfile.ZipFile(nupkg[0])
+          names = z.namelist()
+          libs = sorted({n.split("/")[1] for n in names if n.startswith("lib/") and n.endswith(".dll")})
+          missing = [tfm for tfm in libs if f"lib/{tfm}/Mapsicle.xml" not in names]
+          if missing:
+              sys.exit(f"Mapsicle.xml missing for: {', '.join(missing)}")
+          print(f"XML documentation present for: {', '.join(libs)}")
+
+          # The package icon is a claim about what ships too, and NuGet silently lists a
+          # placeholder when it is absent rather than failing the push.
+          if "icon.png" not in names:
+              sys.exit("icon.png is not in the package; the NuGet listing would show no icon")
+          import xml.etree.ElementTree as ET
+          nuspec = [n for n in names if n.endswith(".nuspec")][0]
+          root = ET.fromstring(z.read(nuspec))
+          ns = {"n": root.tag.split("}")[0].strip("{")}
+          if root.find(".//n:icon", ns) is None:
+              sys.exit("the nuspec declares no <icon>, so the packed file would be ignored")
+          print("package icon present and declared")
+          PY
       - name: Fail if the core nuspec declares a dependency
         run: |
           set -euo pipefail
@@ -107,7 +159,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Compare against AutoMapper and fail if a claim no longer holds
         run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --gate
       - name: Upload benchmark output
@@ -123,12 +177,71 @@ jobs:
   # MPL-2.0. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so the
   # comparison is fine. A reference reaching src/ would make the shipped packages carry a reciprocal
   # licence obligation and destroy the positioning, so it is worth more than a code review.
+  parity:
+    name: never worse than AutoMapper
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      # The pitch is that Mapsicle can be trusted at least as much as AutoMapper. That was checked
+      # once by hand during an audit, which found four behaviours where it was not, one of them a
+      # process crash where AutoMapper stayed up. A claim nothing checks is a claim that quietly
+      # stops being true, so it is checked on every build now.
+      - name: Run the head to head and fail if Mapsicle is worse on any row
+        run: dotnet test tests/Mapsicle.Parity.Tests/Mapsicle.Parity.Tests.csproj --configuration Release
+
+  coverage:
+    name: coverage holds its floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Collect coverage
+        run: dotnet test Mapsicle.sln --configuration Release -f net8.0 --collect:"XPlat Code Coverage" --results-directory ./coverage
+      - name: Fail if coverage dropped below the floor
+        working-directory: ./coverage
+        run: python3 ../.github/scripts/coverage-gate.py 70.0
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: ./coverage/**/coverage.cobertura.xml
+          retention-days: 7
+
+  workflows:
+    name: workflow files are valid
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fail on a duplicate key in any workflow
+        run: python3 .github/scripts/lint-workflows.py
+
   licence-boundary:
     name: no commercially licensed dependency in src
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Fail if a shipped project references AutoMapper
         # Parsed as XML rather than grepped. A PackageReference can span lines or use single
         # quotes, and a grep would miss both, which would make this gate look like protection

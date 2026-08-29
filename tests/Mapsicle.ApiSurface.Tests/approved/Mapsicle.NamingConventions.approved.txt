@@ -1,0 +1,19 @@
+class Mapsicle.NamingConventions.NamingConvention
+    .ctor()
+    public abstract System.String FromWords(System.String[] words)
+    public abstract System.String Name { get; }
+    public abstract System.String[] ToWords(System.String name)
+    public static Mapsicle.NamingConventions.NamingConvention CamelCase { get; }
+    public static Mapsicle.NamingConventions.NamingConvention KebabCase { get; }
+    public static Mapsicle.NamingConventions.NamingConvention PascalCase { get; }
+    public static Mapsicle.NamingConventions.NamingConvention ScreamingSnakeCase { get; }
+    public static Mapsicle.NamingConventions.NamingConvention SnakeCase { get; }
+    public static System.Boolean NamesMatch(System.String sourceName, Mapsicle.NamingConventions.NamingConvention sourceConvention, System.String destName, Mapsicle.NamingConventions.NamingConvention destConvention)
+    public static System.String Convert(System.String name, Mapsicle.NamingConventions.NamingConvention from, Mapsicle.NamingConventions.NamingConvention to)
+    static System.Text.RegularExpressions.Regex WordBoundaryRegex
+class Mapsicle.NamingConventions.NamingConventionExtensions
+    public static System.Collections.Generic.Dictionary<System.String,System.String> GetPropertyMappings<TSource,TDest>(Mapsicle.NamingConventions.NamingConvention sourceConvention, Mapsicle.NamingConventions.NamingConvention destConvention)
+    public static System.String ConvertName(System.String name, Mapsicle.NamingConventions.NamingConvention from, Mapsicle.NamingConventions.NamingConvention to)
+    public static System.Void ClearMappingCache()
+    public static TDest MapWithConvention<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source, Mapsicle.NamingConventions.NamingConvention sourceConvention, Mapsicle.NamingConventions.NamingConvention destConvention) where TDest : class, new()
+    public static TDest MapWithConvention<TSource,TDest>(TSource source, Mapsicle.NamingConventions.NamingConvention sourceConvention, Mapsicle.NamingConventions.NamingConvention destConvention) where TDest : new()

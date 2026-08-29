@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <PackageId>Mapsicle.EntityFramework</PackageId>
     <Title>Mapsicle.EntityFramework</Title>
     <Description>Entity Framework Core integration for Mapsicle. Adds ProjectTo&lt;T&gt;() for IQueryable projections that translate to SQL.</Description>

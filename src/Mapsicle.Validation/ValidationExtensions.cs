@@ -393,6 +393,10 @@ namespace Mapsicle.Validation
         /// </summary>
         public int InvalidCount => Results.Count - ValidItems.Count;
 
+        /// <summary>Validation outcome for a mapped collection, kept per item.</summary>
+        /// <param name="validItems">The items that passed, in source order.</param>
+        /// <param name="results">One result per item, valid or not.</param>
+        /// <param name="isAllValid">Whether every item passed.</param>
         public CollectionValidationResult(
             List<T> validItems,
             List<MapperValidationResult<T>> results,

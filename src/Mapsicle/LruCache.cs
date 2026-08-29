@@ -11,10 +11,27 @@ namespace Mapsicle
     /// so frequently-read entries survive eviction instead of being removed in pure
     /// insertion (FIFO) order.
     /// </summary>
+    /// <remarks>
+    /// Values are held in a <see cref="Lazy{T}"/> for two reasons, both of which were defects.
+    ///
+    /// <see cref="ConcurrentDictionary{TKey, TValue}.GetOrAdd(TKey, Func{TKey, TValue})"/> may run
+    /// the factory on several threads at once and keep only one result. The count was incremented by
+    /// every thread whose factory ran, not by the one whose value was kept, so a racing miss counted
+    /// an add two or three times. The count then drifted permanently above the real size and
+    /// eviction started trimming the cache below its capacity, which is the opposite of what a
+    /// bounded cache is for. Wrapping the value means the wrapper's reference identity says which
+    /// thread won, exactly once, with no dependence on whether two values compare equal. Comparing
+    /// the values themselves is not a fix: two threads whose factories both return 5 are
+    /// indistinguishable that way.
+    ///
+    /// It also stops the losing threads' factories running at all. Here the factory compiles an
+    /// expression tree, so a racing miss used to pay for the same compilation several times over and
+    /// throw all but one away.
+    /// </remarks>
     internal sealed class LruCache<TKey, TValue> where TKey : notnull
     {
         private readonly int _capacity;
-        private readonly ConcurrentDictionary<TKey, TValue> _cache;
+        private readonly ConcurrentDictionary<TKey, Lazy<TValue>> _cache;
         private readonly ConcurrentQueue<TKey> _accessOrder = new();
         // Presence of a key marks it as "recently used" for the second-chance eviction scan
         private readonly ConcurrentDictionary<TKey, byte> _recentlyUsed = new();
@@ -24,7 +41,7 @@ namespace Mapsicle
         public LruCache(int capacity = 1000)
         {
             _capacity = capacity > 0 ? capacity : 1000;
-            _cache = new ConcurrentDictionary<TKey, TValue>(Environment.ProcessorCount, _capacity);
+            _cache = new ConcurrentDictionary<TKey, Lazy<TValue>>(Environment.ProcessorCount, _capacity);
         }
 
         public int Count => _approximateCount;
@@ -38,20 +55,38 @@ namespace Mapsicle
             if (_cache.TryGetValue(key, out var existing))
             {
                 MarkRecentlyUsed(key);
-                return existing;
+                return existing.Value;
             }
 
-            // Cache miss - create value
-            bool added = false;
-            var value = _cache.GetOrAdd(key, k =>
-            {
-                added = true;
-                return factory(k);
-            });
+            var mine = new Lazy<TValue>(() => factory(key), LazyThreadSafetyMode.ExecutionAndPublication);
+            var stored = _cache.GetOrAdd(key, mine);
 
-            if (added)
+            if (ReferenceEquals(stored, mine))
             {
                 Interlocked.Increment(ref _approximateCount);
+            }
+
+            TValue value;
+            try
+            {
+                value = stored.Value;
+            }
+            catch
+            {
+                // A Lazy that faulted caches the exception for good, so leaving it in place would
+                // turn one transient failure into a permanently poisoned key.
+                //
+                // Removed by key AND value together. Removing by key alone would delete whatever
+                // holder is current, which after a Clear and a racing re-add is a healthy holder
+                // belonging to someone else, and would leave the count describing a cache that no
+                // longer matches it. ICollection's Remove is the pair-conditional form and is
+                // available on every target framework, unlike the TryRemove(KeyValuePair) overload.
+                if (((ICollection<KeyValuePair<TKey, Lazy<TValue>>>)_cache)
+                        .Remove(new KeyValuePair<TKey, Lazy<TValue>>(key, stored)))
+                {
+                    Interlocked.Decrement(ref _approximateCount);
+                }
+                throw;
             }
 
             // Track access for eviction ordering (non-blocking)
@@ -68,11 +103,13 @@ namespace Mapsicle
         /// </summary>
         public bool TryGetValue(TKey key, out TValue value)
         {
-            if (_cache.TryGetValue(key, out value!))
+            if (_cache.TryGetValue(key, out var holder))
             {
                 MarkRecentlyUsed(key);
+                value = holder.Value;
                 return true;
             }
+            value = default!;
             return false;
         }
 

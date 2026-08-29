@@ -32,10 +32,27 @@ namespace Mapsicle
         /// </summary>
         public int MaxCacheSize { get; set; } = 1000;
 
+        private int _maxDepth = 32;
+
         /// <summary>
         /// Maximum mapping depth to prevent stack overflow on circular references. Default: 32.
+        /// A value below 1 is rejected and the default is kept.
         /// </summary>
-        public int MaxDepth { get; set; } = 32;
+        /// <remarks>
+        /// This used to accept 0, and 0 disables the mapper completely: the first depth check fails
+        /// before any property is read, so every call returns the destination default with nothing
+        /// logged and nothing thrown. A zeroed or defaulted configuration field silently turned the
+        /// whole mapper into a no-op that still looked like it ran.
+        ///
+        /// Guarding here matches <see cref="Mapper.MaxDepth"/>, whose setter has always refused a
+        /// non-positive value. The two were inconsistent, and the one people configure through an
+        /// options object was the unguarded one.
+        /// </remarks>
+        public int MaxDepth
+        {
+            get => _maxDepth;
+            set => _maxDepth = value > 0 ? value : 32;
+        }
 
         /// <summary>
         /// Logger for diagnostic output. Null disables logging.
@@ -268,12 +285,7 @@ namespace Mapsicle
                 foreach (var destProp in destProps)
                 {
                     if (!destProp.CanWrite) continue;
-                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                    var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                     if (sourceProp != null)
                     {
@@ -306,22 +318,9 @@ namespace Mapsicle
                     if (sourceProp != null)
                     {
                         var propExp = Expression.Property(typedSource, sourceProp);
-                        if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
-                        {
-                            args.Add(Expression.Convert(propExp, param.ParameterType));
-                        }
-                        else if (param.ParameterType == typeof(string))
-                        {
-                            args.Add(PropertyConversion.BuildToString(propExp, sourceProp.PropertyType));
-                        }
-                        else if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
-                        {
-                            args.Add(Expression.Convert(propExp, param.ParameterType));
-                        }
-                        else
-                        {
-                            args.Add(Expression.Default(param.ParameterType));
-                        }
+                        var value = PropertyConversion.TryBuild(
+                            propExp, sourceProp.PropertyType, param.ParameterType, BuildNestedMapCall);
+                        args.Add(value ?? Expression.Default(param.ParameterType));
                     }
                     else
                     {
@@ -375,6 +374,18 @@ namespace Mapsicle
                 return Expression.Lambda<Func<object, T>>(Expression.Convert(call, destType), sourceParam).Compile();
             }
 
+            // Same materialisation the static path uses: a collection that is not assignable from
+            // List<T> is built through its IEnumerable<T> constructor rather than being left at
+            // default, which is what silently emptied a HashSet destination.
+            var fromEnumerable = destType.GetConstructor(
+                new[] { typeof(IEnumerable<>).MakeGenericType(targetItemType) });
+
+            if (fromEnumerable != null)
+            {
+                var built = Expression.New(fromEnumerable, call);
+                return Expression.Lambda<Func<object, T>>(Expression.Convert(built, destType), sourceParam).Compile();
+            }
+
             return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();
         }
 
@@ -393,37 +404,19 @@ namespace Mapsicle
             foreach (var destProp in destProps)
             {
                 if (!destProp.CanWrite) continue;
-                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                 if (sourceProp != null)
                 {
                     var propExp = Expression.Property(typedSource, sourceProp);
-                    var targetType = destProp.PropertyType;
-                    var srcType = sourceProp.PropertyType;
                     var destPropExp = Expression.Property(typedDest, destProp);
 
-                    if (targetType.IsAssignableFrom(srcType))
+                    var value = PropertyConversion.TryBuild(
+                        propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
+
+                    if (value != null)
                     {
-                        assignments.Add(Expression.Assign(destPropExp, Expression.Convert(propExp, targetType)));
-                    }
-                    else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-                    {
-                        // Nested object - route through this instance's MapTo so it uses the
-                        // instance cache and depth tracking (mirrors static Mapper behavior)
-                        var mapMethod = typeof(MapperInstance).GetMethod(nameof(MapTo), new[] { typeof(object) })!
-                            .MakeGenericMethod(targetType);
-                        var recursiveCall = Expression.Call(Expression.Constant(this), mapMethod, Expression.Convert(propExp, typeof(object)));
-                        assignments.Add(Expression.Assign(destPropExp, recursiveCall));
-                    }
-                    else if (targetType == typeof(string))
-                    {
-                        var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
-                        assignments.Add(Expression.Assign(destPropExp, toStringCall));
+                        assignments.Add(Expression.Assign(destPropExp, value));
                     }
                 }
             }

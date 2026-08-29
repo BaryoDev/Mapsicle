@@ -1,0 +1,33 @@
+class Mapsicle.Validation.CollectionValidationResult<T>
+    .ctor(System.Collections.Generic.List<T> validItems, System.Collections.Generic.List<Mapsicle.Validation.MapperValidationResult<T>> results, System.Boolean isAllValid)
+    public System.Boolean IsAllValid { get; }
+    public System.Collections.Generic.IEnumerable<Mapsicle.Validation.MapperValidationResult<T>> GetFailedResults()
+    public System.Collections.Generic.IReadOnlyList<Mapsicle.Validation.MapperValidationResult<T>> Results { get; }
+    public System.Collections.Generic.IReadOnlyList<T> ValidItems { get; }
+    public System.Int32 InvalidCount { get; }
+    public System.Int32 ValidCount { get; }
+class Mapsicle.Validation.MapperValidationResult<T>
+    public FluentValidation.Results.ValidationResult ValidationResult { get; }
+    public System.Boolean IsValid { get; }
+    public System.Collections.Generic.IDictionary<System.String,System.String[]> ErrorsByProperty { get; }
+    public System.Collections.Generic.IList<FluentValidation.Results.ValidationFailure> Errors { get; }
+    public T GetValueOrThrow()
+    public T Value { get; }
+    public static Mapsicle.Validation.MapperValidationResult<T> Failure(T value, FluentValidation.Results.ValidationResult validationResult)
+    public static Mapsicle.Validation.MapperValidationResult<T> Success(T value)
+class Mapsicle.Validation.ValidationException
+    .ctor(System.String message, System.Collections.Generic.IList<FluentValidation.Results.ValidationFailure> errors)
+    public System.Collections.Generic.IList<FluentValidation.Results.ValidationFailure> Errors { get; }
+class Mapsicle.Validation.ValidationExtensions
+    public static Mapsicle.Validation.CollectionValidationResult<TDest> MapAndValidateAll<TSource,TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Collections.Generic.IEnumerable<TSource> source) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
+    public static Mapsicle.Validation.MapperValidationResult<T> Validate<T,TValidator>(T value) where T : class where TValidator : FluentValidation.IValidator<T>, new()
+    public static Mapsicle.Validation.MapperValidationResult<TDest> MapAndValidate<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
+    public static Mapsicle.Validation.MapperValidationResult<TDest> MapAndValidate<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, FluentValidation.IValidator<TDest> validator) where TDest : class
+    public static Mapsicle.Validation.MapperValidationResult<TDest> MapAndValidate<TSource,TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, TSource source) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
+    public static Mapsicle.Validation.MapperValidationResult<TDest> MapAndValidate<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source, FluentValidation.IValidator<TDest> validator) where TDest : class
+    public static System.Threading.Tasks.Task<Mapsicle.Validation.CollectionValidationResult<TDest>> MapAndValidateAllAsync<TSource,TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Collections.Generic.IEnumerable<TSource> source, System.Threading.CancellationToken cancellationToken = null) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
+    public static System.Threading.Tasks.Task<Mapsicle.Validation.MapperValidationResult<T>> ValidateAsync<T,TValidator>(T value, System.Threading.CancellationToken cancellationToken = null) where T : class where TValidator : FluentValidation.IValidator<T>, new()
+    public static System.Threading.Tasks.Task<Mapsicle.Validation.MapperValidationResult<TDest>> MapAndValidateAsync<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.Threading.CancellationToken cancellationToken = null) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
+    public static System.Threading.Tasks.Task<Mapsicle.Validation.MapperValidationResult<TDest>> MapAndValidateAsync<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, FluentValidation.IValidator<TDest> validator, System.Threading.CancellationToken cancellationToken = null) where TDest : class
+    public static System.Threading.Tasks.Task<Mapsicle.Validation.MapperValidationResult<TDest>> MapAndValidateAsync<TSource,TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, TSource source, System.Threading.CancellationToken cancellationToken = null) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
+    public static System.Void ClearValidatorCache()

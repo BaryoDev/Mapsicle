@@ -1,0 +1,45 @@
+class Mapsicle.IgnoreMapAttribute
+    .ctor()
+class Mapsicle.MapFromAttribute
+    .ctor(System.String sourcePropertyName)
+    public System.String SourcePropertyName { get; }
+class Mapsicle.Mapper
+    public static Mapsicle.MapperCacheInfo CacheInfo()
+    public static System.Action<System.String> Logger { get;set; }
+    public static System.Boolean CoerceDictionaryValues { get;set; }
+    public static System.Boolean UseLruCache { get;set; }
+    public static System.Collections.Generic.Dictionary<System.String,System.Object> ToDictionary(System.Object source)
+    public static System.Collections.Generic.List<System.String> GetUnmappedProperties<TSource,TDest>()
+    public static System.Collections.Generic.List<T> MapTo<T>(System.Collections.IEnumerable source)
+    public static System.Collections.Generic.List<TDest> MapTo<TSource,TDest>(System.Collections.Generic.IEnumerable<TSource> source)
+    public static System.Int32 MaxCacheSize { get;set; }
+    public static System.Int32 MaxDepth { get;set; }
+    public static System.Void AssertMappingValid<TSource,TDest>()
+    public static System.Void ClearCache()
+    public static T MapTo<T>(System.Collections.Generic.IDictionary<System.String,System.Object> source) where T : new()
+    public static T MapTo<T>(System.Object source)
+    public static TDest MapTo<TSource,TDest>(TSource source)
+    public static TDestination Map<TDestination>(System.Object source, TDestination destination)
+    public static T[] MapToArray<T>(System.Collections.IEnumerable source)
+class Mapsicle.MapperFactory
+    public static Mapsicle.IMapperInstance Create(Mapsicle.MapperOptions options = null)
+class Mapsicle.MapperOptions
+    .ctor()
+    public System.Action<System.String> Logger { get;set; }
+    public System.Int32 MaxCacheSize { get;set; }
+    public System.Int32 MaxDepth { get;set; }
+interface Mapsicle.IMapperInstance
+    public abstract Mapsicle.MapperCacheInfo CacheInfo()
+    public abstract System.Collections.Generic.List<T> MapTo<T>(System.Collections.IEnumerable source)
+    public abstract System.Void ClearCache()
+    public abstract T MapTo<T>(System.Object source)
+    public abstract TDest Map<TDest>(System.Object source, TDest destination)
+struct Mapsicle.MapperCacheInfo
+    .ctor(System.Int32 mapToEntries, System.Int32 mapEntries)
+    .ctor(System.Int32 mapToEntries, System.Int32 mapEntries, System.Int64 hits, System.Int64 misses)
+    public System.Double HitRatio { get; }
+    public System.Int32 MapEntries { get; }
+    public System.Int32 MapToEntries { get; }
+    public System.Int32 Total { get; }
+    public System.Int64 Hits { get; }
+    public System.Int64 Misses { get; }

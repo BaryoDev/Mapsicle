@@ -1,0 +1,20 @@
+class Mapsicle.DataAnnotations.DataAnnotationsExtensions
+    public static Mapsicle.DataAnnotations.DataAnnotationsValidationResult<T> ValidateAnnotations<T>(T value) where T : class
+    public static Mapsicle.DataAnnotations.DataAnnotationsValidationResult<TDest> MapAndValidateAnnotations<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source) where TDest : class
+    public static Mapsicle.DataAnnotations.DataAnnotationsValidationResult<TDest> MapAndValidateAnnotations<TDest>(System.Object source) where TDest : class
+    public static Mapsicle.DataAnnotations.DataAnnotationsValidationResult<TDest> MapAndValidateAnnotations<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source) where TDest : class
+    public static System.Boolean IsValidAnnotations<T>(T value) where T : class
+    public static System.Collections.Generic.List<System.ComponentModel.DataAnnotations.ValidationResult> GetValidationErrors<T>(T value) where T : class
+class Mapsicle.DataAnnotations.DataAnnotationsValidationResult<T>
+    .ctor(T value, System.Boolean isValid, System.Collections.Generic.List<System.ComponentModel.DataAnnotations.ValidationResult> errors)
+    public Mapsicle.DataAnnotations.DataAnnotationsValidationResult<T> OnFailure(System.Action<System.Collections.Generic.IReadOnlyList<System.ComponentModel.DataAnnotations.ValidationResult>> action)
+    public Mapsicle.DataAnnotations.DataAnnotationsValidationResult<T> OnSuccess(System.Action<T> action)
+    public System.Boolean IsValid { get; }
+    public System.Collections.Generic.IDictionary<System.String,System.String[]> ErrorsByProperty { get; }
+    public System.Collections.Generic.IEnumerable<System.String> ErrorMessages { get; }
+    public System.Collections.Generic.IReadOnlyList<System.ComponentModel.DataAnnotations.ValidationResult> Errors { get; }
+    public T GetValueOrThrow()
+    public T Value { get; }
+    public TResult Match<TResult>(System.Func<T,TResult> onSuccess, System.Func<System.Collections.Generic.IReadOnlyList<System.ComponentModel.DataAnnotations.ValidationResult>,TResult> onFailure)
+    public static Mapsicle.DataAnnotations.DataAnnotationsValidationResult<T> Failure(T value, System.ComponentModel.DataAnnotations.ValidationResult[] errors)
+    public static Mapsicle.DataAnnotations.DataAnnotationsValidationResult<T> Success(T value)

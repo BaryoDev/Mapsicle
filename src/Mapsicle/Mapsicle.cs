@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -21,7 +22,11 @@ namespace Mapsicle
     [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
     public sealed class MapFromAttribute : Attribute
     {
+        /// <summary>The name of the source property to read this member from.</summary>
         public string SourcePropertyName { get; }
+
+        /// <summary>Maps this member from a source property with a different name.</summary>
+        /// <param name="sourcePropertyName">The source property name.</param>
         public MapFromAttribute(string sourcePropertyName) => SourcePropertyName = sourcePropertyName;
     }
 
@@ -34,6 +39,9 @@ namespace Mapsicle
     /// </summary>
     public readonly struct MapperCacheInfo
     {
+        /// <summary>Cache sizes with no statistics, used when counting is not active.</summary>
+        /// <param name="mapToEntries">Number of cached MapTo delegates.</param>
+        /// <param name="mapEntries">Number of cached in-place Map delegates.</param>
         public MapperCacheInfo(int mapToEntries, int mapEntries)
         {
             MapToEntries = mapToEntries;
@@ -42,6 +50,11 @@ namespace Mapsicle
             Misses = 0;
         }
 
+        /// <summary>Cache sizes together with the hit and miss counts.</summary>
+        /// <param name="mapToEntries">Number of cached MapTo delegates.</param>
+        /// <param name="mapEntries">Number of cached in-place Map delegates.</param>
+        /// <param name="hits">Reads served from the cache.</param>
+        /// <param name="misses">Reads that had to build a delegate.</param>
         public MapperCacheInfo(int mapToEntries, int mapEntries, long hits, long misses)
         {
             MapToEntries = mapToEntries;
@@ -50,28 +63,47 @@ namespace Mapsicle
             Misses = misses;
         }
 
+        /// <summary>Number of cached MapTo delegates.</summary>
         public int MapToEntries { get; }
+
+        /// <summary>Number of cached in-place Map delegates.</summary>
         public int MapEntries { get; }
+
+        /// <summary>Total cached delegates across both caches.</summary>
         public int Total => MapToEntries + MapEntries;
 
         /// <summary>
-        /// Number of cache hits (only tracked when UseLruCache is enabled).
+        /// Number of cache hits. Zero unless <see cref="Mapper.UseLruCache"/> is enabled.
         /// </summary>
+        /// <remarks>
+        /// Only the bounded cache counts, because it is the only one with a capacity worth tuning
+        /// against a hit ratio, and because an atomic increment on every call of the default warm
+        /// path would cost more than the number is worth.
+        /// </remarks>
         public long Hits { get; }
 
         /// <summary>
-        /// Number of cache misses (only tracked when UseLruCache is enabled).
+        /// Number of cache misses. Zero unless <see cref="Mapper.UseLruCache"/> is enabled.
         /// </summary>
         public long Misses { get; }
 
         /// <summary>
-        /// Cache hit ratio (0.0 to 1.0). Returns 0 if no cache accesses.
+        /// Cache hit ratio, from 0.0 to 1.0. Zero when nothing has been counted, which includes
+        /// every case where <see cref="Mapper.UseLruCache"/> is off.
         /// </summary>
         public double HitRatio => Hits + Misses > 0 ? (double)Hits / (Hits + Misses) : 0.0;
     }
 
     #endregion
 
+    /// <summary>
+    /// Maps objects by convention, with no configuration and no registration.
+    /// </summary>
+    /// <remarks>
+    /// Every entry point compiles a delegate on the first map of a given type pair and caches it, so
+    /// the cost of the conversion rules is paid once rather than per call. The rules themselves are
+    /// stated in one place, so the answer does not depend on which entry point was used.
+    /// </remarks>
     public static class Mapper
     {
         // Unbounded caches (default for backward compatibility)
@@ -151,6 +183,11 @@ namespace Mapsicle
         /// Maximum mapping depth for cycle detection. Default: 32.
         /// </summary>
         private static volatile int _maxDepth = 32;
+
+        /// <summary>
+        /// Maximum mapping depth for cycle detection. Default: 32. A value below 1 is refused and
+        /// the default is kept.
+        /// </summary>
         public static int MaxDepth
         {
             get => _maxDepth;
@@ -161,6 +198,28 @@ namespace Mapsicle
         /// Logger for diagnostic output. Null disables logging.
         /// </summary>
         public static Action<string>? Logger { get; set; }
+
+        /// <summary>
+        /// Whether the dictionary entry point parses values whose runtime type does not match the
+        /// destination property, for example the string "123" into an <c>int</c>. Default: false.
+        /// </summary>
+        /// <remarks>
+        /// The documented rule is that a value of the wrong type is dropped rather than coerced. The
+        /// object and property entry points always honoured it; the dictionary one did not, and ran
+        /// <c>Convert.ChangeType</c> on anything <c>IConvertible</c>. The two doors therefore
+        /// disagreed about what "wrong type" meant, and an attacker controlling a dictionary (a
+        /// parsed form post, a document, a header bag) could push string payloads through
+        /// conversions the object path rejects.
+        ///
+        /// Parsing is still available for callers who genuinely want it, because a dictionary of
+        /// strings is the normal shape of a form post, but it is now a decision rather than a
+        /// default. When enabled, parsing uses <see cref="CultureInfo.InvariantCulture"/>, so the
+        /// same input maps to the same value in every region.
+        ///
+        /// Widening, enum and nullable conversions are not affected: those are lossless and apply on
+        /// every entry point regardless of this setting.
+        /// </remarks>
+        public static bool CoerceDictionaryValues { get; set; }
 
         private static void ReinitializeCaches()
         {
@@ -318,22 +377,22 @@ namespace Mapsicle
         public static List<string> GetUnmappedProperties<TSource, TDest>()
         {
             var unmapped = new List<string>();
-            var sourceProps = new HashSet<string>(
-                typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                    .Select(p => p.Name),
-                StringComparer.OrdinalIgnoreCase);
             var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanWrite);
 
+            var readableSourceProps = GetCachedReadableProperties(typeof(TSource));
+
             foreach (var destProp in destProps)
             {
-                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+                // Resolved by exactly the helper the mapper uses, rather than by re-deciding here.
+                // The two used to differ over [MapFrom] naming a property that does not exist: the
+                // mapper falls back to the destination member's own name and fills it, while this
+                // checked only the named property and reported the member unmapped. So
+                // AssertMappingValid threw for a mapping that demonstrably works, which is the same
+                // class of defect as certifying one that does not.
+                if (!MemberResolution.TryResolveSource(destProp, readableSourceProps, out var resolved)) continue;
 
-                var mapFrom = destProp.GetCustomAttribute<MapFromAttribute>();
-                var sourceName = mapFrom?.SourcePropertyName ?? destProp.Name;
-
-                if (sourceProps.Contains(sourceName)) continue;
+                if (resolved != null) continue;
 
                 // Flattening, decided by exactly the rule the mapper uses. Asking the same helper
                 // is the point: this check answering "mapped" where TryCreateFlattenedBinding
@@ -378,7 +437,23 @@ namespace Mapsicle
 
         #region Cache Helpers
 
-        private static Func<object, T>? GetCachedMapToDelegate<T>((Type, Type) key)
+        /// <summary>
+        /// Reads the MapTo delegate cache, counting the hit or the miss when statistics are live.
+        /// </summary>
+        /// <remarks>
+        /// The counters used to be written by a method nothing called. Both real read paths reached
+        /// the caches inline, so <c>CacheInfo().Hits</c> and <c>Misses</c> reported zero under any
+        /// load, and <c>HitRatio</c> divided zero by zero into a constant zero. A metric that always
+        /// reads zero while looking live is worse than an absent one, because it invites someone to
+        /// tune <c>MaxCacheSize</c> against it.
+        ///
+        /// Counting happens on the LRU path only, which is what the properties have always
+        /// documented and is also the only path where the number means anything: the unbounded cache
+        /// has no capacity to tune. Keeping the atomic off the default warm path matters, because an
+        /// interlocked increment on one shared cache line, taken on every single map call, is a
+        /// throughput regression on a path measured in tens of nanoseconds.
+        /// </remarks>
+        private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
         {
             if (_useLruCache && _lruMapToCache != null)
             {
@@ -387,41 +462,29 @@ namespace Mapsicle
                     System.Threading.Interlocked.Increment(ref _cacheHits);
                     return (Func<object, T>)cached;
                 }
-                System.Threading.Interlocked.Increment(ref _cacheMisses);
-                return null;
-            }
-            else
-            {
-                if (_mapToCache.TryGetValue(key, out var cached))
-                {
-                    return (Func<object, T>)cached;
-                }
-                return null;
-            }
-        }
 
-        private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
-        {
-            if (_useLruCache && _lruMapToCache != null)
-            {
+                System.Threading.Interlocked.Increment(ref _cacheMisses);
                 return (Func<object, T>)_lruMapToCache.GetOrAdd(key, factory);
             }
-            else
-            {
-                return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
-            }
+
+            return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
         }
 
         private static Action<object, object> GetOrAddMapDelegate((Type, Type) key, Func<(Type, Type), Action<object, object>> factory)
         {
             if (_useLruCache && _lruMapCache != null)
             {
+                if (_lruMapCache.TryGetValue(key, out var cached))
+                {
+                    System.Threading.Interlocked.Increment(ref _cacheHits);
+                    return cached;
+                }
+
+                System.Threading.Interlocked.Increment(ref _cacheMisses);
                 return _lruMapCache.GetOrAdd(key, factory);
             }
-            else
-            {
-                return _mapCache.GetOrAdd(key, factory);
-            }
+
+            return _mapCache.GetOrAdd(key, factory);
         }
 
         #endregion
@@ -572,18 +635,134 @@ namespace Mapsicle
             return _needsDepthTrackingCache.GetOrAdd(type, HasNestedComplexTypes);
         }
 
+        /// <summary>
+        /// Whether a type can take part in a reference cycle, and so needs depth tracking.
+        /// </summary>
+        /// <remarks>
+        /// This used to treat any <c>IEnumerable</c> property as harmless, so a type whose only
+        /// recursion ran through a collection of itself was judged acyclic. Depth tracking was then
+        /// skipped and the collection path recursed with no ceiling: a tree node holding a
+        /// <c>List</c> of its own type with a back edge overflowed the stack and took the process
+        /// down with an uncatchable <c>StackOverflowException</c>. The ASP.NET Core helpers map on
+        /// this path, so a self-referential request body was a remote crash.
+        ///
+        /// A collection is now judged by what it holds, not by being a collection.
+        /// </remarks>
         private static bool HasNestedComplexTypes(Type type)
         {
             var props = GetCachedReadableProperties(type);
             for (int i = 0; i < props.Length; i++)
             {
-                var propType = props[i].PropertyType;
-                if (propType.IsClass && propType != typeof(string) && !typeof(System.Collections.IEnumerable).IsAssignableFrom(propType))
+                if (CanHoldMappableReference(props[i].PropertyType))
                 {
-                    return true; // Has nested complex object - needs depth tracking
+                    return true;
                 }
             }
             return false;
+        }
+
+        private static bool CanHoldMappableReference(Type propType) =>
+            CanHoldMappableReference(propType, null);
+
+        /// <summary>
+        /// Whether a member of this type could hold a reference worth following, and therefore
+        /// could take part in a cycle.
+        /// </summary>
+        /// <param name="propType">The declared member type.</param>
+        /// <param name="seen">
+        /// Element types already being examined on this walk. Null until the walk descends, so the
+        /// common case of a member that is not a collection allocates nothing.
+        /// </param>
+        /// <remarks>
+        /// The walk has to be cycle-aware itself. A type declared as <c>IEnumerable&lt;Self&gt;</c>
+        /// has itself as its own element type, so asking the element the same question recurses
+        /// forever and overflows the stack, which is the exact failure this predicate exists to
+        /// prevent. Revisiting a type means it can reach itself, so the answer is yes and the walk
+        /// stops there.
+        ///
+        /// Value types are examined rather than dismissed. A struct is not a reference, but a
+        /// generic one can hold references in its arguments, and a
+        /// <c>Dictionary&lt;string, Node&gt;</c> enumerates as
+        /// <c>KeyValuePair&lt;string, Node&gt;</c>. Treating that struct as inert would judge a
+        /// dictionary of nodes acyclic and put the crash back.
+        /// </remarks>
+        private static bool CanHoldMappableReference(Type propType, HashSet<Type>? seen)
+        {
+            if (propType == typeof(string) || propType.IsPrimitive || propType.IsEnum)
+            {
+                return false;
+            }
+
+            if (typeof(System.Collections.IEnumerable).IsAssignableFrom(propType))
+            {
+                var element = GetEnumerableElementType(propType);
+
+                // A non-generic IEnumerable advertises nothing about what it holds, so it has to be
+                // assumed capable of holding a cycle. Guessing the other way is how this crashed.
+                if (element is null)
+                {
+                    return true;
+                }
+
+                seen ??= new HashSet<Type>();
+                if (!seen.Add(propType))
+                {
+                    return true;
+                }
+
+                return CanHoldMappableReference(element, seen);
+            }
+
+            if (propType.IsValueType)
+            {
+                if (!propType.IsGenericType)
+                {
+                    return false;
+                }
+
+                var arguments = propType.GetGenericArguments();
+                for (int i = 0; i < arguments.Length; i++)
+                {
+                    seen ??= new HashSet<Type>();
+                    if (!seen.Add(propType))
+                    {
+                        return true;
+                    }
+
+                    if (CanHoldMappableReference(arguments[i], seen))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            return propType.IsClass || propType.IsInterface;
+        }
+
+        private static Type? GetEnumerableElementType(Type type)
+        {
+            if (type.IsArray)
+            {
+                return type.GetElementType();
+            }
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return type.GetGenericArguments()[0];
+            }
+
+            var interfaces = type.GetInterfaces();
+            for (int i = 0; i < interfaces.Length; i++)
+            {
+                if (interfaces[i].IsGenericType && interfaces[i].GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return interfaces[i].GetGenericArguments()[0];
+                }
+            }
+
+            return null;
         }
 
         private static Func<TSource, TDest> BuildTypedMapper<TSource, TDest>()
@@ -603,20 +782,7 @@ namespace Mapsicle
                 for (int i = 0; i < destProps.Length; i++)
                 {
                     var destProp = destProps[i];
-                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                    PropertyInfo? sourceProp = null;
-                    for (int j = 0; j < sourceProps.Length; j++)
-                    {
-                        if (sourceProps[j].Name.Equals(sourcePropertyName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            sourceProp = sourceProps[j];
-                            break;
-                        }
-                    }
+                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                     if (sourceProp != null)
                     {
@@ -709,18 +875,9 @@ namespace Mapsicle
                     if (sourceProp != null)
                     {
                         var propExp = Expression.Property(sourceParam, sourceProp);
-                        if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
-                        {
-                            args.Add(Expression.Convert(propExp, param.ParameterType));
-                        }
-                        else if (param.ParameterType == typeof(string))
-                        {
-                            args.Add(PropertyConversion.BuildToString(propExp, sourceProp.PropertyType));
-                        }
-                        else
-                        {
-                            args.Add(Expression.Default(param.ParameterType));
-                        }
+                        var value = PropertyConversion.TryBuild(
+                            propExp, sourceProp.PropertyType, param.ParameterType, BuildNestedMapCall);
+                        args.Add(value ?? Expression.Default(param.ParameterType));
                     }
                     else
                     {
@@ -791,23 +948,18 @@ namespace Mapsicle
                 var typedSource = Expression.Convert(sourceParam, sourceType);
 
                 // --- 0. Direct Primitive/Value Mapping ---
+                // Asks the shared cascade rather than deciding here. This block used to carry its
+                // own reduced copy covering assignable types, ToString and the nullable underlying
+                // type, and nothing else, so a value mapped on its own rather than as a property
+                // silently lost every conversion the cascade performs: (object)42 into a long came
+                // back as 0, and so did an enum into an int. It is the same defect as in-place Map,
+                // one level up, and it also reached anything mapping dictionary values.
                 if (sourceType.IsValueType || sourceType == typeof(string))
                 {
-                    if (destType.IsAssignableFrom(sourceType))
+                    var direct = PropertyConversion.TryBuild(typedSource, sourceType, destType, BuildNestedMapCall);
+                    if (direct is not null)
                     {
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
-                    }
-                    if (destType == typeof(string))
-                    {
-                        var toStringCall = PropertyConversion.BuildToString(typedSource, sourceType);
-                        return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
-                    }
-                    var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
-                    var underlyingSource = Nullable.GetUnderlyingType(sourceType) ?? sourceType;
-
-                    if (underlyingDest.IsAssignableFrom(underlyingSource))
-                    {
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
+                        return Expression.Lambda<Func<object, T>>(direct, sourceParam).Compile();
                     }
                 }
 
@@ -851,6 +1003,64 @@ namespace Mapsicle
                     {
                         return Expression.Lambda<Func<object, T>>(Expression.Convert(call, destType), sourceParam).Compile();
                     }
+
+                    // A dictionary destination is built by mapping keys and values separately. It
+                    // enumerates as KeyValuePair<K, V>, a struct with read-only properties, so
+                    // mapping the pair as an object yields a default pair with a null key and the
+                    // IEnumerable constructor below then throws on the first one.
+                    if (targetItemType.IsGenericType
+                        && targetItemType.GetGenericTypeDefinition() == typeof(KeyValuePair<,>)
+                        && typeof(System.Collections.IDictionary).IsAssignableFrom(sourceType))
+                    {
+                        var pairArgs = targetItemType.GetGenericArguments();
+                        var dictionaryType = typeof(Dictionary<,>).MakeGenericType(pairArgs);
+
+                        if (destType.IsAssignableFrom(dictionaryType))
+                        {
+                            var buildDictionary = typeof(Mapper)
+                                .GetMethod(nameof(BuildMappedDictionary), BindingFlags.NonPublic | BindingFlags.Static)!
+                                .MakeGenericMethod(pairArgs);
+
+                            var built = Expression.Call(buildDictionary, Expression.Convert(sourceParam, typeof(object)));
+                            return Expression.Lambda<Func<object, T>>(Expression.Convert(built, destType), sourceParam).Compile();
+                        }
+                    }
+
+                    // A destination that is neither an array nor assignable from List<T> used to
+                    // fall through to the member-init path below, which constructed the collection
+                    // and populated nothing. A HashSet<string> came back non-null and empty, so the
+                    // destination looked mapped while every item had been dropped.
+                    //
+                    // Most collections take IEnumerable<T>: HashSet, SortedSet, Queue, Stack,
+                    // Collection and ObservableCollection.
+                    var fromEnumerable = destType.GetConstructor(
+                        new[] { typeof(IEnumerable<>).MakeGenericType(targetItemType) });
+
+                    if (fromEnumerable != null)
+                    {
+                        // Guarded, because a collection constructor can reject the items it is
+                        // handed: SortedSet<T> throws when T has no ordering, and this branch is
+                        // reached for any destination that is not assignable from List<T>. Before
+                        // this branch existed that case produced an empty collection, so letting it
+                        // throw would turn silent data loss into a map-time exception, which
+                        // PropertyConversion's own rule says is the worse of the two. It degrades
+                        // to the destination default and says so through the logger.
+                        var exception = Expression.Parameter(typeof(Exception), "ex");
+                        var built = Expression.Convert(Expression.New(fromEnumerable, call), destType);
+
+                        var guarded = Expression.TryCatch(
+                            built,
+                            Expression.Catch(
+                                exception,
+                                Expression.Call(
+                                    typeof(Mapper)
+                                        .GetMethod(nameof(LogCollectionFallback), BindingFlags.NonPublic | BindingFlags.Static)!
+                                        .MakeGenericMethod(destType),
+                                    exception,
+                                    Expression.Constant(destType, typeof(Type)))));
+
+                        return Expression.Lambda<Func<object, T>>(guarded, sourceParam).Compile();
+                    }
                 }
 
                 // OPTIMIZATION: Use cached property arrays instead of reflection + LINQ
@@ -865,12 +1075,7 @@ namespace Mapsicle
                     for (int i = 0; i < destProps.Length; i++)
                     {
                         var destProp = destProps[i];
-                        if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                        var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                        string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                        var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                        if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                         if (sourceProp != null)
                         {
@@ -925,23 +1130,9 @@ namespace Mapsicle
                         if (sourceProp != null)
                         {
                             var propExp = Expression.Property(typedSource, sourceProp);
-                            if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
-                            {
-                                args.Add(Expression.Convert(propExp, param.ParameterType));
-                            }
-                            else if (param.ParameterType == typeof(string))
-                            {
-                                var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
-                                args.Add(toStringCall);
-                            }
-                            else if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
-                            {
-                                args.Add(Expression.Convert(propExp, param.ParameterType));
-                            }
-                            else
-                            {
-                                args.Add(Expression.Default(param.ParameterType));
-                            }
+                            var value = PropertyConversion.TryBuild(
+                                propExp, sourceProp.PropertyType, param.ParameterType, BuildNestedMapCall);
+                            args.Add(value ?? Expression.Default(param.ParameterType));
                         }
                         else
                         {
@@ -994,37 +1185,19 @@ namespace Mapsicle
                 for (int i = 0; i < destProps.Length; i++)
                 {
                     var destProp = destProps[i];
-                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                    var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                     if (sourceProp != null)
                     {
                         var propExp = Expression.Property(typedSource, sourceProp);
-                        var targetType = destProp.PropertyType;
-                        var srcType = sourceProp.PropertyType;
                         var destPropExp = Expression.Property(typedDest, destProp);
 
-                        if (targetType.IsAssignableFrom(srcType))
-                        {
-                            assignments.Add(Expression.Assign(destPropExp, Expression.Convert(propExp, targetType)));
-                        }
-                        else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-                        {
-                            var mapMethod = typeof(Mapper).GetMethods()
-                                .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
-                                .MakeGenericMethod(targetType);
+                        var value = PropertyConversion.TryBuild(
+                            propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
 
-                            var recursiveCall = Expression.Call(null, mapMethod, propExp);
-                            assignments.Add(Expression.Assign(destPropExp, recursiveCall));
-                        }
-                        else if (targetType == typeof(string))
+                        if (value != null)
                         {
-                            var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
-                            assignments.Add(Expression.Assign(destPropExp, toStringCall));
+                            assignments.Add(Expression.Assign(destPropExp, value));
                         }
                     }
                 }
@@ -1275,18 +1448,15 @@ namespace Mapsicle
                 {
                     try
                     {
-                        if (prop.PropertyType.IsAssignableFrom(value.GetType()))
+                        if (TryConvertDictionaryValue(value, prop.PropertyType, out var converted))
                         {
-                            prop.SetValue(dest, value);
-                        }
-                        else if (prop.PropertyType == typeof(string))
-                        {
-                            prop.SetValue(dest, value.ToString());
-                        }
-                        else if (value is IConvertible && typeof(IConvertible).IsAssignableFrom(prop.PropertyType))
-                        {
-                            var converted = Convert.ChangeType(value, prop.PropertyType);
                             prop.SetValue(dest, converted);
+                        }
+                        else
+                        {
+                            Logger?.Invoke(
+                                $"[Mapsicle] Dropped '{prop.Name}': a {value.GetType().Name} is not a {prop.PropertyType.Name}. " +
+                                "Set Mapper.CoerceDictionaryValues to parse values of the wrong type.");
                         }
                     }
                     catch (Exception ex)
@@ -1302,6 +1472,111 @@ namespace Mapsicle
         #endregion
 
         #region Private Helpers
+
+        /// <summary>
+        /// The dictionary entry point's conversion decision, matching what the compiled paths allow.
+        /// </summary>
+        /// <remarks>
+        /// The compiled paths decide from declared types and emit an expression. Here the value is
+        /// already boxed and only its runtime type is known, so the mechanism has to differ. Which
+        /// pairs are permitted must not: the widening table is asked for rather than restated, since
+        /// a second copy of that table is exactly the drift PropertyConversion exists to prevent.
+        /// </remarks>
+        private static bool TryConvertDictionaryValue(object value, Type targetType, out object? converted)
+        {
+            converted = null;
+            var valueType = value.GetType();
+            var targetUnderlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (targetType.IsAssignableFrom(valueType) || targetUnderlying.IsAssignableFrom(valueType))
+            {
+                converted = value;
+                return true;
+            }
+
+            if (targetType == typeof(string))
+            {
+                converted = value is IFormattable formattable
+                    ? formattable.ToString(null, CultureInfo.InvariantCulture)
+                    : value.ToString();
+                return true;
+            }
+
+            if (valueType.IsEnum && (targetUnderlying == typeof(int) || targetUnderlying == typeof(long)))
+            {
+                converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (targetUnderlying.IsEnum && valueType == typeof(int))
+            {
+                converted = Enum.ToObject(targetUnderlying, value);
+                return true;
+            }
+
+            if (PropertyConversion.IsLosslessNumericWidening(valueType, targetUnderlying))
+            {
+                converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (CoerceDictionaryValues
+                && value is IConvertible
+                && typeof(IConvertible).IsAssignableFrom(targetUnderlying))
+            {
+                converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            return false;
+        }
+
+
+        /// <summary>
+        /// Builds a dictionary destination by mapping each key and value separately.
+        /// </summary>
+        /// <remarks>
+        /// A dictionary enumerates as <c>KeyValuePair&lt;TKey, TValue&gt;</c>, which is a struct
+        /// whose properties are read only, so mapping the pair as if it were an object produces a
+        /// default pair with a null key. Feeding those to <c>Dictionary(IEnumerable&lt;...&gt;)</c>
+        /// throws <c>ArgumentNullException</c> on the first one, which would turn a mapping the
+        /// caller got no result from into an exception at map time. Keys and values are mapped
+        /// individually instead.
+        ///
+        /// A key that maps to null is skipped rather than throwing, matching what the rest of the
+        /// mapper does with a value it cannot produce.
+        /// </remarks>
+        /// <summary>
+        /// Reports a collection destination that could not be constructed, and yields its default.
+        /// </summary>
+        private static TCollection LogCollectionFallback<TCollection>(Exception ex, Type destType)
+        {
+            Logger?.Invoke(
+                $"[Mapsicle] Could not build {destType.Name} from the mapped items: {ex.Message}. " +
+                "The destination was left at its default.");
+            return default!;
+        }
+
+        internal static Dictionary<TKey, TValue> BuildMappedDictionary<TKey, TValue>(object? source)
+            where TKey : notnull
+        {
+            var result = new Dictionary<TKey, TValue>();
+
+            if (source is not System.Collections.IDictionary dictionary)
+            {
+                return result;
+            }
+
+            foreach (System.Collections.DictionaryEntry entry in dictionary)
+            {
+                var key = entry.Key.MapTo<TKey>();
+                if (key is null) continue;
+
+                result[key] = entry.Value is null ? default! : entry.Value.MapTo<TValue>()!;
+            }
+
+            return result;
+        }
 
         private static PropertyInfo? FindSourceProperty(PropertyInfo[] sourceProps, string primaryName, string fallbackName)
         {

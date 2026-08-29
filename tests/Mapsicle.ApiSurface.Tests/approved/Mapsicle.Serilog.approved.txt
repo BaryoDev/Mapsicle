@@ -1,0 +1,16 @@
+class Mapsicle.Serilog.LoggingOptions
+    .ctor()
+    public Serilog.Events.LogEventLevel LogLevel { get;set; }
+    public System.Boolean IncludePropertyDetails { get;set; }
+    public System.Boolean LogCacheStatus { get;set; }
+    public System.Nullable<System.TimeSpan> SlowMappingThreshold { get;set; }
+class Mapsicle.Serilog.MappingLoggingScope
+    public System.Void Dispose()
+    public System.Void RecordError()
+    public System.Void RecordMapping()
+class Mapsicle.Serilog.SerilogExtensions
+    public static Mapsicle.Serilog.MappingLoggingScope BeginMappingScope(System.String operationName)
+    public static System.Collections.Generic.List<TDest> MapCollectionWithLogging<TDest>(System.Collections.IEnumerable source)
+    public static System.Void Reset()
+    public static System.Void UseSerilog(Serilog.ILogger logger, System.Action<Mapsicle.Serilog.LoggingOptions> configure = null)
+    public static TDest MapWithLogging<TDest>(System.Object source)

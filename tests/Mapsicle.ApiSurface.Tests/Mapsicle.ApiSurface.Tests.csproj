@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Mapsicle/Mapsicle.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.AspNetCore/Mapsicle.AspNetCore.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Audit/Mapsicle.Audit.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Caching/Mapsicle.Caching.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Dapper/Mapsicle.Dapper.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.DataAnnotations/Mapsicle.DataAnnotations.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.DependencyInjection/Mapsicle.DependencyInjection.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.EntityFramework/Mapsicle.EntityFramework.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Fluent/Mapsicle.Fluent.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Json/Mapsicle.Json.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.NamingConventions/Mapsicle.NamingConventions.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Serilog/Mapsicle.Serilog.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Validation/Mapsicle.Validation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="approved\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

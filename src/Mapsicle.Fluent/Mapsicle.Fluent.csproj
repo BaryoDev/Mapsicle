@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net8.0;net10.0</TargetFrameworks>
     <PackageId>Mapsicle.Fluent</PackageId>
     <Title>Mapsicle.Fluent</Title>
     <Description>Fluent configuration API for Mapsicle. Adds expression-based mapping, ForMember, Ignore, Condition, and configuration validation.</Description>

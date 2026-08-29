@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -50,7 +51,13 @@ namespace Mapsicle
 
             // Nested complex object. string is excluded on both sides: it is a class, but mapping into
             // or out of it means ToString or parsing, not member-by-member mapping.
-            if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+            //
+            // The source side accepts an interface as well as a class. It used to test IsClass alone,
+            // and an interface is not a class, so a source member typed as an abstraction was never
+            // treated as mappable: IThing into a concrete Thing was dropped and read downstream as a
+            // field the source did not have. The recursive map resolves the runtime type, so the
+            // declared type only has to be something that can hold a mappable instance.
+            if (IsMappableSource(srcType) && targetType.IsClass && targetType != typeof(string))
             {
                 return buildNestedMap(propExp, targetType);
             }
@@ -84,6 +91,13 @@ namespace Mapsicle
 
             return null;
         }
+
+        /// <summary>
+        /// Whether a source member of this declared type can hold something worth mapping member by
+        /// member: a class or an interface, and not a string.
+        /// </summary>
+        private static bool IsMappableSource(Type srcType) =>
+            (srcType.IsClass || srcType.IsInterface) && srcType != typeof(string);
 
         /// <summary>
         /// Whether <paramref name="destProp"/> can be filled by flattening <paramref name="sourceProp"/>,
@@ -160,21 +174,90 @@ namespace Mapsicle
         /// </remarks>
         internal static Expression BuildToString(Expression propExp, Type srcType)
         {
-            var toStringCall = Expression.Call(propExp, ObjectToString);
+            var underlying = Nullable.GetUnderlyingType(srcType);
+
+            // A value that knows how to format itself is formatted invariantly. A bare ToString()
+            // reads the ambient thread culture, so the same decimal produced "1234.5" on one machine
+            // and "1234,5" on another, and a mapper feeding a serialisation or persistence boundary
+            // wrote a number the other region read back as a different one.
+            if (underlying is not null && typeof(IFormattable).IsAssignableFrom(underlying))
+            {
+                // Nullable<T> does not itself implement IFormattable. Its own ToString() yields an
+                // empty string when it has no value, which is the behaviour kept here.
+                return Expression.Condition(
+                    Expression.Property(propExp, "HasValue"),
+                    FormatInvariant(Expression.Property(propExp, "Value")),
+                    Expression.Constant(string.Empty, typeof(string)));
+            }
+
+            if (typeof(IFormattable).IsAssignableFrom(srcType))
+            {
+                if (srcType.IsValueType)
+                {
+                    return FormatInvariant(propExp);
+                }
+
+                return Expression.Condition(
+                    Expression.Equal(propExp, Expression.Constant(null, srcType)),
+                    Expression.Constant(null, typeof(string)),
+                    FormatInvariant(propExp));
+            }
 
             if (srcType.IsValueType)
             {
-                return toStringCall;
+                return Expression.Call(propExp, ObjectToString);
             }
 
-            return Expression.Condition(
-                Expression.Equal(propExp, Expression.Constant(null, srcType)),
-                Expression.Constant(null, typeof(string)),
-                toStringCall);
+            // A member declared as object, or as a base type, can still hold something that formats
+            // itself. The declared type is all this method can see, so the runtime type is tested
+            // instead: a boxed decimal in an object property produced "1234,5" under de-DE while the
+            // same value in a decimal property produced "1234.5", which is the culture bug surviving
+            // in the one place the static check cannot reach. The conversion is a reference cast and
+            // allocates nothing.
+            return Expression.Call(ToInvariantString_, Expression.Convert(propExp, typeof(object)));
         }
+
+        /// <summary>
+        /// <c>ToString()</c> on a value whose type is only known at run time, invariant where it can be.
+        /// </summary>
+        internal static string? ToInvariantString(object? value) =>
+            value switch
+            {
+                null => null,
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                _ => value.ToString(),
+            };
+
+        private static readonly MethodInfo ToInvariantString_ =
+            typeof(PropertyConversion).GetMethod(nameof(ToInvariantString), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        private static Expression FormatInvariant(Expression value) =>
+            Expression.Call(
+                value,
+                FormattableToString,
+                Expression.Constant(null, typeof(string)),
+                InvariantCulture);
+
+        private static readonly Expression InvariantCulture =
+            Expression.Constant(CultureInfo.InvariantCulture, typeof(IFormatProvider));
+
+        private static readonly MethodInfo FormattableToString =
+            typeof(IFormattable).GetMethod(nameof(ToString), new[] { typeof(string), typeof(IFormatProvider) })!;
 
         private static readonly MethodInfo ObjectToString =
             typeof(object).GetMethod(nameof(ToString), Type.EmptyTypes)!;
+
+        /// <summary>
+        /// Whether every value of <paramref name="source"/> survives conversion to
+        /// <paramref name="target"/>, asked by call sites that convert a runtime value rather than
+        /// emitting an expression.
+        /// </summary>
+        /// <remarks>
+        /// The dictionary entry point converts boxed values with <c>Convert.ChangeType</c> and cannot
+        /// use the expression cascade, but it must not answer differently about which pairs are
+        /// allowed. It asks here so the table stays stated once.
+        /// </remarks>
+        internal static bool IsLosslessNumericWidening(Type source, Type target) => IsWidening(source, target);
 
         /// <summary>
         /// Emits a conversion for a widening numeric pair, including the nullable forms, or null.

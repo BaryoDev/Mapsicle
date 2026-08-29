@@ -407,6 +407,11 @@ namespace Mapsicle.Caching
         private readonly IMemoryCache _cache;
         private readonly CachedMappingOptions _options;
 
+        // The keys this mapper has put into the cache. IMemoryCache cannot enumerate its own
+        // contents, so invalidating what we added means remembering what we added.
+        private readonly ConcurrentDictionary<string, byte> _keys =
+            new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+
         /// <summary>
         /// Creates a new cached mapper.
         /// </summary>
@@ -426,7 +431,7 @@ namespace Mapsicle.Caching
             if (source is null) return default;
 
             var cacheKey = CachingExtensions.GenerateCacheKey(source, typeof(TDest));
-            return _innerMapper.MapToCached<TDest>(source, _cache, cacheKey, _options.ToMemoryCacheOptions());
+            return _innerMapper.MapToCached<TDest>(source, _cache, cacheKey, TrackedOptions(cacheKey));
         }
 
         /// <inheritdoc/>
@@ -438,7 +443,7 @@ namespace Mapsicle.Caching
 
             return _cache.GetOrCreate(cacheKey, entry =>
             {
-                entry.SetOptions(_options.ToMemoryCacheOptions());
+                entry.SetOptions(TrackedOptions(cacheKey));
                 return _innerMapper.Map<TSource, TDest>(source);
             });
         }
@@ -451,12 +456,55 @@ namespace Mapsicle.Caching
         }
 
         /// <summary>
-        /// Invalidates all cache entries.
+        /// Cache options that also record the key, so it can be invalidated later.
         /// </summary>
+        /// <remarks>
+        /// The eviction callback removes the key again when the entry leaves the cache, so the
+        /// tracking set stays roughly the size of the cache rather than growing for the life of the
+        /// process. Without it, a long-running app mapping many distinct values would accumulate
+        /// keys for entries that expired long ago.
+        /// </remarks>
+        private MemoryCacheEntryOptions TrackedOptions(string cacheKey)
+        {
+            var options = _options.ToMemoryCacheOptions();
+            _keys[cacheKey] = 0;
+
+            options.RegisterPostEvictionCallback(
+                (key, _, _, state) =>
+                {
+                    if (state is ConcurrentDictionary<string, byte> keys && key is string evicted)
+                    {
+                        keys.TryRemove(evicted, out _);
+                    }
+                },
+                _keys);
+
+            return options;
+        }
+
+        /// <summary>
+        /// Invalidates every entry this mapper has cached.
+        /// </summary>
+        /// <remarks>
+        /// This used to be an empty method with a comment saying memory caches cannot be cleared,
+        /// so a caller who invoked it kept receiving stale mappings until they expired, with
+        /// nothing to indicate the call had done nothing. A public method that documents a
+        /// behaviour it does not perform is worse than one that is absent, because the caller has
+        /// no reason to look further.
+        ///
+        /// It removes the keys this mapper created rather than calling <c>MemoryCache.Clear()</c>.
+        /// The cache is normally resolved from the container and shared across the application, so
+        /// clearing it wholesale would evict entries belonging to components that have nothing to
+        /// do with mapping.
+        /// </remarks>
         public void InvalidateAll()
         {
-            // Memory cache doesn't support clear, so this is a no-op
-            // Users should use specific key invalidation
+            foreach (var key in _keys.Keys)
+            {
+                _cache.Remove(key);
+            }
+
+            _keys.Clear();
         }
     }
 }

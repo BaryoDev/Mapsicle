@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="Mapsicle" width="120" align="right">
+
 # Mapsicle
 
 [![CI](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml/badge.svg)](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml)
@@ -5,7 +7,7 @@
 [![Downloads](https://img.shields.io/nuget/dt/Mapsicle.svg)](https://www.nuget.org/packages/Mapsicle)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/T6T01CQT4R)
+[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/arnelirobles)
 
 **Mapsicle** is a high-performance, modular object mapping ecosystem for .NET. Choose only what you need:
 
@@ -23,10 +25,13 @@
 | **Mapsicle.DataAnnotations** | DataAnnotations validation        | Mapsicle.Fluent   |
 | **Mapsicle.Dapper**          | Dapper query-and-map helpers      | Mapsicle.Fluent   |
 | **Mapsicle.Serilog**         | Mapping diagnostics via Serilog   | Mapsicle          |
+| **Mapsicle.DependencyInjection** | `AddMapsicle()`, no configuration | Mapsicle      |
 
 > The core `Mapsicle` package has zero dependencies. Extension packages introduce their respective third-party dependencies (listed in the table above).
 
 Zero configuration by default. Configure only where a mapping is genuinely not conventional.
+
+Coming from AutoMapper? [docs/migrating-from-automapper.md](docs/migrating-from-automapper.md) covers what changes, what you can delete, and where Mapsicle is the wrong answer.
 
 ---
 
@@ -239,7 +244,7 @@ List<User> users = GetUsers();
 List<UserDto> dtos = users.MapTo<UserDto>();  // Entire list mapped
 ```
 
-**Requirements:** .NET Standard 2.0+ or .NET 6.0+ (`Mapsicle.AspNetCore` and `Mapsicle.EntityFramework` require .NET 8.0+)
+**Requirements:** .NET Standard 2.0+, .NET 8.0 or .NET 10.0 (`Mapsicle.AspNetCore` and `Mapsicle.EntityFramework` require .NET 8.0+)
 **Installation:** `dotnet add package Mapsicle`
 
 ### Which Package Do I Need?
@@ -1254,10 +1259,23 @@ What Mapsicle does guarantee about untrusted values:
   A value containing SQL, script or format-string syntax arrives byte for byte.
 - **A value of the wrong type is dropped**, not coerced and not thrown. A caller cannot use a type
   mismatch to crash a request handler or to smuggle a value through a loose conversion.
+  Before 2.0.0 this was true of the object entry point and false of the dictionary one, which ran
+  `Convert.ChangeType` on anything `IConvertible`. Both now behave the same. If you need the old
+  parsing (a form post arrives as strings, and that is a legitimate reason to want it), set
+  `Mapper.CoerceDictionaryValues = true` and it parses with the invariant culture. Lossless widening,
+  enum and nullable conversions are unaffected and apply either way.
 - **Unknown keys are ignored** rather than throwing.
+- **Conversions do not depend on where the process runs.** Numbers and dates format with the
+  invariant culture, so the same input produces the same output in every region.
 
-All of this is covered by `UntrustedInputTests` in `tests/Mapsicle.Tests`. A failure there means
-one of these statements stopped being true.
+One thing this list deliberately does not claim is a deep copy. A destination member that can hold
+the source instance as it is receives that instance, on every entry point, so mutating the source
+afterwards reaches into the destination. That is the same choice AutoMapper makes and it is what
+keeps mapping allocation-free beyond the destination object, but if you map onto a long-lived
+domain entity it is worth knowing. `DataIntegrityTests` pins it.
+
+All of this is covered by `UntrustedInputTests` and `DataIntegrityTests` in `tests/Mapsicle.Tests`.
+A failure there means one of these statements stopped being true.
 
 ## Known Limitations
 
@@ -1296,11 +1314,16 @@ one of these statements stopped being true.
 
 | .NET Version | Mapsicle Support |
 |:-------------|:-----------------|
-| .NET 8.0 | ✅ Fully supported |
+| .NET 10.0 | ✅ Fully supported, tested on every build |
+| .NET 8.0 | ✅ Fully supported, tested on every build (end of life 10 Nov 2026) |
 | .NET 6.0-7.0 | ✅ Via .NET Standard 2.0 |
 | .NET 5.0 | ✅ Via .NET Standard 2.0 |
 | .NET Core 2.0+ | ✅ Via .NET Standard 2.0 |
 | .NET Framework 4.6.1+ | ✅ Via .NET Standard 2.0 |
+
+The netstandard2.0 assemblies are exercised by their own test project, which forces that
+asset rather than the net8.0 one and asserts it really loaded it. Before 2.0.0 they were
+built, packed and published without a test ever loading them.
 
 ---
 

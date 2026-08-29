@@ -1,0 +1,27 @@
+class Mapsicle.Caching.CachedMapper
+    .ctor(Mapsicle.Fluent.IMapper innerMapper, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, Mapsicle.Caching.CachedMappingOptions options = null)
+    public System.Void InvalidateAll()
+    public TDest Map<TDest>(System.Object source)
+    public TDest Map<TSource,TDest>(TSource source)
+    public TDest Map<TSource,TDest>(TSource source, TDest destination)
+class Mapsicle.Caching.CachedMappingOptions
+    .ctor()
+    public Microsoft.Extensions.Caching.Distributed.DistributedCacheEntryOptions ToDistributedCacheOptions()
+    public Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions ToMemoryCacheOptions()
+    public System.Nullable<System.TimeSpan> DefaultAbsoluteExpiration { get;set; }
+    public System.String KeyPrefix { get;set; }
+    public System.TimeSpan DefaultSlidingExpiration { get;set; }
+class Mapsicle.Caching.CachingExtensions
+    public static System.Collections.Generic.List<TDest> MapCollectionToCached<TDest>(System.Collections.Generic.IEnumerable<System.Object> source, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, System.Func<System.Object,System.String> keySelector, Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions options = null)
+    public static System.String CreateCacheKey(System.String prefix, System.String identifier)
+    public static System.String CreateEntityCacheKey<TEntity,TDto>(System.Object id)
+    public static System.String GenerateCacheKey(System.Object source, System.Type destType)
+    public static System.Threading.Tasks.Task InvalidateMappingCacheAsync(Microsoft.Extensions.Caching.Distributed.IDistributedCache cache, System.String cacheKey, System.Threading.CancellationToken cancellationToken = null)
+    public static System.Threading.Tasks.Task InvalidateMappingCachesAsync(Microsoft.Extensions.Caching.Distributed.IDistributedCache cache, System.Collections.Generic.IEnumerable<System.String> cacheKeys, System.Threading.CancellationToken cancellationToken = null)
+    public static System.Threading.Tasks.Task<System.Collections.Generic.List<TDest>> MapCollectionToCachedAsync<TDest>(System.Collections.Generic.IEnumerable<System.Object> source, Microsoft.Extensions.Caching.Distributed.IDistributedCache cache, System.Func<System.Object,System.String> keySelector, Microsoft.Extensions.Caching.Distributed.DistributedCacheEntryOptions options = null, System.Threading.CancellationToken cancellationToken = null)
+    public static System.Threading.Tasks.Task<TDest> MapToCachedAsync<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, Microsoft.Extensions.Caching.Distributed.IDistributedCache cache, System.String cacheKey, Microsoft.Extensions.Caching.Distributed.DistributedCacheEntryOptions options = null, System.Threading.CancellationToken cancellationToken = null)
+    public static System.Threading.Tasks.Task<TDest> MapToCachedAsync<TDest>(System.Object source, Microsoft.Extensions.Caching.Distributed.IDistributedCache cache, System.String cacheKey, Microsoft.Extensions.Caching.Distributed.DistributedCacheEntryOptions options = null, System.Threading.CancellationToken cancellationToken = null)
+    public static System.Void InvalidateMappingCache(Microsoft.Extensions.Caching.Memory.IMemoryCache cache, System.String cacheKey)
+    public static TDest MapToCached<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, System.String cacheKey, Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions options = null)
+    public static TDest MapToCached<TDest>(System.Object source, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, System.String cacheKey, Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions options = null)
+    public static TDest MapToCachedAuto<TDest>(System.Object source, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, System.Nullable<System.TimeSpan> expiration = null)
