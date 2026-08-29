@@ -116,7 +116,8 @@ members are now mapped instead of dropped.
   It is a separate package because the core declares no dependencies and a CI gate enforces that.
   ([#44](https://github.com/BaryoDev/Mapsicle/issues/44))
 - **A package icon.** All twelve packages listed on nuget.org with no mark. `assets/logo.svg` is
-  the master; `assets/icon.png` is the 128px raster NuGet requires, wired once in
+  the master; `assets/icon.png` is the 128px raster NuGet requires, downscaled from a 512 render
+  because rasterising that detail directly at 128 comes out muddy. `PackageIcon` is wired once in
   `src/Directory.Build.props` and inherited by every package. A pack gate fails if the icon is
   absent from the nupkg or undeclared in the nuspec, because NuGet quietly lists a placeholder
   rather than refusing the push. The listing reads its icon from the newest version, so it appears

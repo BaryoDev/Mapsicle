@@ -1,37 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Mapsicle">
-  <!--
-    The Mapsicle mark: an ice pop carrying the mapper glyph, a translucent source square, an arrow,
-    a solid destination square. It puns the name and states what the library does in one shape.
-
-    The badge is deliberate. Without it the mark floats in whatever square a platform allocates and
-    uses about 60 percent of it, so next to a framed icon in the same NuGet list it renders visibly
-    smaller at the same nominal size. The badge colour was chosen by rendering the mark on white,
-    on GitHub light and on GitHub dark: a cream ground nearly vanished on white and glared on dark,
-    while this holds on all three.
-
-    The gradient and the two translucent squares are a deliberate exception to the flat house style
-    used for the BaryoDev module icon sets. They are the brand mark's own look, kept on purpose.
-  -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
     <linearGradient id="ice" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#7FDDEB"/>
       <stop offset="1" stop-color="#0B6E7C"/>
     </linearGradient>
   </defs>
-
-  <rect x="2" y="2" width="124" height="124" rx="28" fill="#073F49"/>
-
-  <!-- 0.96 and a 2 unit nudge, so the mark sits centred inside the badge with even margin. It was
-       shipped at 1.12 with no centring, which put the top of the pop at y = -0.72 and flattened it
-       against the frame. scripts/render.py --check-inside-badge now catches that by comparing the
-       rendered icon against the rendered badge, which is the only way to see a transform overshoot. -->
-  <g transform="translate(0 2) translate(64 62) scale(0.96) translate(-64 -62)">
-    <rect x="57" y="84" width="14" height="34" rx="7" fill="#C89B6C"/>
-    <path d="M30 40 a34 34 0 0 1 68 0 V80 a10 10 0 0 1 -10 10 H40 a10 10 0 0 1 -10 -10 Z" fill="url(#ice)"/>
-    <rect x="38" y="14" width="8" height="22" rx="4" fill="#FFFFFF" opacity="0.30"/>
-    <rect x="38" y="40" width="16" height="16" rx="5" fill="#FFFFFF" opacity="0.55"/>
-    <path d="M57 48 h9" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
-    <path d="M66 41.5 L73.5 48 L66 54.5 Z" fill="#FFFFFF"/>
-    <rect x="76" y="40" width="16" height="16" rx="5" fill="#FFFFFF"/>
-  </g>
+  <rect x="57" y="84" width="14" height="34" rx="7" fill="#C89B6C"/>
+  <path d="M30 40 a34 34 0 0 1 68 0 V80 a10 10 0 0 1 -10 10 H40 a10 10 0 0 1 -10 -10 Z" fill="url(#ice)"/>
+  <rect x="38" y="14" width="8" height="22" rx="4" fill="#FFFFFF" opacity="0.30"/>
+  <rect x="38" y="40" width="16" height="16" rx="5" fill="#FFFFFF" opacity="0.55"/>
+  <path d="M57 48 h9" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <path d="M66 41.5 L73.5 48 L66 54.5 Z" fill="#FFFFFF"/>
+  <rect x="76" y="40" width="16" height="16" rx="5" fill="#FFFFFF"/>
 </svg>
