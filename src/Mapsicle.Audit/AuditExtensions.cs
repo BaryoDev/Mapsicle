@@ -331,6 +331,9 @@ namespace Mapsicle.Audit
         /// </summary>
         public bool IsSuccess => Audit.WasSuccessful;
 
+        /// <summary>Pairs a mapped value with the audit describing how it was produced.</summary>
+        /// <param name="value">The mapped value, or null when the source was null.</param>
+        /// <param name="audit">The record of what was mapped, skipped and converted.</param>
         public AuditedMappingResult(T? value, MappingAudit audit)
         {
             Value = value;
@@ -470,6 +473,10 @@ namespace Mapsicle.Audit
         /// </summary>
         public bool HasChanges { get; }
 
+        /// <summary>Pairs a mapped value with the property changes detected against the destination.</summary>
+        /// <param name="value">The mapped value.</param>
+        /// <param name="changes">One entry per property whose value differs.</param>
+        /// <param name="hasChanges">Whether any property changed.</param>
         public ChangeDetectionResult(T? value, List<PropertyChange> changes, bool hasChanges)
         {
             Value = value;

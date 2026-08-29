@@ -81,6 +81,26 @@ jobs:
             8.0.x
             10.0.x
       - run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --output ./pack
+      - name: Fail if the package ships without XML documentation
+        # The doc comments were always written and always thrown away, because
+        # GenerateDocumentationFile was set nowhere, so every package gave consumers bare
+        # signatures in IntelliSense. Checked here rather than trusted, for the same reason
+        # every other claim in this pipeline is checked.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, zipfile
+          nupkg = glob.glob("pack/Mapsicle.*.nupkg")
+          nupkg = [p for p in nupkg if not p.endswith(".snupkg")]
+          if not nupkg:
+              sys.exit("no package was produced")
+          names = zipfile.ZipFile(nupkg[0]).namelist()
+          libs = sorted({n.split("/")[1] for n in names if n.startswith("lib/") and n.endswith(".dll")})
+          missing = [tfm for tfm in libs if f"lib/{tfm}/Mapsicle.xml" not in names]
+          if missing:
+              sys.exit(f"Mapsicle.xml missing for: {', '.join(missing)}")
+          print(f"XML documentation present for: {', '.join(libs)}")
+          PY
       - name: Fail if the core nuspec declares a dependency
         run: |
           set -euo pipefail

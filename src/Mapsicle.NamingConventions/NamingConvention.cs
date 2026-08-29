@@ -11,7 +11,8 @@ namespace Mapsicle.NamingConventions
     {
         // Compiled regex for better performance - splits on word boundaries
         // Matches sequences like "User", "Name", "ID", "XMLParser", etc.
-        protected static readonly Regex WordBoundaryRegex = new(
+        /// <summary>Splits an identifier into words at case changes and separators.</summary>
+    protected static readonly Regex WordBoundaryRegex = new(
             @"([A-Z][a-z0-9]*|[A-Z]+(?=[A-Z][a-z]|$)|[a-z0-9]+)",
             RegexOptions.Compiled);
 

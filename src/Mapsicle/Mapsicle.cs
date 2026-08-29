@@ -22,7 +22,11 @@ namespace Mapsicle
     [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
     public sealed class MapFromAttribute : Attribute
     {
+        /// <summary>The name of the source property to read this member from.</summary>
         public string SourcePropertyName { get; }
+
+        /// <summary>Maps this member from a source property with a different name.</summary>
+        /// <param name="sourcePropertyName">The source property name.</param>
         public MapFromAttribute(string sourcePropertyName) => SourcePropertyName = sourcePropertyName;
     }
 
@@ -35,6 +39,9 @@ namespace Mapsicle
     /// </summary>
     public readonly struct MapperCacheInfo
     {
+        /// <summary>Cache sizes with no statistics, used when counting is not active.</summary>
+        /// <param name="mapToEntries">Number of cached MapTo delegates.</param>
+        /// <param name="mapEntries">Number of cached in-place Map delegates.</param>
         public MapperCacheInfo(int mapToEntries, int mapEntries)
         {
             MapToEntries = mapToEntries;
@@ -43,6 +50,11 @@ namespace Mapsicle
             Misses = 0;
         }
 
+        /// <summary>Cache sizes together with the hit and miss counts.</summary>
+        /// <param name="mapToEntries">Number of cached MapTo delegates.</param>
+        /// <param name="mapEntries">Number of cached in-place Map delegates.</param>
+        /// <param name="hits">Reads served from the cache.</param>
+        /// <param name="misses">Reads that had to build a delegate.</param>
         public MapperCacheInfo(int mapToEntries, int mapEntries, long hits, long misses)
         {
             MapToEntries = mapToEntries;
@@ -51,8 +63,13 @@ namespace Mapsicle
             Misses = misses;
         }
 
+        /// <summary>Number of cached MapTo delegates.</summary>
         public int MapToEntries { get; }
+
+        /// <summary>Number of cached in-place Map delegates.</summary>
         public int MapEntries { get; }
+
+        /// <summary>Total cached delegates across both caches.</summary>
         public int Total => MapToEntries + MapEntries;
 
         /// <summary>
@@ -79,6 +96,14 @@ namespace Mapsicle
 
     #endregion
 
+    /// <summary>
+    /// Maps objects by convention, with no configuration and no registration.
+    /// </summary>
+    /// <remarks>
+    /// Every entry point compiles a delegate on the first map of a given type pair and caches it, so
+    /// the cost of the conversion rules is paid once rather than per call. The rules themselves are
+    /// stated in one place, so the answer does not depend on which entry point was used.
+    /// </remarks>
     public static class Mapper
     {
         // Unbounded caches (default for backward compatibility)
@@ -158,6 +183,11 @@ namespace Mapsicle
         /// Maximum mapping depth for cycle detection. Default: 32.
         /// </summary>
         private static volatile int _maxDepth = 32;
+
+        /// <summary>
+        /// Maximum mapping depth for cycle detection. Default: 32. A value below 1 is refused and
+        /// the default is kept.
+        /// </summary>
         public static int MaxDepth
         {
             get => _maxDepth;

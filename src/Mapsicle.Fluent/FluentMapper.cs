@@ -19,6 +19,8 @@ namespace Mapsicle.Fluent
         private readonly Dictionary<(Type, Type), Func<object, object>> _typeConverters = new();
         private bool _isSealed;
 
+        /// <summary>Builds a configuration from a callback.</summary>
+        /// <param name="configure">Receives the configuration expression.</param>
         public MapperConfiguration(Action<IMapperConfigurationExpression> configure)
         {
             var expression = new MapperConfigurationExpression(this);
@@ -120,9 +122,25 @@ namespace Mapsicle.Fluent
 
     #region Configuration Expression
 
+    /// <summary>
+    /// The configuration surface handed to the callback passed to <see cref="MapperConfiguration"/>.
+    /// </summary>
+    /// <remarks>
+    /// Configuring a pair here is optional. An unconfigured pair still maps by convention, so this
+    /// is for the members convention gets wrong rather than for registration.
+    /// </remarks>
     public interface IMapperConfigurationExpression
     {
+        /// <summary>Begins configuring the map from <typeparamref name="TSource"/> to <typeparamref name="TDest"/>.</summary>
+        /// <typeparam name="TSource">The source type.</typeparam>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <returns>The expression used to configure individual members.</returns>
         ITypeMapExpression<TSource, TDest> CreateMap<TSource, TDest>();
+
+        /// <summary>Configures the map from <typeparamref name="TSource"/> to <typeparamref name="TDest"/> inline.</summary>
+        /// <typeparam name="TSource">The source type.</typeparam>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <param name="configure">Receives the same expression the other overload returns.</param>
         void CreateMap<TSource, TDest>(Action<ITypeMapExpression<TSource, TDest>> configure);
 
         /// <summary>
@@ -157,27 +175,70 @@ namespace Mapsicle.Fluent
         }
     }
 
+    /// <summary>
+    /// The configuration for one type pair, read by the mapper when it compiles that pair.
+    /// </summary>
     public interface ITypeMapConfiguration
     {
+        /// <summary>The type being mapped from.</summary>
         Type SourceType { get; }
+
+        /// <summary>The type being mapped to.</summary>
         Type DestinationType { get; }
+
+        /// <summary>Whether the named destination member was configured to be skipped.</summary>
+        /// <param name="memberName">The destination member name.</param>
         bool IsIgnored(string memberName);
+
+        /// <summary>Whether the named destination member has a configured resolver.</summary>
+        /// <param name="memberName">The destination member name.</param>
         bool HasCustomMapping(string memberName);
+
+        /// <summary>The configured resolver for the named member, or null.</summary>
+        /// <param name="memberName">The destination member name.</param>
         Func<object, object>? GetCustomMapping(string memberName);
+
+        /// <summary>The predicate deciding whether the named member is mapped at all, or null.</summary>
+        /// <param name="memberName">The destination member name.</param>
         Func<object, bool>? GetCondition(string memberName);
+
+        /// <summary>The configured source expression for the named member, or null.</summary>
+        /// <remarks>Kept as an expression rather than a delegate so it can be translated by a query provider.</remarks>
+        /// <param name="memberName">The destination member name.</param>
         LambdaExpression? GetExpressionMapping(string memberName);
+
+        /// <summary>The hook to run before the pair is mapped, or null.</summary>
         Action<object, object>? GetBeforeMap();
+
+        /// <summary>The hook to run after the pair is mapped, or null.</summary>
         Action<object, object>? GetAfterMap();
+
+        /// <summary>The factory that constructs the destination, or null to construct it normally.</summary>
         Func<object, object>? GetConstructorFactory();
+
+        /// <summary>The derived pairs registered for polymorphic mapping.</summary>
         IReadOnlyList<(Type DerivedSource, Type DerivedDest)> GetDerivedMappings();
     }
 
+    /// <summary>
+    /// Configures how one type pair maps. Every method returns the expression, so calls chain.
+    /// </summary>
+    /// <typeparam name="TSource">The source type.</typeparam>
+    /// <typeparam name="TDest">The destination type.</typeparam>
     public interface ITypeMapExpression<TSource, TDest>
     {
+        /// <summary>Configures one destination member.</summary>
+        /// <typeparam name="TMember">The destination member type.</typeparam>
+        /// <param name="destinationMember">Selects the member, for example <c>d => d.FullName</c>.</param>
+        /// <param name="memberOptions">Configures where that member's value comes from.</param>
+        /// <returns>This expression, for chaining.</returns>
         ITypeMapExpression<TSource, TDest> ForMember<TMember>(
             Expression<Func<TDest, TMember>> destinationMember,
             Action<IMemberConfigurationExpression<TSource, TDest, TMember>> memberOptions);
 
+        /// <summary>Applies the same configuration to every destination member.</summary>
+        /// <param name="memberOptions">Configuration applied to each member in turn.</param>
+        /// <returns>This expression, for chaining.</returns>
         ITypeMapExpression<TSource, TDest> ForAllMembers(Action<IMemberConfigurationExpression<TSource, TDest, object>> memberOptions);
 
         /// <summary>
@@ -202,6 +263,8 @@ namespace Mapsicle.Fluent
         /// </summary>
         ITypeMapExpression<TSource, TDest> ConstructUsing(Func<TSource, TDest> factory);
 
+        /// <summary>Registers the inverse pair and returns its expression for configuring.</summary>
+        /// <returns>The expression for the destination-to-source map.</returns>
         ITypeMapExpression<TDest, TSource> ReverseMap();
     }
 
@@ -345,11 +408,30 @@ namespace Mapsicle.Fluent
 
     #region Member Configuration
 
+    /// <summary>
+    /// Configures where one destination member's value comes from.
+    /// </summary>
+    /// <typeparam name="TSource">The source type.</typeparam>
+    /// <typeparam name="TDest">The destination type.</typeparam>
+    /// <typeparam name="TMember">The destination member type.</typeparam>
     public interface IMemberConfigurationExpression<TSource, TDest, TMember>
     {
+        /// <summary>Reads the member from a source expression rather than by name.</summary>
+        /// <typeparam name="TSourceMember">The source member type.</typeparam>
+        /// <param name="sourceMember">Selects the source value, for example <c>s => s.First + " " + s.Last</c>.</param>
         void MapFrom<TSourceMember>(Expression<Func<TSource, TSourceMember>> sourceMember);
+
+        /// <summary>Computes the member with a delegate.</summary>
+        /// <remarks>Unlike <see cref="MapFrom"/> this is opaque to a query provider, so it cannot be translated to SQL.</remarks>
+        /// <typeparam name="TResult">The computed type.</typeparam>
+        /// <param name="resolver">Produces the value from the source.</param>
         void ResolveUsing<TResult>(Func<TSource, TResult> resolver);
+
+        /// <summary>Leaves this member at its destination default.</summary>
         void Ignore();
+
+        /// <summary>Maps this member only when the predicate holds for the source.</summary>
+        /// <param name="condition">Decides whether the member is mapped.</param>
         void Condition(Func<TSource, bool> condition);
     }
 
@@ -398,8 +480,29 @@ namespace Mapsicle.Fluent
     /// </summary>
     public interface IMapper
     {
+        /// <summary>Maps a source of unknown static type into a new <typeparamref name="TDest"/>.</summary>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <param name="source">The source object, or null.</param>
+        /// <returns>The mapped instance, or the destination default when source is null.</returns>
         TDest? Map<TDest>(object? source);
+
+        /// <summary>Maps a statically-typed source into a new <typeparamref name="TDest"/>.</summary>
+        /// <typeparam name="TSource">The source type.</typeparam>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <param name="source">The source object, or null.</param>
+        /// <returns>The mapped instance, or the destination default when source is null.</returns>
         TDest? Map<TSource, TDest>(TSource? source);
+
+        /// <summary>Maps onto an existing destination instead of constructing one.</summary>
+        /// <remarks>
+        /// A directly-assignable reference-typed member is shared with the source rather than
+        /// copied, so mutating the source afterwards reaches into the destination.
+        /// </remarks>
+        /// <typeparam name="TSource">The source type.</typeparam>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <param name="source">The source object.</param>
+        /// <param name="destination">The instance to populate.</param>
+        /// <returns>The same destination instance.</returns>
         TDest Map<TSource, TDest>(TSource source, TDest destination);
     }
 
