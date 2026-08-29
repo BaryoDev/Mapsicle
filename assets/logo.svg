@@ -21,7 +21,11 @@
 
   <rect x="2" y="2" width="124" height="124" rx="28" fill="#073F49"/>
 
-  <g transform="translate(64 62) scale(1.12) translate(-64 -62)">
+  <!-- 0.96 and a 2 unit nudge, so the mark sits centred inside the badge with even margin. It was
+       shipped at 1.12 with no centring, which put the top of the pop at y = -0.72 and flattened it
+       against the frame. scripts/render.py --check-inside-badge now catches that by comparing the
+       rendered icon against the rendered badge, which is the only way to see a transform overshoot. -->
+  <g transform="translate(0 2) translate(64 62) scale(0.96) translate(-64 -62)">
     <rect x="57" y="84" width="14" height="34" rx="7" fill="#C89B6C"/>
     <path d="M30 40 a34 34 0 0 1 68 0 V80 a10 10 0 0 1 -10 10 H40 a10 10 0 0 1 -10 -10 Z" fill="url(#ice)"/>
     <rect x="38" y="14" width="8" height="22" rx="4" fill="#FFFFFF" opacity="0.30"/>
