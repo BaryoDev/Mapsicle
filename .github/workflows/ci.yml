@@ -171,6 +171,30 @@ jobs:
       - name: Run the head to head and fail if Mapsicle is worse on any row
         run: dotnet test tests/Mapsicle.Parity.Tests/Mapsicle.Parity.Tests.csproj --configuration Release
 
+  coverage:
+    name: coverage holds its floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Collect coverage
+        run: dotnet test Mapsicle.sln --configuration Release -f net8.0 --collect:"XPlat Code Coverage" --results-directory ./coverage
+      - name: Fail if coverage dropped below the floor
+        working-directory: ./coverage
+        run: python3 ../.github/scripts/coverage-gate.py 70.0
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: ./coverage/**/coverage.cobertura.xml
+          retention-days: 7
+
   licence-boundary:
     name: no commercially licensed dependency in src
     runs-on: ubuntu-latest
