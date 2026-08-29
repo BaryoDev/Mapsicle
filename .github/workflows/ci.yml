@@ -154,8 +154,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-        with:
-          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
@@ -221,6 +219,17 @@ jobs:
           name: coverage
           path: ./coverage/**/coverage.cobertura.xml
           retention-days: 7
+
+  workflows:
+    name: workflow files are valid
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fail on a duplicate key in any workflow
+        run: python3 .github/scripts/lint-workflows.py
 
   licence-boundary:
     name: no commercially licensed dependency in src
