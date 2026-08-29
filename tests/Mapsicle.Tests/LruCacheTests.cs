@@ -170,7 +170,7 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void ConcurrentGetOrAdd_UnderHeavyContention_CountsEachKeyExactlyOnce()
+        public async Task ConcurrentGetOrAdd_UnderHeavyContention_CountsEachKeyExactlyOnce()
         {
             // The stress form of the test above. A single Parallel.For over ten keys can finish
             // before any real race happens, which would let the drift through unnoticed; this holds
@@ -200,7 +200,7 @@ namespace Mapsicle.Tests
             }
 
             start.Set();
-            Task.WaitAll(workers.ToArray());
+            await Task.WhenAll(workers);
 
             Assert.Equal(keys, cache.Count);
             Assert.Equal(keys, factoryCalls);

@@ -57,7 +57,10 @@ jobs:
             10.0.x
       - run: dotnet restore Mapsicle.sln
       - name: Verify formatting
-        run: dotnet format Mapsicle.sln --verify-no-changes --severity error --no-restore
+        # No --severity filter, matching publish.yml. CI used to be the more lenient of the two,
+        # so a warning that fails the release could pass here: an xUnit1031 in a new concurrency
+        # test did exactly that and would have failed the publish after the tag was pushed.
+        run: dotnet format Mapsicle.sln --verify-no-changes --no-restore
 
   audit:
     name: dependency audit
