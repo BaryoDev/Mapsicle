@@ -26,7 +26,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet restore Mapsicle.sln
       - run: dotnet build Mapsicle.sln --configuration Release --no-restore
       - run: dotnet test Mapsicle.sln --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
@@ -46,7 +48,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet restore Mapsicle.sln
       - name: Verify formatting
         run: dotnet format Mapsicle.sln --verify-no-changes --severity error --no-restore
@@ -59,7 +63,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Restore with NuGet audit as error
         run: dotnet restore Mapsicle.sln /p:NuGetAudit=true /p:NuGetAuditMode=all /p:WarningsNotAsErrors= /p:TreatWarningsAsErrors=true
 
@@ -71,7 +77,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - run: dotnet pack src/Mapsicle/Mapsicle.csproj --configuration Release --output ./pack
       - name: Fail if the core nuspec declares a dependency
         run: |
@@ -107,7 +115,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            10.0.x
       - name: Compare against AutoMapper and fail if a claim no longer holds
         run: dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --gate
       - name: Upload benchmark output

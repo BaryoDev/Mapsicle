@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <!--
+    The point of this project is the SetTargetFramework below. Every other test project resolves
+    the net8.0 asset, so the netstandard2.0 assemblies were built, packed and shipped to NuGet
+    without a single test ever loading them. Anyone on .NET Framework or an older Xamarin target
+    consumed a binary nothing had run.
+
+    Forcing the netstandard2.0 asset here exercises that exact IL, and does it cross-platform,
+    which a net48 test project could not.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/Mapsicle/Mapsicle.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+</Project>
