@@ -377,22 +377,22 @@ namespace Mapsicle
         public static List<string> GetUnmappedProperties<TSource, TDest>()
         {
             var unmapped = new List<string>();
-            var sourceProps = new HashSet<string>(
-                typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                    .Select(p => p.Name),
-                StringComparer.OrdinalIgnoreCase);
             var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanWrite);
 
+            var readableSourceProps = GetCachedReadableProperties(typeof(TSource));
+
             foreach (var destProp in destProps)
             {
-                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+                // Resolved by exactly the helper the mapper uses, rather than by re-deciding here.
+                // The two used to differ over [MapFrom] naming a property that does not exist: the
+                // mapper falls back to the destination member's own name and fills it, while this
+                // checked only the named property and reported the member unmapped. So
+                // AssertMappingValid threw for a mapping that demonstrably works, which is the same
+                // class of defect as certifying one that does not.
+                if (!MemberResolution.TryResolveSource(destProp, readableSourceProps, out var resolved)) continue;
 
-                var mapFrom = destProp.GetCustomAttribute<MapFromAttribute>();
-                var sourceName = mapFrom?.SourcePropertyName ?? destProp.Name;
-
-                if (sourceProps.Contains(sourceName)) continue;
+                if (resolved != null) continue;
 
                 // Flattening, decided by exactly the rule the mapper uses. Asking the same helper
                 // is the point: this check answering "mapped" where TryCreateFlattenedBinding
@@ -661,9 +661,34 @@ namespace Mapsicle
             return false;
         }
 
-        private static bool CanHoldMappableReference(Type propType)
+        private static bool CanHoldMappableReference(Type propType) =>
+            CanHoldMappableReference(propType, null);
+
+        /// <summary>
+        /// Whether a member of this type could hold a reference worth following, and therefore
+        /// could take part in a cycle.
+        /// </summary>
+        /// <param name="propType">The declared member type.</param>
+        /// <param name="seen">
+        /// Element types already being examined on this walk. Null until the walk descends, so the
+        /// common case of a member that is not a collection allocates nothing.
+        /// </param>
+        /// <remarks>
+        /// The walk has to be cycle-aware itself. A type declared as <c>IEnumerable&lt;Self&gt;</c>
+        /// has itself as its own element type, so asking the element the same question recurses
+        /// forever and overflows the stack, which is the exact failure this predicate exists to
+        /// prevent. Revisiting a type means it can reach itself, so the answer is yes and the walk
+        /// stops there.
+        ///
+        /// Value types are examined rather than dismissed. A struct is not a reference, but a
+        /// generic one can hold references in its arguments, and a
+        /// <c>Dictionary&lt;string, Node&gt;</c> enumerates as
+        /// <c>KeyValuePair&lt;string, Node&gt;</c>. Treating that struct as inert would judge a
+        /// dictionary of nodes acyclic and put the crash back.
+        /// </remarks>
+        private static bool CanHoldMappableReference(Type propType, HashSet<Type>? seen)
         {
-            if (propType == typeof(string) || propType.IsPrimitive)
+            if (propType == typeof(string) || propType.IsPrimitive || propType.IsEnum)
             {
                 return false;
             }
@@ -674,7 +699,43 @@ namespace Mapsicle
 
                 // A non-generic IEnumerable advertises nothing about what it holds, so it has to be
                 // assumed capable of holding a cycle. Guessing the other way is how this crashed.
-                return element is null || CanHoldMappableReference(element);
+                if (element is null)
+                {
+                    return true;
+                }
+
+                seen ??= new HashSet<Type>();
+                if (!seen.Add(propType))
+                {
+                    return true;
+                }
+
+                return CanHoldMappableReference(element, seen);
+            }
+
+            if (propType.IsValueType)
+            {
+                if (!propType.IsGenericType)
+                {
+                    return false;
+                }
+
+                var arguments = propType.GetGenericArguments();
+                for (int i = 0; i < arguments.Length; i++)
+                {
+                    seen ??= new HashSet<Type>();
+                    if (!seen.Add(propType))
+                    {
+                        return true;
+                    }
+
+                    if (CanHoldMappableReference(arguments[i], seen))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             return propType.IsClass || propType.IsInterface;
@@ -948,20 +1009,62 @@ namespace Mapsicle
                         return Expression.Lambda<Func<object, T>>(Expression.Convert(call, destType), sourceParam).Compile();
                     }
 
+                    // A dictionary destination is built by mapping keys and values separately. It
+                    // enumerates as KeyValuePair<K, V>, a struct with read-only properties, so
+                    // mapping the pair as an object yields a default pair with a null key and the
+                    // IEnumerable constructor below then throws on the first one.
+                    if (targetItemType.IsGenericType
+                        && targetItemType.GetGenericTypeDefinition() == typeof(KeyValuePair<,>)
+                        && typeof(System.Collections.IDictionary).IsAssignableFrom(sourceType))
+                    {
+                        var pairArgs = targetItemType.GetGenericArguments();
+                        var dictionaryType = typeof(Dictionary<,>).MakeGenericType(pairArgs);
+
+                        if (destType.IsAssignableFrom(dictionaryType))
+                        {
+                            var buildDictionary = typeof(Mapper)
+                                .GetMethod(nameof(BuildMappedDictionary), BindingFlags.NonPublic | BindingFlags.Static)!
+                                .MakeGenericMethod(pairArgs);
+
+                            var built = Expression.Call(buildDictionary, Expression.Convert(sourceParam, typeof(object)));
+                            return Expression.Lambda<Func<object, T>>(Expression.Convert(built, destType), sourceParam).Compile();
+                        }
+                    }
+
                     // A destination that is neither an array nor assignable from List<T> used to
                     // fall through to the member-init path below, which constructed the collection
                     // and populated nothing. A HashSet<string> came back non-null and empty, so the
                     // destination looked mapped while every item had been dropped.
                     //
                     // Most collections take IEnumerable<T>: HashSet, SortedSet, Queue, Stack,
-                    // Collection, ObservableCollection, and Dictionary via KeyValuePair.
+                    // Collection and ObservableCollection.
                     var fromEnumerable = destType.GetConstructor(
                         new[] { typeof(IEnumerable<>).MakeGenericType(targetItemType) });
 
                     if (fromEnumerable != null)
                     {
-                        var built = Expression.New(fromEnumerable, call);
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(built, destType), sourceParam).Compile();
+                        // Guarded, because a collection constructor can reject the items it is
+                        // handed: SortedSet<T> throws when T has no ordering, and this branch is
+                        // reached for any destination that is not assignable from List<T>. Before
+                        // this branch existed that case produced an empty collection, so letting it
+                        // throw would turn silent data loss into a map-time exception, which
+                        // PropertyConversion's own rule says is the worse of the two. It degrades
+                        // to the destination default and says so through the logger.
+                        var exception = Expression.Parameter(typeof(Exception), "ex");
+                        var built = Expression.Convert(Expression.New(fromEnumerable, call), destType);
+
+                        var guarded = Expression.TryCatch(
+                            built,
+                            Expression.Catch(
+                                exception,
+                                Expression.Call(
+                                    typeof(Mapper)
+                                        .GetMethod(nameof(LogCollectionFallback), BindingFlags.NonPublic | BindingFlags.Static)!
+                                        .MakeGenericMethod(destType),
+                                    exception,
+                                    Expression.Constant(destType, typeof(Type)))));
+
+                        return Expression.Lambda<Func<object, T>>(guarded, sourceParam).Compile();
                     }
                 }
 
@@ -1431,6 +1534,53 @@ namespace Mapsicle
             }
 
             return false;
+        }
+
+
+        /// <summary>
+        /// Builds a dictionary destination by mapping each key and value separately.
+        /// </summary>
+        /// <remarks>
+        /// A dictionary enumerates as <c>KeyValuePair&lt;TKey, TValue&gt;</c>, which is a struct
+        /// whose properties are read only, so mapping the pair as if it were an object produces a
+        /// default pair with a null key. Feeding those to <c>Dictionary(IEnumerable&lt;...&gt;)</c>
+        /// throws <c>ArgumentNullException</c> on the first one, which would turn a mapping the
+        /// caller got no result from into an exception at map time. Keys and values are mapped
+        /// individually instead.
+        ///
+        /// A key that maps to null is skipped rather than throwing, matching what the rest of the
+        /// mapper does with a value it cannot produce.
+        /// </remarks>
+        /// <summary>
+        /// Reports a collection destination that could not be constructed, and yields its default.
+        /// </summary>
+        private static TCollection LogCollectionFallback<TCollection>(Exception ex, Type destType)
+        {
+            Logger?.Invoke(
+                $"[Mapsicle] Could not build {destType.Name} from the mapped items: {ex.Message}. " +
+                "The destination was left at its default.");
+            return default!;
+        }
+
+        internal static Dictionary<TKey, TValue> BuildMappedDictionary<TKey, TValue>(object? source)
+            where TKey : notnull
+        {
+            var result = new Dictionary<TKey, TValue>();
+
+            if (source is not System.Collections.IDictionary dictionary)
+            {
+                return result;
+            }
+
+            foreach (System.Collections.DictionaryEntry entry in dictionary)
+            {
+                var key = entry.Key.MapTo<TKey>();
+                if (key is null) continue;
+
+                result[key] = entry.Value is null ? default! : entry.Value.MapTo<TValue>()!;
+            }
+
+            return result;
         }
 
         private static PropertyInfo? FindSourceProperty(PropertyInfo[] sourceProps, string primaryName, string fallbackName)

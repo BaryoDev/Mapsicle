@@ -400,6 +400,175 @@ namespace Mapsicle.Tests
             Assert.Equal(new[] { 1, 2, 3 }, result!);
         }
 
+        // ---- Cycle detection has to survive being asked about cyclic type graphs ------------------
+        // Found by adversarial review of the fix for the collection-cycle crash, before merge.
+        // The predicate deciding whether a type can take part in a cycle walked collection element
+        // types, and a type declared as IEnumerable<Self> is its own element type, so the predicate
+        // recursed forever and overflowed the stack. The fix for a stack overflow had a stack
+        // overflow in it.
+        //
+        // Two calls in each test, deliberately. The predicate is only consulted on the warm path of
+        // the untyped door, so a single map never reaches it and would pass either way.
+
+        [Fact]
+        public void ATypeThatIsACollectionOfItself_DoesNotHangTheCycleCheck()
+        {
+            Mapper.ClearCache();
+
+            var holder = new ConfSelfCollectionHolder { Name = "x", Item = new ConfSelfCollection() };
+
+            var first = ((object)holder).MapTo<ConfSelfCollectionDto>();
+            var second = ((object)holder).MapTo<ConfSelfCollectionDto>();
+
+            Assert.Equal("x", first!.Name);
+            Assert.Equal("x", second!.Name);
+        }
+
+        [Fact]
+        public void ATypeThatIsACollectionOfItself_IsSafeThroughTheTypedDoor()
+        {
+            Mapper.ClearCache();
+
+            var holder = new ConfSelfCollectionHolder { Name = "y", Item = new ConfSelfCollection() };
+            var result = holder.MapTo<ConfSelfCollectionHolder, ConfSelfCollectionDto>();
+
+            Assert.Equal("y", result!.Name);
+        }
+
+        [Fact]
+        public void ACycleThroughADictionary_IsDepthTrackedLikeAnyOther()
+        {
+            // A dictionary enumerates as KeyValuePair, a struct. Treating structs as inert made the
+            // predicate judge a dictionary of nodes acyclic, which put the original crash back for
+            // anyone whose graph recursed through a dictionary instead of a list.
+            Mapper.ClearCache();
+
+            var root = new ConfDictNode { Name = "root", Children = new Dictionary<string, ConfDictNode>() };
+            var child = new ConfDictNode { Name = "child", Children = new Dictionary<string, ConfDictNode>() };
+            child.Children["back"] = root;
+            root.Children["fwd"] = child;
+
+            var first = ((object)root).MapTo<ConfDictNodeDto>();
+            var second = ((object)root).MapTo<ConfDictNodeDto>();
+
+            Assert.Equal("root", first!.Name);
+            Assert.Equal("root", second!.Name);
+        }
+
+        [Fact]
+        public void ADictionaryWithMappedValues_IsPopulated_NotThrown()
+        {
+            // Building the destination through Dictionary(IEnumerable<KeyValuePair<..>>) mapped each
+            // pair as an object. KeyValuePair's properties are read only, so every pair came back
+            // as a default with a null key and the constructor threw ArgumentNullException. Keys and
+            // values are mapped separately now.
+            Mapper.ClearCache();
+
+            var source = new Dictionary<string, ConfInner>
+            {
+                ["a"] = new ConfInner { Name = "first" },
+                ["b"] = new ConfInner { Name = "second" },
+            };
+
+            var result = ((object)source).MapTo<Dictionary<string, ConfInnerDto>>();
+
+            Assert.NotNull(result);
+            Assert.Equal(2, result!.Count);
+            Assert.Equal("first", result["a"].Name);
+            Assert.Equal("second", result["b"].Name);
+        }
+
+        [Fact]
+        public void ADictionaryOfPlainValues_StillWorks()
+        {
+            // Positive control for the two above: the simple case must not have been broken by
+            // routing dictionaries down a different path.
+            Mapper.ClearCache();
+
+            var source = new Dictionary<string, int> { ["one"] = 1, ["two"] = 2 };
+            var result = ((object)source).MapTo<Dictionary<string, int>>();
+
+            Assert.Equal(2, result!.Count);
+            Assert.Equal(1, result["one"]);
+        }
+
+        // ---- Building a collection must never throw at map time -----------------------------------
+        // Found by adversarial review before merge. Building non-List destinations through their
+        // IEnumerable<T> constructor fixed the silently-empty HashSet, but a constructor can reject
+        // what it is handed: SortedSet<T> throws when T has no ordering. That turned silent data
+        // loss into a map-time exception, which is the trade PropertyConversion's own rule refuses.
+
+        [Fact]
+        public void ACollectionConstructorThatRejectsItsItems_DegradesInsteadOfThrowing()
+        {
+            Mapper.ClearCache();
+
+            var messages = new List<string>();
+            var previousLogger = Mapper.Logger;
+            Mapper.Logger = messages.Add;
+            try
+            {
+                var source = new List<ConfUnordered> { new() { Name = "a" }, new() { Name = "b" } };
+
+                var result = ((object)source).MapTo<SortedSet<ConfUnordered>>();
+
+                // Degrading is the contract. Whether it lands as null or empty is not the point;
+                // not throwing is, and saying so rather than failing silently is the other half.
+                Assert.True(result is null || result.Count == 0);
+                Assert.Contains(messages, m => m.Contains("Could not build"));
+            }
+            finally
+            {
+                Mapper.Logger = previousLogger;
+            }
+        }
+
+        [Fact]
+        public void ACollectionConstructorThatAcceptsItsItems_StillPopulates()
+        {
+            // Positive control. Swallowing every construction would satisfy the test above while
+            // silently emptying every HashSet destination, which is the defect that started this.
+            Mapper.ClearCache();
+
+            var result = ((object)new List<string> { "a", "b" }).MapTo<SortedSet<string>>();
+
+            Assert.NotNull(result);
+            Assert.Equal(2, result!.Count);
+        }
+
+        // ---- The validator has to answer the way the mapper acts ----------------------------------
+        // Also found before merge. Making [MapFrom] fall back to the member's own name fixed the
+        // mapper on the typed door but left GetUnmappedProperties deciding for itself, so it called
+        // a member unmapped that the mapper fills and AssertMappingValid threw for a mapping that
+        // works. A validator that raises a false alarm is the same defect as one that certifies a
+        // property the mapper skips, which is what #3 was.
+
+        [Fact]
+        public void TheValidatorAgreesWithTheMapper_OnAMapFromNamingAMissingProperty()
+        {
+            Mapper.ClearCache();
+
+            var mapped = ((object)new ConfValidatorSource { Name = "v" }).MapTo<ConfValidatorDest>();
+            var unmapped = Mapper.GetUnmappedProperties<ConfValidatorSource, ConfValidatorDest>();
+
+            Assert.Equal("v", mapped!.Name);
+            Assert.DoesNotContain("Name", unmapped);
+            Mapper.AssertMappingValid<ConfValidatorSource, ConfValidatorDest>();
+        }
+
+        [Fact]
+        public void TheValidator_StillReportsAMemberNothingCanFill()
+        {
+            // Positive control: agreeing by never reporting anything would pass the test above.
+            Mapper.ClearCache();
+
+            var unmapped = Mapper.GetUnmappedProperties<ConfValidatorSource, ConfGenuinelyUnmappedDest>();
+
+            Assert.Contains("NothingSuppliesThis", unmapped);
+            Assert.Throws<InvalidOperationException>(
+                () => Mapper.AssertMappingValid<ConfValidatorSource, ConfGenuinelyUnmappedDest>());
+        }
+
         private static ConfNode NewCycle()
         {
             var root = new ConfNode { Name = "root", Children = new List<ConfNode>() };
@@ -451,6 +620,29 @@ namespace Mapsicle.Tests
             [MapFrom("Original")]
             public string? Renamed { get; set; }
         }
+
+        public class ConfUnordered { public string? Name { get; set; } }
+
+        public class ConfValidatorSource { public string? Name { get; set; } }
+        public class ConfValidatorDest
+        {
+            [MapFrom("DoesNotExist")]
+            public string? Name { get; set; }
+        }
+        public class ConfGenuinelyUnmappedDest { public string? NothingSuppliesThis { get; set; } }
+
+        public class ConfSelfCollection : System.Collections.Generic.IEnumerable<ConfSelfCollection>
+        {
+            private readonly List<ConfSelfCollection> _items = new();
+            public System.Collections.Generic.IEnumerator<ConfSelfCollection> GetEnumerator() => _items.GetEnumerator();
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _items.GetEnumerator();
+        }
+
+        public class ConfSelfCollectionHolder { public string? Name { get; set; } public ConfSelfCollection? Item { get; set; } }
+        public class ConfSelfCollectionDto { public string? Name { get; set; } }
+
+        public class ConfDictNode { public string? Name { get; set; } public Dictionary<string, ConfDictNode>? Children { get; set; } }
+        public class ConfDictNodeDto { public string? Name { get; set; } public Dictionary<string, ConfDictNodeDto>? Children { get; set; } }
 
         public class ConfNode
         {
