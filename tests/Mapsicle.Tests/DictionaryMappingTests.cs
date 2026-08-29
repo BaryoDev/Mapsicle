@@ -7,6 +7,7 @@ namespace Mapsicle.Tests
     /// <summary>
     /// Tests for dictionary mapping features.
     /// </summary>
+    [Collection("StaticMapperTests")]
     public class DictionaryMappingTests
     {
         #region Test Models
@@ -146,8 +147,13 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void DictionaryMapTo_StringToInt_ShouldConvert()
+        public void DictionaryMapTo_ParseableWrongType_IsDroppedByDefault()
         {
+            // The documented rule is that a value of the wrong type is dropped rather than coerced.
+            // The object path always honoured it. This one did not: it ran Convert.ChangeType on
+            // anything IConvertible, so "123" became 123 while the same value through the object
+            // path was refused. The suite only ever pinned the unparseable case, which the catch
+            // dropped anyway, so the disagreement was invisible.
             var dict = new Dictionary<string, object?>
             {
                 { "Id", "123" } // string instead of int
@@ -156,7 +162,48 @@ namespace Mapsicle.Tests
             var entity = dict.MapTo<SimpleEntity>();
 
             Assert.NotNull(entity);
-            Assert.Equal(123, entity.Id);
+            Assert.Equal(0, entity!.Id);
+        }
+
+        [Fact]
+        public void DictionaryMapTo_ParseableWrongType_ConvertsWhenCoercionIsOptedInto()
+        {
+            // The positive control for the test above. Refusing everything would pass that test
+            // just as well, so this asserts the opt-in still parses.
+            var previous = Mapper.CoerceDictionaryValues;
+            Mapper.CoerceDictionaryValues = true;
+            try
+            {
+                var dict = new Dictionary<string, object?>
+                {
+                    { "Id", "123" }
+                };
+
+                var entity = dict.MapTo<SimpleEntity>();
+
+                Assert.NotNull(entity);
+                Assert.Equal(123, entity!.Id);
+            }
+            finally
+            {
+                Mapper.CoerceDictionaryValues = previous;
+            }
+        }
+
+        [Fact]
+        public void DictionaryMapTo_WideningValue_ConvertsWithoutOptIn()
+        {
+            // Widening is lossless and applies on every entry point, so it must not be gated behind
+            // the coercion switch. int 7 into a decimal is a conversion, not a coercion.
+            var dict = new Dictionary<string, object?>
+            {
+                { "Price", 7 }
+            };
+
+            var entity = dict.MapTo<SimpleEntity>();
+
+            Assert.NotNull(entity);
+            Assert.Equal(7m, entity!.Price);
         }
 
         [Fact]

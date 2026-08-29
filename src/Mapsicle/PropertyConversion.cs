@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -173,6 +174,35 @@ namespace Mapsicle
         /// </remarks>
         internal static Expression BuildToString(Expression propExp, Type srcType)
         {
+            var underlying = Nullable.GetUnderlyingType(srcType);
+
+            // A value that knows how to format itself is formatted invariantly. A bare ToString()
+            // reads the ambient thread culture, so the same decimal produced "1234.5" on one machine
+            // and "1234,5" on another, and a mapper feeding a serialisation or persistence boundary
+            // wrote a number the other region read back as a different one.
+            if (underlying is not null && typeof(IFormattable).IsAssignableFrom(underlying))
+            {
+                // Nullable<T> does not itself implement IFormattable. Its own ToString() yields an
+                // empty string when it has no value, which is the behaviour kept here.
+                return Expression.Condition(
+                    Expression.Property(propExp, "HasValue"),
+                    FormatInvariant(Expression.Property(propExp, "Value")),
+                    Expression.Constant(string.Empty, typeof(string)));
+            }
+
+            if (typeof(IFormattable).IsAssignableFrom(srcType))
+            {
+                if (srcType.IsValueType)
+                {
+                    return FormatInvariant(propExp);
+                }
+
+                return Expression.Condition(
+                    Expression.Equal(propExp, Expression.Constant(null, srcType)),
+                    Expression.Constant(null, typeof(string)),
+                    FormatInvariant(propExp));
+            }
+
             var toStringCall = Expression.Call(propExp, ObjectToString);
 
             if (srcType.IsValueType)
@@ -186,8 +216,33 @@ namespace Mapsicle
                 toStringCall);
         }
 
+        private static Expression FormatInvariant(Expression value) =>
+            Expression.Call(
+                value,
+                FormattableToString,
+                Expression.Constant(null, typeof(string)),
+                InvariantCulture);
+
+        private static readonly Expression InvariantCulture =
+            Expression.Constant(CultureInfo.InvariantCulture, typeof(IFormatProvider));
+
+        private static readonly MethodInfo FormattableToString =
+            typeof(IFormattable).GetMethod(nameof(ToString), new[] { typeof(string), typeof(IFormatProvider) })!;
+
         private static readonly MethodInfo ObjectToString =
             typeof(object).GetMethod(nameof(ToString), Type.EmptyTypes)!;
+
+        /// <summary>
+        /// Whether every value of <paramref name="source"/> survives conversion to
+        /// <paramref name="target"/>, asked by call sites that convert a runtime value rather than
+        /// emitting an expression.
+        /// </summary>
+        /// <remarks>
+        /// The dictionary entry point converts boxed values with <c>Convert.ChangeType</c> and cannot
+        /// use the expression cascade, but it must not answer differently about which pairs are
+        /// allowed. It asks here so the table stays stated once.
+        /// </remarks>
+        internal static bool IsLosslessNumericWidening(Type source, Type target) => IsWidening(source, target);
 
         /// <summary>
         /// Emits a conversion for a widening numeric pair, including the nullable forms, or null.

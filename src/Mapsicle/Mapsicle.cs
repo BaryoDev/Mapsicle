@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -161,6 +162,28 @@ namespace Mapsicle
         /// Logger for diagnostic output. Null disables logging.
         /// </summary>
         public static Action<string>? Logger { get; set; }
+
+        /// <summary>
+        /// Whether the dictionary entry point parses values whose runtime type does not match the
+        /// destination property, for example the string "123" into an <c>int</c>. Default: false.
+        /// </summary>
+        /// <remarks>
+        /// The documented rule is that a value of the wrong type is dropped rather than coerced. The
+        /// object and property entry points always honoured it; the dictionary one did not, and ran
+        /// <c>Convert.ChangeType</c> on anything <c>IConvertible</c>. The two doors therefore
+        /// disagreed about what "wrong type" meant, and an attacker controlling a dictionary (a
+        /// parsed form post, a document, a header bag) could push string payloads through
+        /// conversions the object path rejects.
+        ///
+        /// Parsing is still available for callers who genuinely want it, because a dictionary of
+        /// strings is the normal shape of a form post, but it is now a decision rather than a
+        /// default. When enabled, parsing uses <see cref="CultureInfo.InvariantCulture"/>, so the
+        /// same input maps to the same value in every region.
+        ///
+        /// Widening, enum and nullable conversions are not affected: those are lossless and apply on
+        /// every entry point regardless of this setting.
+        /// </remarks>
+        public static bool CoerceDictionaryValues { get; set; }
 
         private static void ReinitializeCaches()
         {
@@ -1310,18 +1333,15 @@ namespace Mapsicle
                 {
                     try
                     {
-                        if (prop.PropertyType.IsAssignableFrom(value.GetType()))
+                        if (TryConvertDictionaryValue(value, prop.PropertyType, out var converted))
                         {
-                            prop.SetValue(dest, value);
-                        }
-                        else if (prop.PropertyType == typeof(string))
-                        {
-                            prop.SetValue(dest, value.ToString());
-                        }
-                        else if (value is IConvertible && typeof(IConvertible).IsAssignableFrom(prop.PropertyType))
-                        {
-                            var converted = Convert.ChangeType(value, prop.PropertyType);
                             prop.SetValue(dest, converted);
+                        }
+                        else
+                        {
+                            Logger?.Invoke(
+                                $"[Mapsicle] Dropped '{prop.Name}': a {value.GetType().Name} is not a {prop.PropertyType.Name}. " +
+                                "Set Mapper.CoerceDictionaryValues to parse values of the wrong type.");
                         }
                     }
                     catch (Exception ex)
@@ -1337,6 +1357,64 @@ namespace Mapsicle
         #endregion
 
         #region Private Helpers
+
+        /// <summary>
+        /// The dictionary entry point's conversion decision, matching what the compiled paths allow.
+        /// </summary>
+        /// <remarks>
+        /// The compiled paths decide from declared types and emit an expression. Here the value is
+        /// already boxed and only its runtime type is known, so the mechanism has to differ. Which
+        /// pairs are permitted must not: the widening table is asked for rather than restated, since
+        /// a second copy of that table is exactly the drift PropertyConversion exists to prevent.
+        /// </remarks>
+        private static bool TryConvertDictionaryValue(object value, Type targetType, out object? converted)
+        {
+            converted = null;
+            var valueType = value.GetType();
+            var targetUnderlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (targetType.IsAssignableFrom(valueType) || targetUnderlying.IsAssignableFrom(valueType))
+            {
+                converted = value;
+                return true;
+            }
+
+            if (targetType == typeof(string))
+            {
+                converted = value is IFormattable formattable
+                    ? formattable.ToString(null, CultureInfo.InvariantCulture)
+                    : value.ToString();
+                return true;
+            }
+
+            if (valueType.IsEnum && (targetUnderlying == typeof(int) || targetUnderlying == typeof(long)))
+            {
+                converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (targetUnderlying.IsEnum && valueType == typeof(int))
+            {
+                converted = Enum.ToObject(targetUnderlying, value);
+                return true;
+            }
+
+            if (PropertyConversion.IsLosslessNumericWidening(valueType, targetUnderlying))
+            {
+                converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (CoerceDictionaryValues
+                && value is IConvertible
+                && typeof(IConvertible).IsAssignableFrom(targetUnderlying))
+            {
+                converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            return false;
+        }
 
         private static PropertyInfo? FindSourceProperty(PropertyInfo[] sourceProps, string primaryName, string fallbackName)
         {
