@@ -1,0 +1,19 @@
+class Mapsicle.NamingConventions.NamingConvention
+    .ctor()
+    abstract System.String FromWords(System.String[] words)
+    abstract System.String Name { get; }
+    abstract System.String[] ToWords(System.String name)
+    static Mapsicle.NamingConventions.NamingConvention CamelCase { get; }
+    static Mapsicle.NamingConventions.NamingConvention KebabCase { get; }
+    static Mapsicle.NamingConventions.NamingConvention PascalCase { get; }
+    static Mapsicle.NamingConventions.NamingConvention ScreamingSnakeCase { get; }
+    static Mapsicle.NamingConventions.NamingConvention SnakeCase { get; }
+    static System.Boolean NamesMatch(System.String sourceName, Mapsicle.NamingConventions.NamingConvention sourceConvention, System.String destName, Mapsicle.NamingConventions.NamingConvention destConvention)
+    static System.String Convert(System.String name, Mapsicle.NamingConventions.NamingConvention from, Mapsicle.NamingConventions.NamingConvention to)
+    static System.Text.RegularExpressions.Regex WordBoundaryRegex
+class Mapsicle.NamingConventions.NamingConventionExtensions
+    static System.Collections.Generic.Dictionary<System.String,System.String> GetPropertyMappings<TSource,TDest>(Mapsicle.NamingConventions.NamingConvention sourceConvention, Mapsicle.NamingConventions.NamingConvention destConvention)
+    static System.String ConvertName(System.String name, Mapsicle.NamingConventions.NamingConvention from, Mapsicle.NamingConventions.NamingConvention to)
+    static System.Void ClearMappingCache()
+    static TDest MapWithConvention<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source, Mapsicle.NamingConventions.NamingConvention sourceConvention, Mapsicle.NamingConventions.NamingConvention destConvention)
+    static TDest MapWithConvention<TSource,TDest>(TSource source, Mapsicle.NamingConventions.NamingConvention sourceConvention, Mapsicle.NamingConventions.NamingConvention destConvention)

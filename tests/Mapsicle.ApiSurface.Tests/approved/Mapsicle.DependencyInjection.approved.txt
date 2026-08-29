@@ -1,0 +1,3 @@
+class Mapsicle.DependencyInjection.ServiceCollectionExtensions
+    static Microsoft.Extensions.DependencyInjection.IServiceCollection AddMapsicle(Microsoft.Extensions.DependencyInjection.IServiceCollection services)
+    static Microsoft.Extensions.DependencyInjection.IServiceCollection AddMapsicle(Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<Mapsicle.MapperOptions> configure)

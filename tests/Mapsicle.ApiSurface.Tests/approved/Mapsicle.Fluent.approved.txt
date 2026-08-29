@@ -1,0 +1,52 @@
+class Mapsicle.Fluent.MapperConfiguration
+    .ctor(System.Action<Mapsicle.Fluent.IMapperConfigurationExpression> configure)
+    Mapsicle.Fluent.IMapper CreateMapper()
+    Mapsicle.Fluent.ITypeMapConfiguration GetTypeMap(System.Type sourceType, System.Type destType)
+    System.Collections.Generic.IReadOnlyList<Mapsicle.Fluent.ITypeMapConfiguration> GetAllTypeMaps()
+    System.Void AssertConfigurationIsValid()
+class Mapsicle.Fluent.MapsicleProfile
+    .ctor()
+    Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> CreateMap<TSource,TDest>()
+    System.Void CreateConverter<TSource,TDest>(System.Func<TSource,TDest> converter)
+    abstract System.Void Configure()
+class Mapsicle.Fluent.ProfileExtensions
+    static System.Void AddProfile(Mapsicle.Fluent.IMapperConfigurationExpression cfg, Mapsicle.Fluent.MapsicleProfile profile)
+    static System.Void AddProfile<TProfile>(Mapsicle.Fluent.IMapperConfigurationExpression cfg)
+    static System.Void AddProfiles(Mapsicle.Fluent.IMapperConfigurationExpression cfg, System.Reflection.Assembly assembly)
+    static System.Void AddProfilesFromAssemblyOf<T>(Mapsicle.Fluent.IMapperConfigurationExpression cfg)
+class Mapsicle.Fluent.ServiceCollectionExtensions
+    static Microsoft.Extensions.DependencyInjection.IServiceCollection AddMapsicle(Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<Mapsicle.Fluent.IMapperConfigurationExpression> configure)
+    static Microsoft.Extensions.DependencyInjection.IServiceCollection AddMapsicle(Microsoft.Extensions.DependencyInjection.IServiceCollection services, System.Action<Mapsicle.Fluent.IMapperConfigurationExpression> configure, System.Boolean validateConfiguration)
+interface Mapsicle.Fluent.IMapper
+    abstract TDest Map<TDest>(System.Object source)
+    abstract TDest Map<TSource,TDest>(TSource source)
+    abstract TDest Map<TSource,TDest>(TSource source, TDest destination)
+interface Mapsicle.Fluent.IMapperConfigurationExpression
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> CreateMap<TSource,TDest>()
+    abstract System.Void CreateConverter<TSource,TDest>(System.Func<TSource,TDest> converter)
+    abstract System.Void CreateMap<TSource,TDest>(System.Action<Mapsicle.Fluent.ITypeMapExpression<TSource,TDest>> configure)
+interface Mapsicle.Fluent.IMemberConfigurationExpression<TSource,TDest,TMember>
+    abstract System.Void Condition(System.Func<TSource,System.Boolean> condition)
+    abstract System.Void Ignore()
+    abstract System.Void MapFrom<TSourceMember>(System.Linq.Expressions.Expression<System.Func<TSource,TSourceMember>> sourceMember)
+    abstract System.Void ResolveUsing<TResult>(System.Func<TSource,TResult> resolver)
+interface Mapsicle.Fluent.ITypeMapConfiguration
+    abstract System.Action<System.Object,System.Object> GetAfterMap()
+    abstract System.Action<System.Object,System.Object> GetBeforeMap()
+    abstract System.Boolean HasCustomMapping(System.String memberName)
+    abstract System.Boolean IsIgnored(System.String memberName)
+    abstract System.Collections.Generic.IReadOnlyList<System.ValueTuple<System.Type,System.Type>> GetDerivedMappings()
+    abstract System.Func<System.Object,System.Boolean> GetCondition(System.String memberName)
+    abstract System.Func<System.Object,System.Object> GetConstructorFactory()
+    abstract System.Func<System.Object,System.Object> GetCustomMapping(System.String memberName)
+    abstract System.Linq.Expressions.LambdaExpression GetExpressionMapping(System.String memberName)
+    abstract System.Type DestinationType { get; }
+    abstract System.Type SourceType { get; }
+interface Mapsicle.Fluent.ITypeMapExpression<TSource,TDest>
+    abstract Mapsicle.Fluent.ITypeMapExpression<TDest,TSource> ReverseMap()
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> AfterMap(System.Action<TSource,TDest> action)
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> BeforeMap(System.Action<TSource,TDest> action)
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> ConstructUsing(System.Func<TSource,TDest> factory)
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> ForAllMembers(System.Action<Mapsicle.Fluent.IMemberConfigurationExpression<TSource,TDest,System.Object>> memberOptions)
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> ForMember<TMember>(System.Linq.Expressions.Expression<System.Func<TDest,TMember>> destinationMember, System.Action<Mapsicle.Fluent.IMemberConfigurationExpression<TSource,TDest,TMember>> memberOptions)
+    abstract Mapsicle.Fluent.ITypeMapExpression<TSource,TDest> Include<TDerivedSource,TDerivedDest>()

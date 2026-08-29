@@ -1,0 +1,53 @@
+class Mapsicle.Audit.AuditExtensions
+    static Mapsicle.Audit.AuditedMappingResult<TDest> MapWithAudit<TDest>(System.Object source)
+    static Mapsicle.Audit.AuditedMappingResult<TDest> MapWithAudit<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source)
+    static Mapsicle.Audit.ChangeDetectionResult<TDest> MapAndDetectChanges<TDest>(System.Object source, TDest existingDestination)
+    static Mapsicle.Audit.ChangeDetectionResult<TDest> MapAndDetectChanges<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, TSource source, TDest existingDestination)
+    static System.Boolean WouldChangeOnMap<TDest>(System.Object source, TDest existingDestination)
+    static System.Collections.Generic.Dictionary<System.String,System.Object> GetChangedValues<TDest>(System.Object source, TDest existingDestination)
+    static System.Collections.Generic.List<Mapsicle.Audit.PropertyChange> Diff<T>(T original, T modified)
+class Mapsicle.Audit.AuditedMappingResult<T>
+    .ctor(T value, Mapsicle.Audit.MappingAudit audit)
+    Mapsicle.Audit.MappingAudit Audit { get; }
+    System.Boolean IsSuccess { get; }
+    T GetValueOrThrow()
+    T Value { get; }
+class Mapsicle.Audit.ChangeDetectionResult<T>
+    .ctor(T value, System.Collections.Generic.List<Mapsicle.Audit.PropertyChange> changes, System.Boolean hasChanges)
+    Mapsicle.Audit.PropertyChange GetChange(System.String propertyName)
+    System.Boolean HasChanges { get; }
+    System.Collections.Generic.List<Mapsicle.Audit.PropertyChange> Changes { get; }
+    T Value { get; }
+class Mapsicle.Audit.MappingAudit
+    .ctor()
+    System.Boolean WasSuccessful { get;set; }
+    System.Collections.Generic.IEnumerable<System.String> UnmappedProperties { get; }
+    System.Collections.Generic.List<Mapsicle.Audit.PropertyMappingInfo> PropertyMappings { get;set; }
+    System.DateTime MappedAt { get;set; }
+    System.Int32 MappedPropertyCount { get; }
+    System.Int32 UnmappedPropertyCount { get; }
+    System.String FailureReason { get;set; }
+    System.TimeSpan Duration { get;set; }
+    System.Type DestinationType { get;set; }
+    System.Type SourceType { get;set; }
+class Mapsicle.Audit.PropertyChange
+    .ctor()
+    Mapsicle.Audit.ChangeType ChangeType { get;set; }
+    System.Object NewValue { get;set; }
+    System.Object OldValue { get;set; }
+    System.String PropertyName { get;set; }
+    System.Type PropertyType { get;set; }
+class Mapsicle.Audit.PropertyMappingInfo
+    .ctor()
+    System.Boolean WasMapped { get;set; }
+    System.Object DestinationValue { get;set; }
+    System.Object SourceValue { get;set; }
+    System.String PropertyName { get;set; }
+    System.String SourcePropertyName { get;set; }
+    System.Type DestinationType { get;set; }
+    System.Type SourceType { get;set; }
+enum Mapsicle.Audit.ChangeType
+    = Created
+    = Deleted
+    = Modified
+    = value__

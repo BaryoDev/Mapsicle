@@ -1,0 +1,20 @@
+class Mapsicle.Json.JsonMappingExtensions
+    static System.Byte[] MapToJsonBytes<TDest>(System.Object source, System.Text.Json.JsonSerializerOptions options)
+    static System.Collections.Generic.List<TDest> MapCollectionFromJson<TIntermediate,TDest>(System.String json, System.Text.Json.JsonSerializerOptions options)
+    static System.String MapCollectionToJson<TDest>(System.Collections.Generic.IEnumerable<System.Object> source, System.Text.Json.JsonSerializerOptions options)
+    static System.String MapToJson<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.Text.Json.JsonSerializerOptions options)
+    static System.String MapToJson<TDest>(System.Object source, System.Text.Json.JsonSerializerOptions options)
+    static System.Text.Json.JsonSerializerOptions DefaultOptions { get;set; }
+    static System.Threading.Tasks.Task MapToJsonAsync<TDest>(System.Object source, System.IO.Stream stream, System.Text.Json.JsonSerializerOptions options, System.Threading.CancellationToken cancellationToken)
+    static System.Threading.Tasks.Task<TDest> MapFromJsonAsync<TIntermediate,TDest>(System.IO.Stream stream, System.Text.Json.JsonSerializerOptions options, System.Threading.CancellationToken cancellationToken)
+    static TDest MapFromJson<TIntermediate,TDest>(Mapsicle.Fluent.IMapper mapper, System.String json, System.Text.Json.JsonSerializerOptions options)
+    static TDest MapFromJson<TIntermediate,TDest>(System.String json, System.Text.Json.JsonSerializerOptions options)
+    static TDest MapFromJsonBytes<TIntermediate,TDest>(System.ReadOnlySpan<System.Byte> utf8Json, System.Text.Json.JsonSerializerOptions options)
+    static TDest MapFromJsonDocument<TDest>(System.Text.Json.JsonDocument document, System.Text.Json.JsonSerializerOptions options)
+    static TDest MapFromJsonElement<TDest>(System.Text.Json.JsonElement element, System.Text.Json.JsonSerializerOptions options)
+class Mapsicle.Json.JsonMappingOptions
+    static System.Text.Json.JsonSerializerOptions CamelCase { get; }
+    static System.Text.Json.JsonSerializerOptions Indented { get; }
+    static System.Text.Json.JsonSerializerOptions KebabCase { get; }
+    static System.Text.Json.JsonSerializerOptions SnakeCase { get; }
+    static System.Text.Json.JsonSerializerOptions Strict { get; }
