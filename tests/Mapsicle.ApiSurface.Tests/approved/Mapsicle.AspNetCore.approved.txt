@@ -3,7 +3,7 @@ class Mapsicle.AspNetCore.AspNetCoreExtensions
     public static Microsoft.AspNetCore.Builder.RouteHandlerBuilder WithValidatedMapping<TSource,TDest,TValidator>(Microsoft.AspNetCore.Builder.RouteHandlerBuilder builder) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
     public static Microsoft.AspNetCore.Http.IResult MapCollectionToOk<TDest>(System.Collections.IEnumerable source)
     public static Microsoft.AspNetCore.Http.IResult MapCollectionToOk<TSource,TDest>(Mapsicle.Fluent.IMapper mapper, System.Collections.Generic.IEnumerable<TSource> source)
-    public static Microsoft.AspNetCore.Http.IResult MapToAccepted<TDest>(System.Object source, System.String uri = default)
+    public static Microsoft.AspNetCore.Http.IResult MapToAccepted<TDest>(System.Object source, System.String uri = null)
     public static Microsoft.AspNetCore.Http.IResult MapToCreated<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.String uri)
     public static Microsoft.AspNetCore.Http.IResult MapToCreated<TDest>(System.Object source, System.String uri)
     public static Microsoft.AspNetCore.Http.IResult MapToOk<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source)
@@ -11,7 +11,7 @@ class Mapsicle.AspNetCore.AspNetCoreExtensions
     public static Microsoft.AspNetCore.Http.IResult MapValidateAndCreate<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.Func<TDest,System.String> uriGenerator) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
     public static Microsoft.AspNetCore.Http.IResult MapValidateAndCreate<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.String uri) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
     public static Microsoft.AspNetCore.Http.IResult MapValidateAndReturn<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
-    public static Microsoft.AspNetCore.Http.IResult ToProblemDetails<T>(Mapsicle.Validation.MapperValidationResult<T> result, System.String title = default, System.String instance = default) where T : class
+    public static Microsoft.AspNetCore.Http.IResult ToProblemDetails<T>(Mapsicle.Validation.MapperValidationResult<T> result, System.String title = null, System.String instance = null) where T : class
 class Mapsicle.AspNetCore.MappedResponse<T>
     .ctor()
     public System.Boolean Success { get;set; }

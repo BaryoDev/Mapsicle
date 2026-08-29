@@ -1,17 +1,17 @@
 class Mapsicle.Json.JsonMappingExtensions
-    public static System.Byte[] MapToJsonBytes<TDest>(System.Object source, System.Text.Json.JsonSerializerOptions options = default)
-    public static System.Collections.Generic.List<TDest> MapCollectionFromJson<TIntermediate,TDest>(System.String json, System.Text.Json.JsonSerializerOptions options = default)
-    public static System.String MapCollectionToJson<TDest>(System.Collections.Generic.IEnumerable<System.Object> source, System.Text.Json.JsonSerializerOptions options = default)
-    public static System.String MapToJson<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.Text.Json.JsonSerializerOptions options = default)
-    public static System.String MapToJson<TDest>(System.Object source, System.Text.Json.JsonSerializerOptions options = default)
+    public static System.Byte[] MapToJsonBytes<TDest>(System.Object source, System.Text.Json.JsonSerializerOptions options = null)
+    public static System.Collections.Generic.List<TDest> MapCollectionFromJson<TIntermediate,TDest>(System.String json, System.Text.Json.JsonSerializerOptions options = null)
+    public static System.String MapCollectionToJson<TDest>(System.Collections.Generic.IEnumerable<System.Object> source, System.Text.Json.JsonSerializerOptions options = null)
+    public static System.String MapToJson<TDest>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.Text.Json.JsonSerializerOptions options = null)
+    public static System.String MapToJson<TDest>(System.Object source, System.Text.Json.JsonSerializerOptions options = null)
     public static System.Text.Json.JsonSerializerOptions DefaultOptions { get;set; }
-    public static System.Threading.Tasks.Task MapToJsonAsync<TDest>(System.Object source, System.IO.Stream stream, System.Text.Json.JsonSerializerOptions options = default, System.Threading.CancellationToken cancellationToken = default)
-    public static System.Threading.Tasks.Task<TDest> MapFromJsonAsync<TIntermediate,TDest>(System.IO.Stream stream, System.Text.Json.JsonSerializerOptions options = default, System.Threading.CancellationToken cancellationToken = default)
-    public static TDest MapFromJson<TIntermediate,TDest>(Mapsicle.Fluent.IMapper mapper, System.String json, System.Text.Json.JsonSerializerOptions options = default)
-    public static TDest MapFromJson<TIntermediate,TDest>(System.String json, System.Text.Json.JsonSerializerOptions options = default)
-    public static TDest MapFromJsonBytes<TIntermediate,TDest>(System.ReadOnlySpan<System.Byte> utf8Json, System.Text.Json.JsonSerializerOptions options = default)
-    public static TDest MapFromJsonDocument<TDest>(System.Text.Json.JsonDocument document, System.Text.Json.JsonSerializerOptions options = default) where TDest : new()
-    public static TDest MapFromJsonElement<TDest>(System.Text.Json.JsonElement element, System.Text.Json.JsonSerializerOptions options = default) where TDest : new()
+    public static System.Threading.Tasks.Task MapToJsonAsync<TDest>(System.Object source, System.IO.Stream stream, System.Text.Json.JsonSerializerOptions options = null, System.Threading.CancellationToken cancellationToken = null)
+    public static System.Threading.Tasks.Task<TDest> MapFromJsonAsync<TIntermediate,TDest>(System.IO.Stream stream, System.Text.Json.JsonSerializerOptions options = null, System.Threading.CancellationToken cancellationToken = null)
+    public static TDest MapFromJson<TIntermediate,TDest>(Mapsicle.Fluent.IMapper mapper, System.String json, System.Text.Json.JsonSerializerOptions options = null)
+    public static TDest MapFromJson<TIntermediate,TDest>(System.String json, System.Text.Json.JsonSerializerOptions options = null)
+    public static TDest MapFromJsonBytes<TIntermediate,TDest>(System.ReadOnlySpan<System.Byte> utf8Json, System.Text.Json.JsonSerializerOptions options = null)
+    public static TDest MapFromJsonDocument<TDest>(System.Text.Json.JsonDocument document, System.Text.Json.JsonSerializerOptions options = null) where TDest : new()
+    public static TDest MapFromJsonElement<TDest>(System.Text.Json.JsonElement element, System.Text.Json.JsonSerializerOptions options = null) where TDest : new()
 class Mapsicle.Json.JsonMappingOptions
     public static System.Text.Json.JsonSerializerOptions CamelCase { get; }
     public static System.Text.Json.JsonSerializerOptions Indented { get; }

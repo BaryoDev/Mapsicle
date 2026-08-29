@@ -1,5 +1,5 @@
 class Mapsicle.EntityFramework.QueryableExtensions
     public static System.Int32 CacheSize { get; }
-    public static System.Linq.IQueryable<TDest> ProjectTo<TDest>(System.Linq.IQueryable source, Mapsicle.Fluent.MapperConfiguration configuration = default) where TDest : new()
-    public static System.Linq.IQueryable<TDest> ProjectTo<TSource,TDest>(System.Linq.IQueryable<TSource> source, Mapsicle.Fluent.MapperConfiguration configuration = default) where TDest : new()
+    public static System.Linq.IQueryable<TDest> ProjectTo<TDest>(System.Linq.IQueryable source, Mapsicle.Fluent.MapperConfiguration configuration = null) where TDest : new()
+    public static System.Linq.IQueryable<TDest> ProjectTo<TSource,TDest>(System.Linq.IQueryable<TSource> source, Mapsicle.Fluent.MapperConfiguration configuration = null) where TDest : new()
     public static System.Void ClearProjectionCache()

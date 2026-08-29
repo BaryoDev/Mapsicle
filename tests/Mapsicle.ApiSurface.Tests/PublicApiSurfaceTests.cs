@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -269,7 +270,38 @@ namespace Mapsicle.ApiSurface.Tests
         /// </remarks>
         private static string Parameters(MethodBase m) =>
             string.Join(", ", m.GetParameters().Select(p =>
-                ByRefKind(p) + TypeName(p.ParameterType) + " " + p.Name + (p.IsOptional ? " = default" : "")));
+                ByRefKind(p) + TypeName(p.ParameterType) + " " + p.Name + DefaultValue(p)));
+
+        /// <summary>
+        /// An optional parameter's actual default, rendered as a stable literal.
+        /// </summary>
+        /// <remarks>
+        /// The value matters, not just the fact that one exists. C# bakes a default into the
+        /// caller's compiled code at the call site, so changing <c>int retries = 1</c> to
+        /// <c>int retries = 2</c> does not reach anyone who compiled against the old value until
+        /// they rebuild. That is a real compatibility change, and rendering every default as
+        /// "= default" made it invisible to this baseline.
+        ///
+        /// Rendered with the invariant culture, because a baseline that reads differently on a
+        /// German machine would fail for everyone whose locale differs from whoever approved it.
+        /// </remarks>
+        private static string DefaultValue(ParameterInfo p)
+        {
+            if (!p.IsOptional) return "";
+
+            var value = p.HasDefaultValue ? p.DefaultValue : null;
+
+            return value switch
+            {
+                null => " = null",
+                bool b => b ? " = true" : " = false",
+                string str => $" = \"{str}\"",
+                char c => $" = '{c}'",
+                Enum e => $" = {TypeName(e.GetType())}.{e}",
+                IFormattable f => $" = {f.ToString(null, CultureInfo.InvariantCulture)}",
+                _ => $" = {value}",
+            };
+        }
 
         private static string ByRefKind(ParameterInfo p)
         {

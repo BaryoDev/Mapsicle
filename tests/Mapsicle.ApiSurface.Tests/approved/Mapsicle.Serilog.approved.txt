@@ -12,5 +12,5 @@ class Mapsicle.Serilog.SerilogExtensions
     public static Mapsicle.Serilog.MappingLoggingScope BeginMappingScope(System.String operationName)
     public static System.Collections.Generic.List<TDest> MapCollectionWithLogging<TDest>(System.Collections.IEnumerable source)
     public static System.Void Reset()
-    public static System.Void UseSerilog(Serilog.ILogger logger, System.Action<Mapsicle.Serilog.LoggingOptions> configure = default)
+    public static System.Void UseSerilog(Serilog.ILogger logger, System.Action<Mapsicle.Serilog.LoggingOptions> configure = null)
     public static TDest MapWithLogging<TDest>(System.Object source)

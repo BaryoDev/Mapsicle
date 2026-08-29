@@ -22,7 +22,7 @@ class Mapsicle.Mapper
     public static TDestination Map<TDestination>(System.Object source, TDestination destination)
     public static T[] MapToArray<T>(System.Collections.IEnumerable source)
 class Mapsicle.MapperFactory
-    public static Mapsicle.IMapperInstance Create(Mapsicle.MapperOptions options = default)
+    public static Mapsicle.IMapperInstance Create(Mapsicle.MapperOptions options = null)
 class Mapsicle.MapperOptions
     .ctor()
     public System.Action<System.String> Logger { get;set; }

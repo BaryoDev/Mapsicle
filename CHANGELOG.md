@@ -101,6 +101,13 @@ members are now mapped instead of dropped.
   losing threads compiling an expression tree that is thrown away.
   ([#25](https://github.com/BaryoDev/Mapsicle/issues/25), reported by
   [@ZakariaHogeschoolR](https://github.com/ZakariaHogeschoolR))
+- **`CachedMapper.InvalidateAll()` did nothing.** It was an empty method whose only content was a
+  comment saying memory caches cannot be cleared, while its documentation said it invalidates all
+  cache entries. A caller who invoked it kept receiving stale mappings until they expired, with
+  nothing to indicate the call had had no effect. It now removes the entries this mapper created.
+  It deliberately does not call `MemoryCache.Clear()`, because the cache is normally resolved from
+  the container and shared, so clearing it wholesale would evict entries belonging to components
+  that have nothing to do with mapping.
 - **The in-place `Map` shallow-copy contract is now documented and pinned by tests.** A
   directly-assignable reference-typed member is shared with the source rather than copied, on every
   entry point, so mutating the source afterwards reaches into the destination. This is deliberate
