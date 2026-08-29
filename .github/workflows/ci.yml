@@ -133,6 +133,24 @@ jobs:
   # MPL-2.0. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so the
   # comparison is fine. A reference reaching src/ would make the shipped packages carry a reciprocal
   # licence obligation and destroy the positioning, so it is worth more than a code review.
+  parity:
+    name: never worse than AutoMapper
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      # The pitch is that Mapsicle can be trusted at least as much as AutoMapper. That was checked
+      # once by hand during an audit, which found four behaviours where it was not, one of them a
+      # process crash where AutoMapper stayed up. A claim nothing checks is a claim that quietly
+      # stops being true, so it is checked on every build now.
+      - name: Run the head to head and fail if Mapsicle is worse on any row
+        run: dotnet test tests/Mapsicle.Parity.Tests/Mapsicle.Parity.Tests.csproj --configuration Release
+
   licence-boundary:
     name: no commercially licensed dependency in src
     runs-on: ubuntu-latest
