@@ -56,17 +56,23 @@ namespace Mapsicle
         public int Total => MapToEntries + MapEntries;
 
         /// <summary>
-        /// Number of cache hits (only tracked when UseLruCache is enabled).
+        /// Number of cache hits. Zero unless <see cref="Mapper.UseLruCache"/> is enabled.
         /// </summary>
+        /// <remarks>
+        /// Only the bounded cache counts, because it is the only one with a capacity worth tuning
+        /// against a hit ratio, and because an atomic increment on every call of the default warm
+        /// path would cost more than the number is worth.
+        /// </remarks>
         public long Hits { get; }
 
         /// <summary>
-        /// Number of cache misses (only tracked when UseLruCache is enabled).
+        /// Number of cache misses. Zero unless <see cref="Mapper.UseLruCache"/> is enabled.
         /// </summary>
         public long Misses { get; }
 
         /// <summary>
-        /// Cache hit ratio (0.0 to 1.0). Returns 0 if no cache accesses.
+        /// Cache hit ratio, from 0.0 to 1.0. Zero when nothing has been counted, which includes
+        /// every case where <see cref="Mapper.UseLruCache"/> is off.
         /// </summary>
         public double HitRatio => Hits + Misses > 0 ? (double)Hits / (Hits + Misses) : 0.0;
     }
@@ -401,7 +407,23 @@ namespace Mapsicle
 
         #region Cache Helpers
 
-        private static Func<object, T>? GetCachedMapToDelegate<T>((Type, Type) key)
+        /// <summary>
+        /// Reads the MapTo delegate cache, counting the hit or the miss when statistics are live.
+        /// </summary>
+        /// <remarks>
+        /// The counters used to be written by a method nothing called. Both real read paths reached
+        /// the caches inline, so <c>CacheInfo().Hits</c> and <c>Misses</c> reported zero under any
+        /// load, and <c>HitRatio</c> divided zero by zero into a constant zero. A metric that always
+        /// reads zero while looking live is worse than an absent one, because it invites someone to
+        /// tune <c>MaxCacheSize</c> against it.
+        ///
+        /// Counting happens on the LRU path only, which is what the properties have always
+        /// documented and is also the only path where the number means anything: the unbounded cache
+        /// has no capacity to tune. Keeping the atomic off the default warm path matters, because an
+        /// interlocked increment on one shared cache line, taken on every single map call, is a
+        /// throughput regression on a path measured in tens of nanoseconds.
+        /// </remarks>
+        private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
         {
             if (_useLruCache && _lruMapToCache != null)
             {
@@ -410,41 +432,29 @@ namespace Mapsicle
                     System.Threading.Interlocked.Increment(ref _cacheHits);
                     return (Func<object, T>)cached;
                 }
-                System.Threading.Interlocked.Increment(ref _cacheMisses);
-                return null;
-            }
-            else
-            {
-                if (_mapToCache.TryGetValue(key, out var cached))
-                {
-                    return (Func<object, T>)cached;
-                }
-                return null;
-            }
-        }
 
-        private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
-        {
-            if (_useLruCache && _lruMapToCache != null)
-            {
+                System.Threading.Interlocked.Increment(ref _cacheMisses);
                 return (Func<object, T>)_lruMapToCache.GetOrAdd(key, factory);
             }
-            else
-            {
-                return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
-            }
+
+            return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
         }
 
         private static Action<object, object> GetOrAddMapDelegate((Type, Type) key, Func<(Type, Type), Action<object, object>> factory)
         {
             if (_useLruCache && _lruMapCache != null)
             {
+                if (_lruMapCache.TryGetValue(key, out var cached))
+                {
+                    System.Threading.Interlocked.Increment(ref _cacheHits);
+                    return cached;
+                }
+
+                System.Threading.Interlocked.Increment(ref _cacheMisses);
                 return _lruMapCache.GetOrAdd(key, factory);
             }
-            else
-            {
-                return _mapCache.GetOrAdd(key, factory);
-            }
+
+            return _mapCache.GetOrAdd(key, factory);
         }
 
         #endregion

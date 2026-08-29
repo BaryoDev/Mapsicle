@@ -32,10 +32,27 @@ namespace Mapsicle
         /// </summary>
         public int MaxCacheSize { get; set; } = 1000;
 
+        private int _maxDepth = 32;
+
         /// <summary>
         /// Maximum mapping depth to prevent stack overflow on circular references. Default: 32.
+        /// A value below 1 is rejected and the default is kept.
         /// </summary>
-        public int MaxDepth { get; set; } = 32;
+        /// <remarks>
+        /// This used to accept 0, and 0 disables the mapper completely: the first depth check fails
+        /// before any property is read, so every call returns the destination default with nothing
+        /// logged and nothing thrown. A zeroed or defaulted configuration field silently turned the
+        /// whole mapper into a no-op that still looked like it ran.
+        ///
+        /// Guarding here matches <see cref="Mapper.MaxDepth"/>, whose setter has always refused a
+        /// non-positive value. The two were inconsistent, and the one people configure through an
+        /// options object was the unguarded one.
+        /// </remarks>
+        public int MaxDepth
+        {
+            get => _maxDepth;
+            set => _maxDepth = value > 0 ? value : 32;
+        }
 
         /// <summary>
         /// Logger for diagnostic output. Null disables logging.

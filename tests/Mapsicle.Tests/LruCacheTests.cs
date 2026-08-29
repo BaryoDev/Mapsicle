@@ -157,10 +157,86 @@ namespace Mapsicle.Tests
                 Assert.Equal(j * 10, val);
             }
 
-            // Count is approximate — may be slightly higher than 10 under contention
-            // because ConcurrentDictionary.GetOrAdd may call the factory on multiple threads
-            // but only one result wins. The added flag can be set by losing threads.
-            Assert.InRange(cache.Count, 10, 100);
+            // Exactly 10, not a range. The count used to be incremented by every thread whose
+            // factory ran rather than by the one whose value was kept, so a racing miss counted the
+            // same add several times and the count drifted permanently above the real size. A
+            // bounded cache that believes it holds more than it does starts evicting below its own
+            // capacity.
+            Assert.Equal(10, cache.Count);
+
+            // The factory runs once per key now, so the losing threads no longer pay to compile a
+            // value that is thrown away. Ten keys, ten calls, however many threads raced.
+            Assert.Equal(10, callCount);
+        }
+
+        [Fact]
+        public void ConcurrentGetOrAdd_UnderHeavyContention_CountsEachKeyExactlyOnce()
+        {
+            // The stress form of the test above. A single Parallel.For over ten keys can finish
+            // before any real race happens, which would let the drift through unnoticed; this holds
+            // many threads on a barrier so they collide on the same key at the same moment.
+            const int keys = 200;
+            const int threads = 16;
+
+            var cache = new LruCache<int, string>(capacity: 10_000);
+            var factoryCalls = 0;
+            using var start = new ManualResetEventSlim(false);
+
+            var workers = new List<Task>();
+            for (int t = 0; t < threads; t++)
+            {
+                workers.Add(Task.Run(() =>
+                {
+                    start.Wait();
+                    for (int k = 0; k < keys; k++)
+                    {
+                        cache.GetOrAdd(k, key =>
+                        {
+                            Interlocked.Increment(ref factoryCalls);
+                            return "value" + key;
+                        });
+                    }
+                }));
+            }
+
+            start.Set();
+            Task.WaitAll(workers.ToArray());
+
+            Assert.Equal(keys, cache.Count);
+            Assert.Equal(keys, factoryCalls);
+
+            for (int k = 0; k < keys; k++)
+            {
+                Assert.True(cache.TryGetValue(k, out var value));
+                Assert.Equal("value" + k, value);
+            }
+        }
+
+        [Fact]
+        public void AFaultingFactory_DoesNotPoisonTheKey()
+        {
+            // A Lazy that faulted caches its exception for good, so a transient failure would
+            // otherwise make the key permanently unusable and leave the count counting it.
+            var cache = new LruCache<string, string>(10);
+            var attempts = 0;
+
+            Assert.Throws<InvalidOperationException>(() => cache.GetOrAdd("key", _ =>
+            {
+                attempts++;
+                throw new InvalidOperationException("transient");
+            }));
+
+            Assert.Equal(0, cache.Count);
+
+            var recovered = cache.GetOrAdd("key", _ =>
+            {
+                attempts++;
+                return "second attempt";
+            });
+
+            Assert.Equal("second attempt", recovered);
+            Assert.Equal(2, attempts);
+            Assert.Equal(1, cache.Count);
         }
 
         [Fact]
