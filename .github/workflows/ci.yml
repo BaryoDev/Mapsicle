@@ -102,12 +102,25 @@ jobs:
           nupkg = [p for p in nupkg if not p.endswith(".snupkg")]
           if not nupkg:
               sys.exit("no package was produced")
-          names = zipfile.ZipFile(nupkg[0]).namelist()
+          z = zipfile.ZipFile(nupkg[0])
+          names = z.namelist()
           libs = sorted({n.split("/")[1] for n in names if n.startswith("lib/") and n.endswith(".dll")})
           missing = [tfm for tfm in libs if f"lib/{tfm}/Mapsicle.xml" not in names]
           if missing:
               sys.exit(f"Mapsicle.xml missing for: {', '.join(missing)}")
           print(f"XML documentation present for: {', '.join(libs)}")
+
+          # The package icon is a claim about what ships too, and NuGet silently lists a
+          # placeholder when it is absent rather than failing the push.
+          if "icon.png" not in names:
+              sys.exit("icon.png is not in the package; the NuGet listing would show no icon")
+          import xml.etree.ElementTree as ET
+          nuspec = [n for n in names if n.endswith(".nuspec")][0]
+          root = ET.fromstring(z.read(nuspec))
+          ns = {"n": root.tag.split("}")[0].strip("{")}
+          if root.find(".//n:icon", ns) is None:
+              sys.exit("the nuspec declares no <icon>, so the packed file would be ignored")
+          print("package icon present and declared")
           PY
       - name: Fail if the core nuspec declares a dependency
         run: |

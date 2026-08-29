@@ -115,6 +115,12 @@ members are now mapped instead of dropped.
   whose argument is that no configuration is needed could not be registered without writing some.
   It is a separate package because the core declares no dependencies and a CI gate enforces that.
   ([#44](https://github.com/BaryoDev/Mapsicle/issues/44))
+- **A package icon.** All twelve packages listed on nuget.org with no mark. `assets/logo.svg` is
+  the master; `assets/icon.png` is the 128px raster NuGet requires, wired once in
+  `src/Directory.Build.props` and inherited by every package. A pack gate fails if the icon is
+  absent from the nupkg or undeclared in the nuspec, because NuGet quietly lists a placeholder
+  rather than refusing the push. The listing reads its icon from the newest version, so it appears
+  with this release.
 - **net10.0 across every package and test project.** net8.0 goes end of life on 10 November 2026 and
   two packages targeted it alone. The suite runs on both runtimes.
   ([#24](https://github.com/BaryoDev/Mapsicle/issues/24))

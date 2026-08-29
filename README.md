@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="Mapsicle" width="120" align="right">
+
 # Mapsicle
 
 [![CI](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml/badge.svg)](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml)
