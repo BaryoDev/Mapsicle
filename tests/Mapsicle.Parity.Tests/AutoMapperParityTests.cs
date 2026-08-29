@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using AutoMapper;
-using Xunit;
 using Mapsicle;
+using Xunit;
 
 namespace Mapsicle.Parity.Tests
 {

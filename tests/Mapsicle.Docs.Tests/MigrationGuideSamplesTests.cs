@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.Extensions.DependencyInjection;
 using Mapsicle.DependencyInjection;
 using Mapsicle.Fluent;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Mapsicle.Docs.Tests

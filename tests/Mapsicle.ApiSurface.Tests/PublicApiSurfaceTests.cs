@@ -174,14 +174,14 @@ namespace Mapsicle.ApiSurface.Tests
                     return $"{(c.IsStatic ? "static " : "")}.ctor({Parameters(c)})";
 
                 case PropertyInfo p:
-                {
-                    var getter = p.GetMethod is not null && IsVisible(p.GetMethod);
-                    var setter = p.SetMethod is not null && IsVisible(p.SetMethod);
-                    if (!getter && !setter) return null;
-                    var accessors = (getter ? "get;" : "") + (setter ? "set;" : "");
-                    var owner = p.GetMethod ?? p.SetMethod!;
-                    return $"{Modifiers(owner)}{TypeName(p.PropertyType)} {p.Name} {{ {accessors} }}";
-                }
+                    {
+                        var getter = p.GetMethod is not null && IsVisible(p.GetMethod);
+                        var setter = p.SetMethod is not null && IsVisible(p.SetMethod);
+                        if (!getter && !setter) return null;
+                        var accessors = (getter ? "get;" : "") + (setter ? "set;" : "");
+                        var owner = p.GetMethod ?? p.SetMethod!;
+                        return $"{Modifiers(owner)}{TypeName(p.PropertyType)} {p.Name} {{ {accessors} }}";
+                    }
 
                 case FieldInfo f:
                     if (!f.IsPublic && !f.IsFamily && !f.IsFamilyOrAssembly) return null;
