@@ -948,23 +948,18 @@ namespace Mapsicle
                 var typedSource = Expression.Convert(sourceParam, sourceType);
 
                 // --- 0. Direct Primitive/Value Mapping ---
+                // Asks the shared cascade rather than deciding here. This block used to carry its
+                // own reduced copy covering assignable types, ToString and the nullable underlying
+                // type, and nothing else, so a value mapped on its own rather than as a property
+                // silently lost every conversion the cascade performs: (object)42 into a long came
+                // back as 0, and so did an enum into an int. It is the same defect as in-place Map,
+                // one level up, and it also reached anything mapping dictionary values.
                 if (sourceType.IsValueType || sourceType == typeof(string))
                 {
-                    if (destType.IsAssignableFrom(sourceType))
+                    var direct = PropertyConversion.TryBuild(typedSource, sourceType, destType, BuildNestedMapCall);
+                    if (direct is not null)
                     {
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
-                    }
-                    if (destType == typeof(string))
-                    {
-                        var toStringCall = PropertyConversion.BuildToString(typedSource, sourceType);
-                        return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
-                    }
-                    var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
-                    var underlyingSource = Nullable.GetUnderlyingType(sourceType) ?? sourceType;
-
-                    if (underlyingDest.IsAssignableFrom(underlyingSource))
-                    {
-                        return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
+                        return Expression.Lambda<Func<object, T>>(direct, sourceParam).Compile();
                     }
                 }
 

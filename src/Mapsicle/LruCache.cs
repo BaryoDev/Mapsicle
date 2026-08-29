@@ -75,7 +75,14 @@ namespace Mapsicle
             {
                 // A Lazy that faulted caches the exception for good, so leaving it in place would
                 // turn one transient failure into a permanently poisoned key.
-                if (_cache.TryRemove(key, out var removed) && ReferenceEquals(removed, stored))
+                //
+                // Removed by key AND value together. Removing by key alone would delete whatever
+                // holder is current, which after a Clear and a racing re-add is a healthy holder
+                // belonging to someone else, and would leave the count describing a cache that no
+                // longer matches it. ICollection's Remove is the pair-conditional form and is
+                // available on every target framework, unlike the TryRemove(KeyValuePair) overload.
+                if (((ICollection<KeyValuePair<TKey, Lazy<TValue>>>)_cache)
+                        .Remove(new KeyValuePair<TKey, Lazy<TValue>>(key, stored)))
                 {
                     Interlocked.Decrement(ref _approximateCount);
                 }

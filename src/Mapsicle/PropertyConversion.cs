@@ -203,18 +203,33 @@ namespace Mapsicle
                     FormatInvariant(propExp));
             }
 
-            var toStringCall = Expression.Call(propExp, ObjectToString);
-
             if (srcType.IsValueType)
             {
-                return toStringCall;
+                return Expression.Call(propExp, ObjectToString);
             }
 
-            return Expression.Condition(
-                Expression.Equal(propExp, Expression.Constant(null, srcType)),
-                Expression.Constant(null, typeof(string)),
-                toStringCall);
+            // A member declared as object, or as a base type, can still hold something that formats
+            // itself. The declared type is all this method can see, so the runtime type is tested
+            // instead: a boxed decimal in an object property produced "1234,5" under de-DE while the
+            // same value in a decimal property produced "1234.5", which is the culture bug surviving
+            // in the one place the static check cannot reach. The conversion is a reference cast and
+            // allocates nothing.
+            return Expression.Call(ToInvariantString_, Expression.Convert(propExp, typeof(object)));
         }
+
+        /// <summary>
+        /// <c>ToString()</c> on a value whose type is only known at run time, invariant where it can be.
+        /// </summary>
+        internal static string? ToInvariantString(object? value) =>
+            value switch
+            {
+                null => null,
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                _ => value.ToString(),
+            };
+
+        private static readonly MethodInfo ToInvariantString_ =
+            typeof(PropertyConversion).GetMethod(nameof(ToInvariantString), BindingFlags.NonPublic | BindingFlags.Static)!;
 
         private static Expression FormatInvariant(Expression value) =>
             Expression.Call(

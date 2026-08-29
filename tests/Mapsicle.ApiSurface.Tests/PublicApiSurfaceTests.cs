@@ -167,7 +167,7 @@ namespace Mapsicle.ApiSurface.Tests
                 case MethodInfo m:
                     if (!IsVisible(m)) return null;
                     if (m.IsSpecialName) return null; // property and event accessors, rendered with their property
-                    return $"{Modifiers(m)}{TypeName(m.ReturnType)} {m.Name}{Generics(m)}({Parameters(m)})";
+                    return $"{Modifiers(m)}{TypeName(m.ReturnType)} {m.Name}{GenericParams(m)}({Parameters(m)}){GenericConstraints(m)}";
 
                 case ConstructorInfo c:
                     if (!IsVisible(c)) return null;
@@ -199,14 +199,85 @@ namespace Mapsicle.ApiSurface.Tests
 
         private static bool IsVisible(MethodBase m) => m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly;
 
+        /// <summary>
+        /// Accessibility and binding, both of which are part of the contract.
+        /// </summary>
+        /// <remarks>
+        /// Accessibility is recorded because narrowing a member from public to protected breaks
+        /// every consumer that called it while leaving the name and signature identical. Without it
+        /// the baseline would render both the same way and the gate would pass a genuine break.
+        /// </remarks>
         private static string Modifiers(MethodBase m) =>
-            (m.IsStatic ? "static " : "") + (m.IsAbstract ? "abstract " : "") + (m.IsVirtual && !m.IsAbstract && !m.IsFinal ? "virtual " : "");
+            Accessibility(m)
+            + (m.IsStatic ? "static " : "")
+            + (m.IsAbstract ? "abstract " : "")
+            + (m.IsVirtual && !m.IsAbstract && !m.IsFinal ? "virtual " : "");
 
-        private static string Generics(MethodInfo m) =>
-            m.IsGenericMethodDefinition ? "<" + string.Join(",", m.GetGenericArguments().Select(a => a.Name)) + ">" : "";
+        private static string Accessibility(MethodBase m) =>
+            m.IsPublic ? "public " : m.IsFamilyOrAssembly ? "protected internal " : m.IsFamily ? "protected " : "";
 
+        /// <summary>
+        /// Generic parameters with their constraints.
+        /// </summary>
+        /// <remarks>
+        /// A constraint is part of what a caller must satisfy, so adding <c>where T : new()</c> to an
+        /// existing method breaks callers that were passing a type without a parameterless
+        /// constructor. Recording only the parameter names would render that change invisible.
+        /// </remarks>
+        private static string GenericParams(MethodInfo m) =>
+            m.IsGenericMethodDefinition
+                ? "<" + string.Join(",", m.GetGenericArguments().Select(a => a.Name)) + ">"
+                : "";
+
+        // Rendered after the parameter list, where C# puts them, so the baseline reads as a
+        // signature rather than as reflection output.
+        private static string GenericConstraints(MethodInfo m) =>
+            m.IsGenericMethodDefinition
+                ? string.Join("", m.GetGenericArguments().Select(Constraints))
+                : "";
+
+        private static string Constraints(Type arg)
+        {
+            var parts = new List<string>();
+            var attrs = arg.GenericParameterAttributes;
+
+            if (attrs.HasFlag(GenericParameterAttributes.ReferenceTypeConstraint)) parts.Add("class");
+            if (attrs.HasFlag(GenericParameterAttributes.NotNullableValueTypeConstraint)) parts.Add("struct");
+
+            foreach (var c in arg.GetGenericParameterConstraints().OrderBy(TypeName, StringComparer.Ordinal))
+            {
+                if (c == typeof(ValueType)) continue; // implied by the struct constraint above
+                parts.Add(TypeName(c));
+            }
+
+            if (attrs.HasFlag(GenericParameterAttributes.DefaultConstructorConstraint)
+                && !attrs.HasFlag(GenericParameterAttributes.NotNullableValueTypeConstraint))
+            {
+                parts.Add("new()");
+            }
+
+            return parts.Count == 0 ? "" : $" where {arg.Name} : {string.Join(", ", parts)}";
+        }
+
+        /// <summary>
+        /// Parameters, including the by-reference kind.
+        /// </summary>
+        /// <remarks>
+        /// <c>ref</c>, <c>out</c> and <c>in</c> all render as the same by-ref type in reflection, so
+        /// without this a change from <c>ref</c> to <c>out</c> produces an identical baseline while
+        /// breaking every call site.
+        /// </remarks>
         private static string Parameters(MethodBase m) =>
-            string.Join(", ", m.GetParameters().Select(p => TypeName(p.ParameterType) + " " + p.Name));
+            string.Join(", ", m.GetParameters().Select(p =>
+                ByRefKind(p) + TypeName(p.ParameterType) + " " + p.Name + (p.IsOptional ? " = default" : "")));
+
+        private static string ByRefKind(ParameterInfo p)
+        {
+            if (!p.ParameterType.IsByRef) return "";
+            if (p.IsOut) return "out ";
+            if (p.GetCustomAttributes(typeof(System.Runtime.InteropServices.InAttribute), false).Length > 0) return "in ";
+            return "ref ";
+        }
 
         private static string TypeName(Type t)
         {

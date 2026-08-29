@@ -84,6 +84,10 @@ namespace Mapsicle.Docs.Tests
             var unmapped = Mapper.GetUnmappedProperties<Order, OrderDto>();
             Assert.Empty(unmapped);
 
+            // The guide shows AssertMappingValid as the replacement habit for
+            // AssertConfigurationIsValid, so it is executed here rather than only quoted.
+            Mapper.AssertMappingValid<Order, OrderDto>();
+
             // The other half of the guide's claim: it actually reports a member convention misses.
             var missing = Mapper.GetUnmappedProperties<Order, OrderWithUnmappedDto>();
             Assert.Contains("SomethingConventionCannotFind", missing);

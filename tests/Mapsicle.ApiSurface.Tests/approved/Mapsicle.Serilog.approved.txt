@@ -1,16 +1,16 @@
 class Mapsicle.Serilog.LoggingOptions
     .ctor()
-    Serilog.Events.LogEventLevel LogLevel { get;set; }
-    System.Boolean IncludePropertyDetails { get;set; }
-    System.Boolean LogCacheStatus { get;set; }
-    System.Nullable<System.TimeSpan> SlowMappingThreshold { get;set; }
+    public Serilog.Events.LogEventLevel LogLevel { get;set; }
+    public System.Boolean IncludePropertyDetails { get;set; }
+    public System.Boolean LogCacheStatus { get;set; }
+    public System.Nullable<System.TimeSpan> SlowMappingThreshold { get;set; }
 class Mapsicle.Serilog.MappingLoggingScope
-    System.Void Dispose()
-    System.Void RecordError()
-    System.Void RecordMapping()
+    public System.Void Dispose()
+    public System.Void RecordError()
+    public System.Void RecordMapping()
 class Mapsicle.Serilog.SerilogExtensions
-    static Mapsicle.Serilog.MappingLoggingScope BeginMappingScope(System.String operationName)
-    static System.Collections.Generic.List<TDest> MapCollectionWithLogging<TDest>(System.Collections.IEnumerable source)
-    static System.Void Reset()
-    static System.Void UseSerilog(Serilog.ILogger logger, System.Action<Mapsicle.Serilog.LoggingOptions> configure)
-    static TDest MapWithLogging<TDest>(System.Object source)
+    public static Mapsicle.Serilog.MappingLoggingScope BeginMappingScope(System.String operationName)
+    public static System.Collections.Generic.List<TDest> MapCollectionWithLogging<TDest>(System.Collections.IEnumerable source)
+    public static System.Void Reset()
+    public static System.Void UseSerilog(Serilog.ILogger logger, System.Action<Mapsicle.Serilog.LoggingOptions> configure = default)
+    public static TDest MapWithLogging<TDest>(System.Object source)

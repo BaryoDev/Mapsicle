@@ -3,9 +3,13 @@
 This page is about moving a real codebase, not about why you might want to. If you have forty
 profiles and `IMapper` injected in thirty handlers, this is what changes and what does not.
 
-Every code sample here is compiled and executed by `tests/Mapsicle.Docs.Tests`. A sample that stops
-working fails the build, because a migration guide whose samples quietly stopped compiling is the
+Every **Mapsicle** sample here is compiled and executed by `tests/Mapsicle.Docs.Tests`, so one that
+stops working fails the build. A migration guide whose samples quietly stopped compiling is the
 documentation version of a benchmark that prints a number and exits 0.
+
+The AutoMapper snippets are not compiled. They are there to show what you are moving away from, and
+the project deliberately does not reference AutoMapper outside `tests/Mapsicle.Parity.Tests` and the
+benchmarks. Treat those blocks as illustrative and the Mapsicle ones as verified.
 
 ## The short version
 

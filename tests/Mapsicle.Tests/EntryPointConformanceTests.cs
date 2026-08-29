@@ -400,6 +400,58 @@ namespace Mapsicle.Tests
             Assert.Equal(new[] { 1, 2, 3 }, result!);
         }
 
+        // ---- A value mapped on its own, not as a property ------------------------------------------
+        // The matrix above asks whether the doors agree about a property. It never asked what
+        // happens to a value mapped directly, and that path had its own reduced cascade covering
+        // only assignable types, ToString and the nullable underlying type. So (object)42 into a
+        // long came back as 0, the same defect as in-place Map one level up. It also reached
+        // dictionary values, which is how a Dictionary<string,int> into a Dictionary<string,long>
+        // produced zeroes.
+
+        [Theory]
+        [InlineData(42, typeof(long), 42L)]
+        [InlineData(42, typeof(decimal), 42)]
+        [InlineData(42, typeof(double), 42)]
+        [InlineData(42, typeof(int), 42)]
+        public void ATopLevelValue_ConvertsTheSameWayAPropertyWould(int source, Type destination, object expected)
+        {
+            Mapper.ClearCache();
+            var method = typeof(Mapper).GetMethod(nameof(Mapper.MapTo), new[] { typeof(object) })!
+                .MakeGenericMethod(destination);
+            var actual = method.Invoke(null, new object[] { source });
+            Assert.Equal(Convert.ChangeType(expected, destination), actual);
+        }
+
+        [Fact]
+        public void ATopLevelEnum_ConvertsToItsInteger()
+        {
+            Mapper.ClearCache();
+            Assert.Equal(1, ((object)ConfColour.Green).MapTo<int>());
+        }
+
+        [Fact]
+        public void ATopLevelNarrowingValue_StaysUnmapped()
+        {
+            // Positive control: converting everything would satisfy the tests above while
+            // reintroducing silent truncation, which the widening table deliberately refuses.
+            Mapper.ClearCache();
+            Assert.Equal(0, ((object)5_000_000_000L).MapTo<int>());
+        }
+
+        [Fact]
+        public void ADictionaryWhoseValuesNeedWidening_CarriesTheValues()
+        {
+            Mapper.ClearCache();
+
+            var source = new Dictionary<string, int> { ["a"] = 1, ["b"] = 2 };
+            var result = ((object)source).MapTo<Dictionary<string, long>>();
+
+            Assert.NotNull(result);
+            Assert.Equal(2, result!.Count);
+            Assert.Equal(1L, result["a"]);
+            Assert.Equal(2L, result["b"]);
+        }
+
         // ---- Cycle detection has to survive being asked about cyclic type graphs ------------------
         // Found by adversarial review of the fix for the collection-cycle crash, before merge.
         // The predicate deciding whether a type can take part in a cycle walked collection element

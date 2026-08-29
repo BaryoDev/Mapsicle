@@ -107,6 +107,44 @@ namespace Mapsicle.Tests
             });
         }
 
+        [Fact]
+        public void AnObjectDeclaredMember_HoldingANumber_StillFormatsInvariantly()
+        {
+            // The static check can only see the declared type. A member declared as object holding a
+            // boxed decimal fell past it to a bare ToString() and produced "1234,5" under de-DE,
+            // while the same value in a decimal member produced "1234.5". The culture bug survived
+            // in the one place the compile-time check cannot reach.
+            WithCulture("de-DE", () =>
+            {
+                Mapper.ClearCache();
+                var dto = ((object)new BoxedSource { Amount = 1234.5m }).MapTo<CultureDest>();
+
+                Assert.Equal("1234.5", dto!.Amount);
+            });
+        }
+
+        [Fact]
+        public void AnObjectDeclaredMember_HoldingAString_IsUnchanged()
+        {
+            // Positive control: only values that format themselves are reformatted.
+            WithCulture("de-DE", () =>
+            {
+                Mapper.ClearCache();
+                var dto = ((object)new BoxedSource { Amount = "1234,5 as written" }).MapTo<CultureDest>();
+
+                Assert.Equal("1234,5 as written", dto!.Amount);
+            });
+        }
+
+        [Fact]
+        public void AnObjectDeclaredMember_HoldingNull_YieldsNull()
+        {
+            Mapper.ClearCache();
+            var dto = ((object)new BoxedSource { Amount = null }).MapTo<CultureDest>();
+
+            Assert.Null(dto!.Amount);
+        }
+
         private static void WithCulture(string name, Action body)
         {
             var previousCulture = CultureInfo.CurrentCulture;
@@ -185,6 +223,7 @@ namespace Mapsicle.Tests
         // ---- Types, unique to this file ----------------------------------------------------------
 
         public class CultureSource { public decimal Amount { get; set; } }
+        public class BoxedSource { public object? Amount { get; set; } }
         public class CultureTextSource { public string? Amount { get; set; } }
         public class CultureDest { public string? Amount { get; set; } }
         public class CultureDoubleSource { public double Amount { get; set; } }

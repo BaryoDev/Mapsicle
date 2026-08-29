@@ -97,6 +97,10 @@ namespace Mapsicle.Tests
             }
             finally
             {
+                // Restored rather than left at false. xUnit does not guarantee method order, so a
+                // later test in this collection would otherwise run against whichever cache this
+                // one happened to leave behind.
+                Mapper.UseLruCache = previous;
                 Mapper.ClearCache();
             }
         }
