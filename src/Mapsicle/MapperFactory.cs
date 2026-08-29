@@ -285,12 +285,7 @@ namespace Mapsicle
                 foreach (var destProp in destProps)
                 {
                     if (!destProp.CanWrite) continue;
-                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                    var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                     if (sourceProp != null)
                     {
@@ -409,12 +404,7 @@ namespace Mapsicle
             foreach (var destProp in destProps)
             {
                 if (!destProp.CanWrite) continue;
-                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                 if (sourceProp != null)
                 {

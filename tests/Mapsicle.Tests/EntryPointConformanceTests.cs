@@ -297,6 +297,31 @@ namespace Mapsicle.Tests
             }
         }
 
+        // ---- [MapFrom] naming a property that does not exist -------------------------------------
+        // Found while collapsing the duplicated binding loops, not by the audit. The strongly-typed
+        // path resolved [MapFrom] with its own inline scan that matched only the named property,
+        // while every other door fell back to the destination member's own name. So the same two
+        // types produced a value through one overload and null through another, decided by which
+        // one the caller happened to reach for.
+
+        [Fact]
+        public void MapFromNamingAMissingProperty_FallsBackToTheMemberName_OnEveryDoor()
+        {
+            AssertAllDoorsAgree<ConfMapFromSource, ConfMapFromDest>(
+                new ConfMapFromSource { Name = "value" }, "value", d => d.Name);
+        }
+
+        [Fact]
+        public void MapFromNamingARealProperty_StillWins_OnEveryDoor()
+        {
+            // The positive control. Falling back unconditionally would satisfy the test above while
+            // breaking [MapFrom] for everyone using it as intended.
+            AssertAllDoorsAgree<ConfRenameSource, ConfRenameDest>(
+                new ConfRenameSource { Original = "from-attribute", Renamed = "from-name" },
+                "from-attribute",
+                d => d.Renamed);
+        }
+
         // ---- Non-List collection destinations ---------------------------------------------------
         // The collection path materialised a List<T> and assigned it only when the destination was
         // assignable from that list, or converted to an array. Anything else fell through to the
@@ -412,6 +437,20 @@ namespace Mapsicle.Tests
 
         public class ConfInterfaceSource { public IConfThing? Item { get; set; } }
         public class ConfConcreteDest { public ConfThing? Item { get; set; } }
+
+        public class ConfMapFromSource { public string? Name { get; set; } }
+        public class ConfMapFromDest
+        {
+            [MapFrom("DoesNotExist")]
+            public string? Name { get; set; }
+        }
+
+        public class ConfRenameSource { public string? Original { get; set; } public string? Renamed { get; set; } }
+        public class ConfRenameDest
+        {
+            [MapFrom("Original")]
+            public string? Renamed { get; set; }
+        }
 
         public class ConfNode
         {

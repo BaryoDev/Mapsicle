@@ -721,20 +721,7 @@ namespace Mapsicle
                 for (int i = 0; i < destProps.Length; i++)
                 {
                     var destProp = destProps[i];
-                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                    PropertyInfo? sourceProp = null;
-                    for (int j = 0; j < sourceProps.Length; j++)
-                    {
-                        if (sourceProps[j].Name.Equals(sourcePropertyName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            sourceProp = sourceProps[j];
-                            break;
-                        }
-                    }
+                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                     if (sourceProp != null)
                     {
@@ -990,12 +977,7 @@ namespace Mapsicle
                     for (int i = 0; i < destProps.Length; i++)
                     {
                         var destProp = destProps[i];
-                        if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                        var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                        string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                        var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                        if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                         if (sourceProp != null)
                         {
@@ -1105,12 +1087,7 @@ namespace Mapsicle
                 for (int i = 0; i < destProps.Length; i++)
                 {
                     var destProp = destProps[i];
-                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
-
-                    var mapFromAttr = destProp.GetCustomAttribute<MapFromAttribute>();
-                    string sourcePropertyName = mapFromAttr?.SourcePropertyName ?? destProp.Name;
-
-                    var sourceProp = FindSourceProperty(sourceProps, sourcePropertyName, destProp.Name);
+                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
 
                     if (sourceProp != null)
                     {
