@@ -1318,76 +1318,100 @@ namespace Mapsicle
             // OPTIMIZATION: Cache the mapper delegate once and reuse for all items
             Type? itemType = null;
             Func<object, T>? cachedMapper = null;
-            bool trackDepth = false;
+            bool depthHeld = false;
+            bool depthExhausted = false;
 
-            foreach (var item in source)
+            try
             {
-                if (item is null)
+                foreach (var item in source)
                 {
-                    result.Add(default!);
-                    continue;
-                }
-
-                // The cached delegate is compiled for exactly one runtime type, and its first
-                // instruction is a cast to that type. A collection declared List<Animal> may hold a
-                // Dog and then a Cat, in which case applying Dog's delegate to the Cat threw
-                // InvalidCastException from inside the compiled lambda. Fall back to the per-item
-                // path for the odd item out; the homogeneous case, which is nearly all of them,
-                // still pays only one reference comparison.
-                if (cachedMapper is not null && item.GetType() != itemType)
-                {
-                    result.Add(item.MapTo<T>()!);
-                    continue;
-                }
-
-                // Lazily get mapper for first non-null item
-                if (cachedMapper is null)
-                {
-                    itemType = item.GetType();
-                    var key = (itemType, typeof(T));
-                    // OPTIMIZATION: Direct cache access
-                    if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
-                    {
-                        cachedMapper = (Func<object, T>)cached;
-                        trackDepth = NeedsDepthTracking(itemType);
-                    }
-                    else
-                    {
-                        // Fall back to single-item MapTo which will cache the delegate
-                        result.Add(item.MapTo<T>()!);
-                        // Now get the cached delegate for subsequent items
-                        if (!_useLruCache && _mapToCache.TryGetValue(key, out cached))
-                        {
-                            cachedMapper = (Func<object, T>)cached;
-                            trackDepth = NeedsDepthTracking(itemType);
-                        }
-                        continue;
-                    }
-                }
-
-                // Items with nested complex objects must map under depth tracking so a
-                // cyclic graph in any item hits MaxDepth instead of overflowing the stack
-                if (trackDepth)
-                {
-                    if (!IncrementDepth())
+                    if (item is null)
                     {
                         result.Add(default!);
                         continue;
                     }
-                    try
+
+                    if (depthExhausted)
                     {
-                        result.Add(cachedMapper(item)!);
+                        result.Add(default!);
+                        continue;
                     }
-                    finally
+
+                    // Lazily get mapper for first non-null item
+                    if (cachedMapper is null)
                     {
-                        DecrementDepth();
+                        itemType = item.GetType();
+                        var key = (itemType, typeof(T));
+                        bool alreadyMapped = false;
+
+                        // OPTIMIZATION: Direct cache access
+                        if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
+                        {
+                            cachedMapper = (Func<object, T>)cached;
+                        }
+                        else
+                        {
+                            // Fall back to single-item MapTo which will cache the delegate. This
+                            // adds the item, so it must not be mapped again by the loop body below.
+                            result.Add(item.MapTo<T>()!);
+                            alreadyMapped = true;
+
+                            // Now get the cached delegate for subsequent items
+                            if (!_useLruCache && _mapToCache.TryGetValue(key, out cached))
+                            {
+                                cachedMapper = (Func<object, T>)cached;
+                            }
+                            else
+                            {
+                                continue;
+                            }
+                        }
+
+                        // Depth is taken once for the whole collection, not once per element.
+                        // Mapping a collection is one level of nesting however many items it holds,
+                        // and every item starts from the same depth either way, so the cycle
+                        // ceiling is unchanged. Per item this used to cost an IncrementDepth, a
+                        // try/finally and a DecrementDepth, on a loop body of about twenty
+                        // nanoseconds.
+                        if (NeedsDepthTracking(itemType))
+                        {
+                            if (!IncrementDepth())
+                            {
+                                depthExhausted = true;
+                                continue;
+                            }
+                            depthHeld = true;
+                        }
+
+                        if (alreadyMapped)
+                        {
+                            continue;
+                        }
                     }
-                }
-                else
-                {
+
+                    // The cached delegate is compiled for exactly one runtime type, and its first
+                    // instruction is a cast to that type. A collection declared List<Animal> may hold a
+                    // Dog and then a Cat, in which case applying Dog's delegate to the Cat threw
+                    // InvalidCastException from inside the compiled lambda. Fall back to the per-item
+                    // path for the odd item out; the homogeneous case, which is nearly all of them,
+                    // still pays only one reference comparison.
+                    if (item.GetType() != itemType)
+                    {
+                        result.Add(item.MapTo<T>()!);
+                        continue;
+                    }
+
                     result.Add(cachedMapper(item)!);
                 }
             }
+            finally
+            {
+                if (depthHeld)
+                {
+                    DecrementDepth();
+                }
+            }
+
             return result;
         }
 
