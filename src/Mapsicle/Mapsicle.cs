@@ -572,18 +572,73 @@ namespace Mapsicle
             return _needsDepthTrackingCache.GetOrAdd(type, HasNestedComplexTypes);
         }
 
+        /// <summary>
+        /// Whether a type can take part in a reference cycle, and so needs depth tracking.
+        /// </summary>
+        /// <remarks>
+        /// This used to treat any <c>IEnumerable</c> property as harmless, so a type whose only
+        /// recursion ran through a collection of itself was judged acyclic. Depth tracking was then
+        /// skipped and the collection path recursed with no ceiling: a tree node holding a
+        /// <c>List</c> of its own type with a back edge overflowed the stack and took the process
+        /// down with an uncatchable <c>StackOverflowException</c>. The ASP.NET Core helpers map on
+        /// this path, so a self-referential request body was a remote crash.
+        ///
+        /// A collection is now judged by what it holds, not by being a collection.
+        /// </remarks>
         private static bool HasNestedComplexTypes(Type type)
         {
             var props = GetCachedReadableProperties(type);
             for (int i = 0; i < props.Length; i++)
             {
-                var propType = props[i].PropertyType;
-                if (propType.IsClass && propType != typeof(string) && !typeof(System.Collections.IEnumerable).IsAssignableFrom(propType))
+                if (CanHoldMappableReference(props[i].PropertyType))
                 {
-                    return true; // Has nested complex object - needs depth tracking
+                    return true;
                 }
             }
             return false;
+        }
+
+        private static bool CanHoldMappableReference(Type propType)
+        {
+            if (propType == typeof(string) || propType.IsPrimitive)
+            {
+                return false;
+            }
+
+            if (typeof(System.Collections.IEnumerable).IsAssignableFrom(propType))
+            {
+                var element = GetEnumerableElementType(propType);
+
+                // A non-generic IEnumerable advertises nothing about what it holds, so it has to be
+                // assumed capable of holding a cycle. Guessing the other way is how this crashed.
+                return element is null || CanHoldMappableReference(element);
+            }
+
+            return propType.IsClass || propType.IsInterface;
+        }
+
+        private static Type? GetEnumerableElementType(Type type)
+        {
+            if (type.IsArray)
+            {
+                return type.GetElementType();
+            }
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return type.GetGenericArguments()[0];
+            }
+
+            var interfaces = type.GetInterfaces();
+            for (int i = 0; i < interfaces.Length; i++)
+            {
+                if (interfaces[i].IsGenericType && interfaces[i].GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return interfaces[i].GetGenericArguments()[0];
+                }
+            }
+
+            return null;
         }
 
         private static Func<TSource, TDest> BuildTypedMapper<TSource, TDest>()
@@ -709,18 +764,9 @@ namespace Mapsicle
                     if (sourceProp != null)
                     {
                         var propExp = Expression.Property(sourceParam, sourceProp);
-                        if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
-                        {
-                            args.Add(Expression.Convert(propExp, param.ParameterType));
-                        }
-                        else if (param.ParameterType == typeof(string))
-                        {
-                            args.Add(PropertyConversion.BuildToString(propExp, sourceProp.PropertyType));
-                        }
-                        else
-                        {
-                            args.Add(Expression.Default(param.ParameterType));
-                        }
+                        var value = PropertyConversion.TryBuild(
+                            propExp, sourceProp.PropertyType, param.ParameterType, BuildNestedMapCall);
+                        args.Add(value ?? Expression.Default(param.ParameterType));
                     }
                     else
                     {
@@ -851,6 +897,22 @@ namespace Mapsicle
                     {
                         return Expression.Lambda<Func<object, T>>(Expression.Convert(call, destType), sourceParam).Compile();
                     }
+
+                    // A destination that is neither an array nor assignable from List<T> used to
+                    // fall through to the member-init path below, which constructed the collection
+                    // and populated nothing. A HashSet<string> came back non-null and empty, so the
+                    // destination looked mapped while every item had been dropped.
+                    //
+                    // Most collections take IEnumerable<T>: HashSet, SortedSet, Queue, Stack,
+                    // Collection, ObservableCollection, and Dictionary via KeyValuePair.
+                    var fromEnumerable = destType.GetConstructor(
+                        new[] { typeof(IEnumerable<>).MakeGenericType(targetItemType) });
+
+                    if (fromEnumerable != null)
+                    {
+                        var built = Expression.New(fromEnumerable, call);
+                        return Expression.Lambda<Func<object, T>>(Expression.Convert(built, destType), sourceParam).Compile();
+                    }
                 }
 
                 // OPTIMIZATION: Use cached property arrays instead of reflection + LINQ
@@ -925,23 +987,9 @@ namespace Mapsicle
                         if (sourceProp != null)
                         {
                             var propExp = Expression.Property(typedSource, sourceProp);
-                            if (param.ParameterType.IsAssignableFrom(sourceProp.PropertyType))
-                            {
-                                args.Add(Expression.Convert(propExp, param.ParameterType));
-                            }
-                            else if (param.ParameterType == typeof(string))
-                            {
-                                var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
-                                args.Add(toStringCall);
-                            }
-                            else if (sourceProp.PropertyType.IsEnum && (param.ParameterType == typeof(int) || param.ParameterType == typeof(long)))
-                            {
-                                args.Add(Expression.Convert(propExp, param.ParameterType));
-                            }
-                            else
-                            {
-                                args.Add(Expression.Default(param.ParameterType));
-                            }
+                            var value = PropertyConversion.TryBuild(
+                                propExp, sourceProp.PropertyType, param.ParameterType, BuildNestedMapCall);
+                            args.Add(value ?? Expression.Default(param.ParameterType));
                         }
                         else
                         {
@@ -1004,27 +1052,14 @@ namespace Mapsicle
                     if (sourceProp != null)
                     {
                         var propExp = Expression.Property(typedSource, sourceProp);
-                        var targetType = destProp.PropertyType;
-                        var srcType = sourceProp.PropertyType;
                         var destPropExp = Expression.Property(typedDest, destProp);
 
-                        if (targetType.IsAssignableFrom(srcType))
-                        {
-                            assignments.Add(Expression.Assign(destPropExp, Expression.Convert(propExp, targetType)));
-                        }
-                        else if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
-                        {
-                            var mapMethod = typeof(Mapper).GetMethods()
-                                .First(m => m.Name == "MapTo" && m.GetParameters().Length == 1 && m.GetGenericArguments().Length == 1)
-                                .MakeGenericMethod(targetType);
+                        var value = PropertyConversion.TryBuild(
+                            propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
 
-                            var recursiveCall = Expression.Call(null, mapMethod, propExp);
-                            assignments.Add(Expression.Assign(destPropExp, recursiveCall));
-                        }
-                        else if (targetType == typeof(string))
+                        if (value != null)
                         {
-                            var toStringCall = PropertyConversion.BuildToString(propExp, sourceProp.PropertyType);
-                            assignments.Add(Expression.Assign(destPropExp, toStringCall));
+                            assignments.Add(Expression.Assign(destPropExp, value));
                         }
                     }
                 }

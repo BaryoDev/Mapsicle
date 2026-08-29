@@ -50,7 +50,13 @@ namespace Mapsicle
 
             // Nested complex object. string is excluded on both sides: it is a class, but mapping into
             // or out of it means ToString or parsing, not member-by-member mapping.
-            if (srcType.IsClass && targetType.IsClass && srcType != typeof(string) && targetType != typeof(string))
+            //
+            // The source side accepts an interface as well as a class. It used to test IsClass alone,
+            // and an interface is not a class, so a source member typed as an abstraction was never
+            // treated as mappable: IThing into a concrete Thing was dropped and read downstream as a
+            // field the source did not have. The recursive map resolves the runtime type, so the
+            // declared type only has to be something that can hold a mappable instance.
+            if (IsMappableSource(srcType) && targetType.IsClass && targetType != typeof(string))
             {
                 return buildNestedMap(propExp, targetType);
             }
@@ -84,6 +90,13 @@ namespace Mapsicle
 
             return null;
         }
+
+        /// <summary>
+        /// Whether a source member of this declared type can hold something worth mapping member by
+        /// member: a class or an interface, and not a string.
+        /// </summary>
+        private static bool IsMappableSource(Type srcType) =>
+            (srcType.IsClass || srcType.IsInterface) && srcType != typeof(string);
 
         /// <summary>
         /// Whether <paramref name="destProp"/> can be filled by flattening <paramref name="sourceProp"/>,
