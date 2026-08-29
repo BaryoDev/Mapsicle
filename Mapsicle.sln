@@ -73,6 +73,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mapsicle.DependencyInjectio
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mapsicle.ApiSurface.Tests", "tests\Mapsicle.ApiSurface.Tests\Mapsicle.ApiSurface.Tests.csproj", "{5B479D56-7881-4917-9A5C-FDC186472021}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mapsicle.Docs.Tests", "tests\Mapsicle.Docs.Tests\Mapsicle.Docs.Tests.csproj", "{75125546-5551-481B-88F7-C6D778614A15}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -467,6 +469,18 @@ Global
 		{5B479D56-7881-4917-9A5C-FDC186472021}.Release|x64.Build.0 = Release|Any CPU
 		{5B479D56-7881-4917-9A5C-FDC186472021}.Release|x86.ActiveCfg = Release|Any CPU
 		{5B479D56-7881-4917-9A5C-FDC186472021}.Release|x86.Build.0 = Release|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Debug|x64.Build.0 = Debug|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Debug|x86.Build.0 = Debug|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Release|Any CPU.Build.0 = Release|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Release|x64.ActiveCfg = Release|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Release|x64.Build.0 = Release|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Release|x86.ActiveCfg = Release|Any CPU
+		{75125546-5551-481B-88F7-C6D778614A15}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -504,5 +518,6 @@ Global
 		{7D4FD76C-014D-452D-A744-2A25D23FF83A} = {6B6174EC-A782-4FDE-A29C-B16A5A827845}
 		{9A03E3C8-280A-4850-88A5-C754A0CDE34C} = {3A0525C5-7A1E-4E6E-A617-442A73AC1522}
 		{5B479D56-7881-4917-9A5C-FDC186472021} = {3A0525C5-7A1E-4E6E-A617-442A73AC1522}
+		{75125546-5551-481B-88F7-C6D778614A15} = {3A0525C5-7A1E-4E6E-A617-442A73AC1522}
 	EndGlobalSection
 EndGlobal

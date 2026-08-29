@@ -5,6 +5,148 @@ All notable changes to Mapsicle are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-08-29
+
+Trust release. An adversarial audit of the core found ten defects under a fully green test suite,
+four of them behaviours where AutoMapper returns the trusted answer and Mapsicle did not, one of
+which crashed the host process. All ten are fixed. The rest of this release is the gates that stop
+them coming back, because every one of these defects lived in a place nothing was looking.
+
+If you map numbers through more than one entry point, map into collections other than `List<T>`,
+map dictionaries, or run in more than one locale, read the breaking changes below before upgrading.
+
+### Breaking
+
+- **The dictionary entry point no longer parses values of the wrong type.** `{ "Age": "123" }` into
+  an `int Age` now leaves the destination at its default instead of parsing to `123`. The documented
+  rule has always been that a value of the wrong type is dropped rather than coerced, and the object
+  entry point always honoured it, but the dictionary path ran `Convert.ChangeType` on anything
+  `IConvertible`. The two doors disagreed about what "wrong type" meant, and someone controlling a
+  dictionary (a parsed form post, a document, a header bag) could push values through conversions
+  the object path refuses. Set `Mapper.CoerceDictionaryValues = true` to keep parsing, which is a
+  reasonable choice for form posts and now uses the invariant culture.
+  ([#27](https://github.com/BaryoDev/Mapsicle/issues/27))
+- **Numbers and dates convert to strings using the invariant culture.** `1234.5m` now maps to
+  `"1234.5"` everywhere. It previously read the ambient thread culture and produced `"1234,5"` under
+  de-DE, so a mapper feeding serialisation or persistence wrote values another region read back as
+  different numbers. ([#31](https://github.com/BaryoDev/Mapsicle/issues/31))
+- **`MapperOptions.MaxDepth` refuses a value below 1 and keeps the default of 32.** Zero used to be
+  accepted and disabled the mapper completely: the first depth check failed before any property was
+  read, so every call returned the destination default with nothing logged and nothing thrown.
+  `Mapper.MaxDepth` has always guarded this; the two are now consistent.
+  ([#34](https://github.com/BaryoDev/Mapsicle/issues/34))
+- **`CacheInfo().Hits` and `Misses` report real counts** under `UseLruCache` instead of always
+  zero. Anything asserting they are zero under load will now fail, which is the point.
+  ([#32](https://github.com/BaryoDev/Mapsicle/issues/32))
+- **The package description no longer claims "2x faster than AutoMapper."** The README and the CI
+  claims gate both put the typed path at about 1.4x, and an inflated claim on the tin costs more
+  trust than it buys. ([#21](https://github.com/BaryoDev/Mapsicle/issues/21))
+
+Four more changes fix silently wrong output. They are listed under Fixed rather than here, but code
+written against the broken behaviour will see different results: in-place `Map` now performs
+conversions it used to skip, record constructors now receive widened values instead of defaults,
+non-`List` collection destinations are now populated instead of empty, and interface-typed source
+members are now mapped instead of dropped.
+
+### Fixed
+
+- **A reference cycle through a collection crashed the process.** A type holding a `List` of itself
+  with a back edge overflowed the stack and terminated the host with an uncatchable
+  `StackOverflowException`. The predicate deciding whether a type needs cycle protection treated any
+  `IEnumerable` property as harmless, so a type that recursed only through a collection was judged
+  acyclic and depth tracking was skipped entirely. Because the ASP.NET Core helpers map on this
+  path, a self-referential request body was a remote unauthenticated crash. A collection is now
+  judged by what it holds rather than by being a collection.
+  ([#22](https://github.com/BaryoDev/Mapsicle/issues/22))
+- **In-place `Map` silently skipped conversions that `MapTo` performed.** Mapping `int 42` onto a
+  `long` destination left it unchanged, while the same property pair through `MapTo` gave `42`.
+  `Map` hand-rolled a reduced cascade covering only assignable types, nested classes and
+  `ToString`, so widening numerics, enum to integer and nullable to non-nullable fell through
+  untouched. Both the static and `MapperFactory` versions were affected.
+  ([#28](https://github.com/BaryoDev/Mapsicle/issues/28))
+- **Constructor and record parameters ignored numeric widening.** An `int 42` mapped into a record
+  with a `long` parameter arrived as `0`, because a widening pair is not assignable in the CLR type
+  system and the argument fell to `Expression.Default`. Records are the standard modern DTO shape,
+  so this hit the most common destination. All three constructor paths now ask the shared cascade.
+  ([#29](https://github.com/BaryoDev/Mapsicle/issues/29))
+- **Collection destinations other than `List<T>` and arrays came back empty.** A `HashSet<string>`
+  destination was constructed, populated with nothing, and returned non-null, so callers saw a
+  mapped-looking destination that had silently lost every item. Collections are now built through
+  their `IEnumerable<T>` constructor, which covers `HashSet`, `SortedSet`, `Queue`, `Stack`,
+  `Collection`, `ObservableCollection` and `Dictionary`.
+  ([#30](https://github.com/BaryoDev/Mapsicle/issues/30))
+- **An interface-typed source member was dropped.** `IThing Item` into a concrete `Thing Item` was
+  never attempted, because the nested-object branch tested `IsClass` and an interface is not a
+  class, so the member read downstream as one the source did not have. The recursive map resolves
+  the runtime type, so the declared type only has to be able to hold a mappable instance.
+  ([#35](https://github.com/BaryoDev/Mapsicle/issues/35))
+- **A `MapTo` overload was still selected by reflection ordering.** One of the two sites named in
+  [#4](https://github.com/BaryoDev/Mapsicle/issues/4) was fixed and the issue closed; the other, in
+  in-place `Map`, kept `GetMethods().First(...)`. Three public overloads satisfy that predicate and
+  `Type.GetMethods()` does not guarantee order, so the right one was picked by luck on .NET 8.
+  ([#39](https://github.com/BaryoDev/Mapsicle/issues/39))
+- **`LruCache.Count` drifted upward under concurrent misses.** `ConcurrentDictionary.GetOrAdd` may
+  run the factory on several threads and keep one result, and the count was incremented by every
+  thread whose factory ran rather than by the one whose value was kept. The count drifted
+  permanently above the real size and the cache began evicting below its own capacity. Values are
+  now held in a `Lazy<T>` and counted by the wrapper's reference identity, which also stops the
+  losing threads compiling an expression tree that is thrown away.
+  ([#25](https://github.com/BaryoDev/Mapsicle/issues/25), reported by
+  [@ZakariaHogeschoolR](https://github.com/ZakariaHogeschoolR))
+- **The in-place `Map` shallow-copy contract is now documented and pinned by tests.** A
+  directly-assignable reference-typed member is shared with the source rather than copied, on every
+  entry point, so mutating the source afterwards reaches into the destination. This is deliberate
+  and matches AutoMapper, but it was undocumented, which meant a caller pointing `Map` at a
+  long-lived entity had no way to know. ([#33](https://github.com/BaryoDev/Mapsicle/issues/33))
+
+### Added
+
+- **`Mapsicle.DependencyInjection`**, a new package. `services.AddMapsicle()` registers a mapper
+  with no configuration at all, then inject `IMapperInstance`. The only registration before this
+  lived in `Mapsicle.Fluent` and both overloads demanded a configuration callback, so a library
+  whose argument is that no configuration is needed could not be registered without writing some.
+  It is a separate package because the core declares no dependencies and a CI gate enforces that.
+  ([#44](https://github.com/BaryoDev/Mapsicle/issues/44))
+- **net10.0 across every package and test project.** net8.0 goes end of life on 10 November 2026 and
+  two packages targeted it alone. The suite runs on both runtimes.
+  ([#24](https://github.com/BaryoDev/Mapsicle/issues/24))
+- **XML documentation in every package.** `GenerateDocumentationFile` was set nowhere, so all twelve
+  packages shipped without it and gave consumers bare signatures in IntelliSense. The doc comments
+  had been written the whole time and were discarded at build. Turning it on raised 258 warnings
+  across 43 public members, all of which are documented rather than suppressed.
+  ([#43](https://github.com/BaryoDev/Mapsicle/issues/43))
+- `Mapper.CoerceDictionaryValues`, opting the dictionary path back into parsing wrong-typed values,
+  invariantly. ([#27](https://github.com/BaryoDev/Mapsicle/issues/27))
+
+### Verification
+
+The defects above all shipped under a green suite, so this release adds the checks that would have
+caught them. Each was confirmed capable of failing before being trusted.
+
+- **An entry-point conformance matrix.** One conversion table run through every public door,
+  asserting they agree. Three of the ten audit findings were the same shape, one door converting
+  where another did not, and no test asked that question because the suite is organised by feature
+  rather than by entry point. Six rows failed when it was written.
+  ([#38](https://github.com/BaryoDev/Mapsicle/issues/38))
+- **The AutoMapper head to head runs in CI.** The claim that Mapsicle can be trusted at least as
+  much as AutoMapper had been checked once, by hand, during an audit. It now fails the build if
+  Mapsicle is worse on any row, including hostile input.
+  ([#37](https://github.com/BaryoDev/Mapsicle/issues/37))
+- **The netstandard2.0 assemblies are tested.** They were compiled, packed and published without a
+  test ever loading them, because every test project resolved the net8.0 asset. A dedicated project
+  forces the netstandard2.0 asset and asserts it really loaded it before asserting anything else.
+  ([#23](https://github.com/BaryoDev/Mapsicle/issues/23))
+- **A public API baseline.** Section 7 of CLAUDE.md promises no public member changes within a
+  major version and nothing checked it. The surface of all thirteen packages is now compared against
+  a committed baseline, captured in 2.0.0 because a major version is the window where breaks are
+  allowed. ([#40](https://github.com/BaryoDev/Mapsicle/issues/40))
+- **A coverage floor at 70%.** Coverage was collected by no CI job. Measuring it also revealed that
+  five test projects did not reference `coverlet.collector`, so their suites produced no data at
+  all: `Mapsicle.Validation` read 12.7% with twenty-seven passing tests against it purely because
+  none of them were counted. The real figure is 74.6%, and overall is 71.7%.
+  ([#42](https://github.com/BaryoDev/Mapsicle/issues/42))
+- **A pack gate for XML documentation**, so it cannot quietly stop being shipped.
+
 ## [1.3.0] - 2026-08-21
 
 Correctness release. Seven defects, two of which corrupted data silently and three of which threw
