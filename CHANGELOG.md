@@ -5,10 +5,75 @@ All notable changes to Mapsicle are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.1.0
+
+Two defects in `Mapsicle.Fluent`, one of them a control that did not hold, and a round of
+performance work on the paths that were slowest. No public API changed.
+
+### Fixed
+
+- **A fluent configuration was ignored entirely when mapping a collection** (#53). A collection fell
+  through to the core mapper, which knows nothing about a fluent configuration, so `ForMember`,
+  `Condition`, `ResolveUsing` and `Ignore` were all skipped and the elements came back mapped by
+  convention. `Ignore()` protected a single object and not a list of them, so a member excluded to
+  keep it out of a DTO came back populated, with nothing raised and nothing logged. Elements now go
+  through the same configured map one object does.
+- **`Map<List<T>>` returned an empty list** (#53). Not null, not an exception, an empty list, from
+  the call shape people arriving from AutoMapper write first. `Map<T[]>` returned the elements, so
+  the two collection forms disagreed and the quiet one was the common one.
+
+### Performance
+
+Measured on an idle 4-core Ampere VM, medians of repeated runs.
+
+- **A nested reference costs 26 ns per member per item, down from 66.** Each one went back through
+  the untyped entry point for every member of every item, paying two dictionary lookups to reach a
+  delegate that is the same one every time. A DTO with one nested member maps 1.62x faster and one
+  with two maps 1.83x faster.
+- **A complex object through `Mapsicle.Fluent` is at parity with AutoMapper, from 3.49x slower.**
+  1,022 ns to 287, against AutoMapper's 285. Deciding whether any override applied walked every
+  writable member asking three case-insensitive dictionaries about each, on every call; applying
+  them wrote each member through `PropertyInfo.SetValue`; members with a custom mapping were
+  resolved by convention first and then overwritten; and the converter, type map, collection shape
+  and override plan were four separate lookups per map. All of it is settled once per pair per
+  configuration version now. A hundred such objects is 1.21x AutoMapper, from 5.20x.
+- Allocation for a fluent map fell from 424 B to 208 B.
+
+### Changed
+
+- **The claim gate measures with a job that can resolve what it reports.** It ran BenchmarkDotNet's
+  ShortRun, three warmup iterations and three measured, which on a hosted runner gave a 99.9%
+  interval of plus or minus 43 percent of the mean on a claimed difference of 7 percent. It could
+  not have failed for its own reason. The collection bound moves from 1.60 to 1.15 as a result.
+- **The README numbers are the ones the benchmarks produce.** The published 1.33x slower on
+  collections was measured under ShortRun; at a job that reaches steady state it is 1.07x slower on
+  x64 and 1.04x faster on arm64, and the honest reading of that row is parity. Deep nesting at 8.22x
+  and ten-thousand-element collections at 2.36x were not mentioned at all. The Large Collection row
+  said 4 ms against 4 ms; the figures are 0.48 against 1.13.
+- `Mapsicle.Fluent`'s cost is stated in the README and the migration guide, which recommended it
+  without saying what it cost.
+- CI runs the test suite on arm64 as well as x64 and Windows.
+
+### Fixed in packaging
+
+- **The logo rendered as raw text on nuget.org.** It was an `img` tag with a relative source. GitHub
+  rendered it; NuGet does not allow raw HTML and the relative path would not have resolved there
+  anyway. Three tests now read `README.md` the way NuGet does, because nothing did and the defect is
+  only visible after publishing.
+
+### Known and not fixed
+
+- Mapping into a type with a parameterized constructor fills the constructor parameters and leaves
+  every other writable member unset, silently (#52). That is the shape of most immutable DTOs and
+  every positional record. It predates this release and is not a regression, but it is the next
+  thing worth fixing.
+- A hundred-element collection is 1.07x AutoMapper on x64. On arm64 it is 1.04x faster. The gap is
+  architecture dependent and smaller than the measurement spread on both machines.
+
 ## Unreleased
 
-Nothing released since 2.0.0. The next release is 3.0.0, and its shape is settled rather than open,
-so it is written down here. Everything below is planned and none of it is implemented.
+The next release is 3.0.0, and its shape is settled rather than open, so it is written down here.
+Everything below is planned and none of it is implemented.
 
 ### Planned for 3.0.0: the source generator option
 

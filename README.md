@@ -282,12 +282,18 @@ because one is not evidence of anything portable. Reproduce with
 `dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --core`, which is the job the CI gate
 runs.
 
+The arm64 figures are the **median of six runs** on an idle 4-core Ampere VM. BenchmarkDotNet's
+error column describes how consistent the iterations were inside one process, which is not the same
+as whether the run reproduces. On that machine it does not, closely: repeating the identical commit
+moved the Mapperly collection row by 36 percent, and Mapperly is a source generator this project
+has never touched. A single run of any of these rows is one sample.
+
 **Single object, five properties:**
 
 | Runtime | Manual  | Mapsicle    | AutoMapper | Mapperly | Mapsicle vs AutoMapper |
 | :------ | ------: | ----------: | ---------: | -------: | :--------------------- |
 | x64 Linux (CI runner)   | 18.6 ns | **59.3 ns** | 83.7 ns | 19.4 ns | 1.41x faster |
-| arm64 Linux (Ampere VM) | 23.3 ns | **101.6 ns** | 128.9 ns | 33.7 ns | 1.27x faster |
+| arm64 Linux (Ampere VM) | 23.0 ns | **101.1 ns** | 131.0 ns | 28.2 ns | 1.30x faster |
 
 **Mapperly is not a competitor, it is a different trade, and it wins the one this table measures.**
 At 18.2 ns against hand-written code's 18.3 ns it is not close to manual, it is indistinguishable
@@ -317,9 +323,9 @@ the Mapperly column as the ceiling.
 | Scenario                        |    Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
 | :------------------------------ | ----------: | ---------: | --------: | :------------ |
 | **Flattening**, x64             |  **66.3 ns** |    87.7 ns |   21.6 ns | 1.32x faster  |
-| **Flattening**, arm64           | **117.0 ns** |   137.4 ns |   39.3 ns | 1.17x faster  |
+| **Flattening**, arm64           | **116.5 ns** |   144.8 ns |   33.0 ns | 1.24x faster  |
 | **Collection (100)**, x64       | **2,802 ns** |  2,620 ns  |  2,032 ns | 1.07x slower  |
-| **Collection (100)**, arm64     | **4,511 ns** |  4,721 ns  |  2,855 ns | 1.05x faster  |
+| **Collection (100)**, arm64     | **4,593 ns** |  4,790 ns  |  2,894 ns | 1.04x faster  |
 | **Collection (10,000)**, arm64  | **481 us**   |  1,134 us  |    322 us | 2.36x faster  |
 | **Deep nesting (15 levels)**, arm64 | **626 ns** | 5,145 ns  |    282 ns | 8.22x faster  |
 
@@ -328,9 +334,11 @@ Allocation per operation matches hand-written code for single objects and flatte
 AutoMapper's 6,992 B, about 19 percent less, and the same as source-generated Mapperly.
 
 **Read the collection rows rather than skipping them.** At a hundred elements Mapsicle and
-AutoMapper are close enough that the answer depends on the machine: Mapsicle loses by 7 percent on
-x64 and wins by 5 on arm64. If collection throughput at that size is what your workload is bounded
-by, Mapperly is faster than both on either.
+AutoMapper are close enough that the difference is smaller than the run-to-run spread on the
+machines used to measure it: Mapsicle loses by 7 percent on x64 and wins by 4 on arm64, and five of
+six arm64 runs landed between 1.04x and 1.07x faster with one at 1.09x slower. Treat that row as
+parity rather than as a win for either. If collection throughput at that size is what your workload
+is bounded by, Mapperly is faster than both on either architecture.
 
 At ten thousand the picture changes, and not because the per-element cost changed. AutoMapper
 allocates 742 KB there against Mapsicle's 560 KB, enough to reach generation 2 collections while
