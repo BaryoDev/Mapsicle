@@ -147,6 +147,30 @@ namespace Mapsicle.Performance.Tests
         }
 
         [Fact]
+        public void UntypedCollectionMapOfAList_AllocatesOnlyTheListAndItems()
+        {
+            var sources = Enumerable.Range(0, 100).Select(_ => NewSource()).ToList();
+
+            var bytes = BytesPerCall(() => sources.MapTo<Dest>(), iterations: 200);
+
+            // 100 destinations at 48 B plus one pre-sized List<Dest> is 5,656 B. Enumerating the
+            // List through the non-generic IEnumerable boxed its struct enumerator, 40 B per call
+            // that neither the items nor the list account for; a List or single-dimension array is
+            // walked by index instead. The budget sits below the boxed number on purpose.
+            Assert.True(bytes <= 5_672, $"Untyped collection of 100 allocated {bytes} B/call, budget 5,672 B");
+        }
+
+        [Fact]
+        public void UntypedCollectionMapOfAnArray_AllocatesOnlyTheListAndItems()
+        {
+            var sources = Enumerable.Range(0, 100).Select(_ => NewSource()).ToArray();
+
+            var bytes = BytesPerCall(() => sources.MapTo<Dest>(), iterations: 200);
+
+            Assert.True(bytes <= 5_672, $"Untyped collection of 100 allocated {bytes} B/call, budget 5,672 B");
+        }
+
+        [Fact]
         public void WarmMapping_DoesNotGrowTheCache()
         {
             Mapper.ClearCache();

@@ -1304,7 +1304,37 @@ namespace Mapsicle
         {
             if (source is null) return new List<T>();
 
-            // OPTIMIZATION: Pre-allocate list with capacity hint
+            // Reference arrays and List<T> are the overwhelmingly common shapes, and enumerating
+            // either through the non-generic IEnumerable boxes its struct enumerator and pays two
+            // interface calls per item. That was measurable against AutoMapper, which compiles a
+            // typed loop. Both fast paths below run the exact same MapItems loop, only the cursor
+            // feeding it changes. The gates are deliberately narrow: an arbitrary IList may index
+            // in O(n), a multi-dimension or non-zero-based array throws from the IList indexer,
+            // and both still enumerate fine on the general path.
+            if (source is object[] array)
+            {
+                var result = new List<T>(array.Length);
+                var cursor = new ArrayCursor(array);
+                MapItems(ref cursor, result);
+                return result;
+            }
+
+            if (source is System.Collections.IList list && IsGenericList(source.GetType()))
+            {
+                var result = new List<T>(list.Count);
+                var cursor = new ListCursor(list);
+                MapItems(ref cursor, result);
+                return result;
+            }
+
+            return MapEnumerated<T>(source);
+        }
+
+        private static bool IsGenericList(Type type) =>
+            type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>);
+
+        private static List<T> MapEnumerated<T>(System.Collections.IEnumerable source)
+        {
             List<T> result;
             if (source is System.Collections.ICollection collection)
             {
@@ -1315,80 +1345,182 @@ namespace Mapsicle
                 result = new List<T>();
             }
 
-            // OPTIMIZATION: Cache the mapper delegate once and reuse for all items
+            var enumerator = source.GetEnumerator();
+            try
+            {
+                var cursor = new EnumeratorCursor(enumerator);
+                MapItems(ref cursor, result);
+            }
+            finally
+            {
+                (enumerator as IDisposable)?.Dispose();
+            }
+            return result;
+        }
+
+        private interface IItemCursor
+        {
+            bool MoveNext();
+            object? Current { get; }
+        }
+
+        private struct ListCursor : IItemCursor
+        {
+            private readonly System.Collections.IList _list;
+            private readonly int _count;
+            private int _index;
+
+            public ListCursor(System.Collections.IList list)
+            {
+                _list = list;
+                _count = list.Count;
+                _index = -1;
+            }
+
+            public bool MoveNext() => ++_index < _count;
+            public object? Current => _list[_index];
+        }
+
+        private struct ArrayCursor : IItemCursor
+        {
+            private readonly object?[] _items;
+            private int _index;
+
+            public ArrayCursor(object?[] items)
+            {
+                _items = items;
+                _index = -1;
+            }
+
+            public bool MoveNext() => ++_index < _items.Length;
+            public object? Current => _items[_index];
+        }
+
+        private struct EnumeratorCursor : IItemCursor
+        {
+            private readonly System.Collections.IEnumerator _enumerator;
+
+            public EnumeratorCursor(System.Collections.IEnumerator enumerator) => _enumerator = enumerator;
+
+            public bool MoveNext() => _enumerator.MoveNext();
+            public object? Current => _enumerator.Current;
+        }
+
+        private static void MapItems<T, TCursor>(ref TCursor cursor, List<T> result)
+            where TCursor : struct, IItemCursor
+        {
             Type? itemType = null;
             Func<object, T>? cachedMapper = null;
-            bool trackDepth = false;
+            bool depthHeld = false;
 
-            foreach (var item in source)
+            try
             {
-                if (item is null)
+                // Resolution phase: walk items until the item delegate is cached and the depth
+                // decision is made, then drop into the warm loop below, whose body carries only
+                // the checks that can still change the answer. The two flags this phase settles
+                // used to be re-tested on every item of the warm loop. Under the LRU
+                // configuration every item stays on this path, as it always has.
+                while (cursor.MoveNext())
                 {
-                    result.Add(default!);
-                    continue;
-                }
-
-                // The cached delegate is compiled for exactly one runtime type, and its first
-                // instruction is a cast to that type. A collection declared List<Animal> may hold a
-                // Dog and then a Cat, in which case applying Dog's delegate to the Cat threw
-                // InvalidCastException from inside the compiled lambda. Fall back to the per-item
-                // path for the odd item out; the homogeneous case, which is nearly all of them,
-                // still pays only one reference comparison.
-                if (cachedMapper is not null && item.GetType() != itemType)
-                {
-                    result.Add(item.MapTo<T>()!);
-                    continue;
-                }
-
-                // Lazily get mapper for first non-null item
-                if (cachedMapper is null)
-                {
-                    itemType = item.GetType();
-                    var key = (itemType, typeof(T));
-                    // OPTIMIZATION: Direct cache access
-                    if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
-                    {
-                        cachedMapper = (Func<object, T>)cached;
-                        trackDepth = NeedsDepthTracking(itemType);
-                    }
-                    else
-                    {
-                        // Fall back to single-item MapTo which will cache the delegate
-                        result.Add(item.MapTo<T>()!);
-                        // Now get the cached delegate for subsequent items
-                        if (!_useLruCache && _mapToCache.TryGetValue(key, out cached))
-                        {
-                            cachedMapper = (Func<object, T>)cached;
-                            trackDepth = NeedsDepthTracking(itemType);
-                        }
-                        continue;
-                    }
-                }
-
-                // Items with nested complex objects must map under depth tracking so a
-                // cyclic graph in any item hits MaxDepth instead of overflowing the stack
-                if (trackDepth)
-                {
-                    if (!IncrementDepth())
+                    var item = cursor.Current;
+                    if (item is null)
                     {
                         result.Add(default!);
                         continue;
                     }
-                    try
+
+                    itemType = item.GetType();
+                    var key = (itemType, typeof(T));
+                    bool alreadyMapped = false;
+
+                    // OPTIMIZATION: Direct cache access
+                    if (!_useLruCache && _mapToCache.TryGetValue(key, out var cached))
+                    {
+                        cachedMapper = (Func<object, T>)cached;
+                    }
+                    else
+                    {
+                        // Fall back to single-item MapTo which will cache the delegate. This
+                        // adds the item, so it must not be mapped again by the loop body below.
+                        result.Add(item.MapTo<T>()!);
+                        alreadyMapped = true;
+
+                        // Now get the cached delegate for subsequent items
+                        if (!_useLruCache && _mapToCache.TryGetValue(key, out cached))
+                        {
+                            cachedMapper = (Func<object, T>)cached;
+                        }
+                        else
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Depth is taken once for the whole collection, not once per element.
+                    // Mapping a collection is one level of nesting however many items it holds,
+                    // and every item starts from the same depth either way, so the cycle
+                    // ceiling is unchanged. Per item this used to cost an IncrementDepth, a
+                    // try/finally and a DecrementDepth, on a loop body of about twenty
+                    // nanoseconds.
+                    if (NeedsDepthTracking(itemType))
+                    {
+                        if (!IncrementDepth())
+                        {
+                            // The ceiling was already reached, so nothing deeper can map: the
+                            // rest of the collection degrades to defaults, matching what the
+                            // per-item flag did before this loop was split.
+                            while (cursor.MoveNext())
+                            {
+                                result.Add(default!);
+                            }
+                            return;
+                        }
+                        depthHeld = true;
+                    }
+
+                    if (!alreadyMapped)
                     {
                         result.Add(cachedMapper(item)!);
                     }
-                    finally
+                    break;
+                }
+
+                // Empty, all nulls, or the LRU path mapped everything above.
+                if (cachedMapper is null)
+                {
+                    return;
+                }
+
+                while (cursor.MoveNext())
+                {
+                    var item = cursor.Current;
+                    if (item is null)
                     {
-                        DecrementDepth();
+                        result.Add(default!);
+                    }
+                    // The cached delegate is compiled for exactly one runtime type, and its first
+                    // instruction is a cast to that type. A collection declared List<Animal> may hold a
+                    // Dog and then a Cat, in which case applying Dog's delegate to the Cat threw
+                    // InvalidCastException from inside the compiled lambda. Fall back to the per-item
+                    // path for the odd item out; the homogeneous case, which is nearly all of them,
+                    // still pays only one reference comparison.
+                    else if (item.GetType() != itemType)
+                    {
+                        result.Add(item.MapTo<T>()!);
+                    }
+                    else
+                    {
+                        result.Add(cachedMapper(item)!);
                     }
                 }
-                else
+            }
+            finally
+            {
+                if (depthHeld)
                 {
-                    result.Add(cachedMapper(item)!);
+                    DecrementDepth();
                 }
             }
-            return result;
         }
 
         /// <summary>
