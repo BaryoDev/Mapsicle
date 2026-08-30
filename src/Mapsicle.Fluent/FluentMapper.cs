@@ -760,14 +760,15 @@ namespace Mapsicle.Fluent
 
             // 3. Core mapping (map properties into existing object)
             // Skip when factory was used — factory is expected to produce a fully initialized object
+            var plan = typeMap is null ? null : GetOverridePlan<TDest>(sourceType, typeMap);
+
             if (!usedFactory)
             {
-                source.Map(result);
+                source.Map(result, plan?.Skip);
             }
 
             // 4. Custom overrides
-            if (typeMap != null
-                && GetOverridePlan<TDest>(sourceType, typeMap).Apply is Action<object, TDest> applyOverrides)
+            if (plan?.Apply is Action<object, TDest> applyOverrides)
             {
                 applyOverrides(source, result);
             }
@@ -800,10 +801,22 @@ namespace Mapsicle.Fluent
             internal readonly int Version;
             internal readonly Delegate? Apply;
 
-            internal OverridePlan(int version, Delegate? apply)
+            /// <summary>
+            /// Members the override pass always writes, so the convention pass can skip them.
+            /// </summary>
+            /// <remarks>
+            /// An ignored member and a custom-mapped one are both written unconditionally by the
+            /// override pass, so resolving them by convention first is work thrown away. A member
+            /// carrying only a condition is not here: when the condition holds, the value kept is
+            /// the one convention produced.
+            /// </remarks>
+            internal readonly string[]? Skip;
+
+            internal OverridePlan(int version, Delegate? apply, string[]? skip)
             {
                 Version = version;
                 Apply = apply;
+                Skip = skip;
             }
         }
 
@@ -819,9 +832,34 @@ namespace Mapsicle.Fluent
                 return existing;
             }
 
-            var plan = new OverridePlan(version, BuildOverrideAction<TDest>(typeMap));
+            var plan = new OverridePlan(
+                version, BuildOverrideAction<TDest>(typeMap), UnconditionallyOverwritten<TDest>(typeMap));
             _overridePlans[key] = plan;
             return plan;
+        }
+
+        /// <summary>
+        /// The destination members the override pass writes no matter what the source says.
+        /// </summary>
+        private static string[]? UnconditionallyOverwritten<TDest>(ITypeMapConfiguration typeMap)
+        {
+            List<string>? names = null;
+
+            foreach (var destProp in typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!destProp.CanWrite) continue;
+
+                // A condition decides between the convention value and the default, so the
+                // convention value still has to exist.
+                if (typeMap.GetCondition(destProp.Name) != null) continue;
+
+                if (typeMap.IsIgnored(destProp.Name) || typeMap.GetCustomMapping(destProp.Name) != null)
+                {
+                    (names ??= new List<string>()).Add(destProp.Name);
+                }
+            }
+
+            return names?.ToArray();
         }
 
         /// <summary>
