@@ -267,6 +267,53 @@ namespace Mapsicle.Fluent.Tests
             Assert.Equal(0, mapper.Map<OpDest>(Sample())!.Count);
         }
 
+        public class OpNoDefaultCtor
+        {
+            public OpNoDefaultCtor(int id) { Id = id; }
+            public int Id { get; set; }
+            public string Name { get; set; } = "";
+            public string Secret { get; set; } = "";
+        }
+
+        [Fact]
+        public void ADestinationWithNoParameterlessConstructorStillMapsThroughTheFallback()
+        {
+            // Construction used to be Activator.CreateInstance in a try/catch, where the catch was
+            // how this case was detected. Asking for the constructor up front has to reach the same
+            // fallback, and nothing covered this before.
+            var mapper = new MapperConfiguration(cfg => cfg.CreateMap<OpSource, OpNoDefaultCtor>()).CreateMapper();
+
+            var dto = mapper.Map<OpNoDefaultCtor>(Sample());
+
+            Assert.NotNull(dto);
+            Assert.Equal(7, dto!.Id);
+
+            // Recorded, not endorsed. The constructor parameter is matched and filled, and the
+            // remaining writable members are then left alone, so Name stays at its initialiser
+            // rather than becoming "name". This predates the switch from Activator to a compiled
+            // constructor: the same assertion fails identically on the commit before it. Filed
+            // separately rather than changed here, because this is a mapping question and this
+            // change is about how the destination is allocated.
+            Assert.Equal("", dto.Name);
+        }
+
+        [Fact]
+        public void ADestinationWithNoParameterlessConstructorStillAppliesOverridesAndHooks()
+        {
+            string? afterSaw = null;
+            var mapper = new MapperConfiguration(cfg =>
+                cfg.CreateMap<OpSource, OpNoDefaultCtor>()
+                   .ForMember(d => d.Secret, o => o.Ignore())
+                   .ForMember(d => d.Name, o => o.ResolveUsing(s => "resolved"))
+                   .AfterMap((s, d) => afterSaw = d.Name)).CreateMapper();
+
+            var dto = mapper.Map<OpNoDefaultCtor>(Sample());
+
+            Assert.Equal("resolved", dto!.Name);
+            Assert.Null(dto.Secret);
+            Assert.Equal("resolved", afterSaw);
+        }
+
         [Fact]
         public void AConstructorFactorySkipsTheConventionPassEntirely()
         {
