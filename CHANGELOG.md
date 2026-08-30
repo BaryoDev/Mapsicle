@@ -43,6 +43,14 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
   resolved by convention first and then overwritten; and the converter, type map, collection shape
   and override plan were four separate lookups per map. All of it is settled once per pair per
   configuration version now. A hundred such objects is 1.21x AutoMapper, from 5.20x.
+- **A list is mapped by a loop compiled for its element type, about 20 percent faster.** Mapping a
+  hundred element list spent roughly a fifth of its time on the loop rather than on the mapping.
+  Seven loop shapes were measured in one process on both architectures first: indexing the typed
+  list instead of the non-generic `IList` won nothing, writing through `CollectionsMarshal` instead
+  of `Add` won nothing, and the library's own typed collection API was slower than the untyped one.
+  Compiling the loop won, and it puts a hundred element collection at 0.87x AutoMapper on x64 where
+  it was at parity. The element mapping is the same expression the single-object path compiles, not
+  a second copy of it. Cyclic element types and the bounded cache keep the previous loop.
 - Allocation for a fluent map fell from 424 B to 208 B.
 
 ### Changed
@@ -69,8 +77,8 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
 
 ### Known and not fixed
 
-- A hundred-element collection is 1.07x AutoMapper on x64. On arm64 it is 1.04x faster. The gap is
-  architecture dependent and smaller than the measurement spread on both machines (#48).
+- Mapping a collection that is not a `List<T>`, or whose elements can form cycles, keeps the
+  previous loop and its previous cost. Arrays are the common case there (#48).
 
 ## Unreleased
 
