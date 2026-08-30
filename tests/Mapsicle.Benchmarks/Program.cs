@@ -52,12 +52,13 @@ public class Program
         }
         else if (args.Length > 0 && args[0] == "--core")
         {
-            // The single suite behind the README's headline table, on a short job so the numbers
-            // can actually be refreshed when a claim is edited rather than only in principle.
+            // The single suite behind the README's headline table. It uses the same job as the
+            // gate, because a table produced by a job that disagrees with the gate is a table the
+            // gate cannot defend.
             BenchmarkRunner.Run<CoreMapperBenchmarks>(
                 DefaultConfig.Instance
                     .WithOptions(ConfigOptions.DisableOptimizationsValidator)
-                    .AddJob(Job.ShortRun));
+                    .AddJob(Job.Default.WithWarmupCount(5).WithIterationCount(20)));
         }
         else if (args.Length > 0 && args[0] == "--edge")
         {
@@ -123,12 +124,23 @@ public class Program
     /// </remarks>
     private static int RunClaimGate()
     {
-        Console.WriteLine("Measuring the performance claim with BenchmarkDotNet (short job).\n");
+        Console.WriteLine("Measuring the performance claim with BenchmarkDotNet.\n");
 
+        // Five warmup iterations and twenty measured, not ShortRun's three and three.
+        //
+        // ShortRun could not resolve the difference it was reporting. On an idle machine it put
+        // this collection row at 4,896 ns against AutoMapper's 4,680 and called Mapsicle 1.05x
+        // slower. The same commit on the same machine, measured with this job, is 4,510 against
+        // 4,720, which is 1.05x faster. Three warmup iterations do not get the compiled delegates
+        // to steady state, and the mapper that compiles more is the one that suffers for it.
+        //
+        // On a hosted runner the effect was worse: a 99.9% interval of plus or minus 43% of the
+        // mean, on a claimed difference of 7%. A gate whose error dwarfs the thing it measures
+        // cannot fail for the reason it exists, and can fail for others.
         var summary = BenchmarkRunner.Run<CoreMapperBenchmarks>(
             DefaultConfig.Instance
                 .WithOptions(ConfigOptions.DisableOptimizationsValidator)
-                .AddJob(Job.ShortRun));
+                .AddJob(Job.Default.WithWarmupCount(5).WithIterationCount(20)));
 
         double? MeanNs(string method)
         {
