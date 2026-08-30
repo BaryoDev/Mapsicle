@@ -161,10 +161,50 @@ public class Program
         // direction of the comparison still holds, which is what survives a change of hardware.
         if (ratio > 1.10)
         {
+            ClaimFailures.Add(
+                $"Mapsicle is {ratio:F2}x AutoMapper on single-object mapping. The README claims it "
+              + "is faster. Update the code or the claim.");
+        }
+
+        // The collection row was published and checked by nothing, which is the pattern 2.0.0
+        // existed to end. The README says Mapsicle is about 1.33x slower on collections and leads
+        // the reader to that number deliberately, so it is a claim like any other.
+        //
+        // The bound is loose on purpose, and the looseness is the honest part. This is the noisier
+        // of the two measurements: the benchmark allocates about 5.7 KB per operation at 100 items,
+        // so GC variance rides on top of the comparison. A tight bound here would fail for reasons
+        // that have nothing to do with the mapper. What this catches is the claim becoming wrong by
+        // a wide margin, not a drift of a few percent, and that is the most it can honestly assert.
+        var mapsicleCollection = MeanNs("Mapsicle_Collection");
+        var autoMapperCollection = MeanNs("AutoMapper_Collection");
+
+        if (mapsicleCollection is null || autoMapperCollection is null)
+        {
+            Console.WriteLine("Could not read both collection results from the benchmark summary.");
+            return 1;
+        }
+
+        var collectionRatio = mapsicleCollection.Value / autoMapperCollection.Value;
+        Console.WriteLine();
+        Console.WriteLine($"  Mapsicle_Collection:   {mapsicleCollection.Value:F1} ns");
+        Console.WriteLine($"  AutoMapper_Collection: {autoMapperCollection.Value:F1} ns");
+        Console.WriteLine($"  ratio: {collectionRatio:F2}x {(collectionRatio < 1 ? "(faster)" : "(slower)")}");
+
+        if (collectionRatio > 1.60)
+        {
+            ClaimFailures.Add(
+                $"Mapsicle is {collectionRatio:F2}x AutoMapper on 100-item collections. The README "
+              + "says about 1.33x slower. Update the code or the claim.");
+        }
+
+        if (ClaimFailures.Count > 0)
+        {
             Console.WriteLine();
             Console.WriteLine("CLAIM CHECK FAILED");
-            Console.WriteLine($"  Mapsicle is {ratio:F2}x AutoMapper on single-object mapping.");
-            Console.WriteLine("  The README claims it is faster. Update the code or the claim.");
+            foreach (var failure in ClaimFailures)
+            {
+                Console.WriteLine($"  - {failure}");
+            }
             return 1;
         }
 
