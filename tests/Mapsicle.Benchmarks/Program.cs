@@ -206,10 +206,15 @@ public class Program
             Console.WriteLine($"  AutoMapper_Collection: {autoMapperCollection.Value:F1} ns");
             Console.WriteLine($"  ratio: {collectionRatio:F2}x {(collectionRatio < 1 ? "(faster)" : "(slower)")}");
 
-            // The README publishes 1.07x slower on x64, which is what this runner is, measured at
-            // an error under one percent. The old bound was 1.60, set when the job could not
-            // resolve better than plus or minus 43 percent and had to be loose enough to survive
-            // its own noise. It could not have caught a 40 percent regression. This one can.
+            // The README publishes 1.07x slower on x64, which is what this runner is. Three runs
+            // of this job on hosted runners gave 1.03, 1.07 and 1.07, so 1.15 leaves about eight
+            // points of headroom over the worst observed. If this starts failing without a change
+            // that explains it, widen it and record the sample that forced the change rather than
+            // rerunning until it passes.
+            //
+            // The old bound was 1.60, set when the job ran ShortRun and could not resolve better
+            // than plus or minus 43 percent, so it had to be loose enough to survive its own
+            // noise. It could not have caught a 40 percent regression.
             if (collectionRatio > 1.15)
             {
                 ClaimFailures.Add(
