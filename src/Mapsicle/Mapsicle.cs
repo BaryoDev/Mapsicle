@@ -233,6 +233,7 @@ namespace Mapsicle
             _mapToCache.Clear();
             _mapCache.Clear();
             _excludingMapCache.Clear();
+            _listLoopCache.Clear();
             _propertyCache.Clear();
             _readablePropertyCache.Clear();
             _writablePropertyCache.Clear();
@@ -268,6 +269,7 @@ namespace Mapsicle
                 _mapToCache.Clear();
                 _mapCache.Clear();
                 _excludingMapCache.Clear();
+                _listLoopCache.Clear();
                 _lruMapToCache?.Clear();
                 _lruMapCache?.Clear();
                 _propertyCache.Clear();
@@ -288,7 +290,11 @@ namespace Mapsicle
             // Typed mappers count toward MapToEntries. They are compiled MapTo delegates held for
             // the lifetime of the process, so reporting a total that excluded them meant CacheInfo()
             // said 0 while delegates were cached, which is exactly when someone is looking at it.
-            var typed = _typedCacheResetters.Count;
+            // Compiled list loops count here too. Mapping a collection used to cache the element
+            // delegate as a side effect of mapping its first item, and this counter reported it.
+            // The compiled loop does not call that path, so without this a collection map would
+            // build and keep a delegate while the public counter said nothing had been cached.
+            var typed = _typedCacheResetters.Count + CompiledListLoopCount();
 
             if (_useLruCache && _lruMapToCache != null && _lruMapCache != null)
             {
@@ -1129,33 +1135,15 @@ namespace Mapsicle
 
                 // OPTIMIZATION: Use cached property arrays instead of reflection + LINQ
                 var sourceProps = GetCachedReadableProperties(sourceType);
-                var destProps = GetCachedWritableProperties(destType);
-                var bindings = new List<MemberBinding>(destProps.Length);
 
                 // --- 1. Parameterless Constructor Path ---
-                if (destType.GetConstructor(Type.EmptyTypes) != null || destType.IsValueType)
+                var memberInit = TryBuildMemberInit(sourceType, destType, typedSource, sourceParam, isSourceVisible);
+                if (memberInit != null)
                 {
-                    // OPTIMIZATION: destProps is already filtered to writable, use for loop instead of foreach
-                    for (int i = 0; i < destProps.Length; i++)
-                    {
-                        var destProp = destProps[i];
-                        if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
-
-                        if (sourceProp != null)
-                        {
-                            var binding = CreatePropertyBinding(destProp, sourceProp, typedSource, sourceParam, isSourceVisible);
-                            if (binding != null) bindings.Add(binding);
-                        }
-                        else
-                        {
-                            // Try flattening: AddressCity -> Address.City
-                            var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceParam, isSourceVisible);
-                            if (flattenedBinding != null) bindings.Add(flattenedBinding);
-                        }
-                    }
-                    var init = Expression.MemberInit(Expression.New(destType), bindings);
-                    return Expression.Lambda<Func<object, T>>(init, sourceParam).Compile();
+                    return Expression.Lambda<Func<object, T>>(memberInit, sourceParam).Compile();
                 }
+
+                var destProps = GetCachedWritableProperties(destType);
 
                 // --- 2. Constructor / Record Path ---
                 // OPTIMIZATION: Find largest constructor without LINQ
@@ -1435,6 +1423,31 @@ namespace Mapsicle
 
             if (source is System.Collections.IList list && IsGenericList(source.GetType()))
             {
+                var compiled = GetCompiledListLoop<T>(source.GetType());
+                if (compiled?.Loop is Func<object, List<T>> loop)
+                {
+                    if (!compiled.NeedsDepth)
+                    {
+                        return loop(source);
+                    }
+
+                    // Mapping a collection is one level of nesting however many items it holds, so
+                    // depth is taken once here rather than per element. When it cannot be taken the
+                    // existing loop below runs instead, because it already produces the right thing
+                    // at the ceiling and that edge is not worth a second implementation.
+                    if (IncrementDepth())
+                    {
+                        try
+                        {
+                            return loop(source);
+                        }
+                        finally
+                        {
+                            DecrementDepth();
+                        }
+                    }
+                }
+
                 var result = new List<T>(list.Count);
                 var cursor = new ListCursor(list);
                 MapItems(ref cursor, result);
@@ -1442,6 +1455,176 @@ namespace Mapsicle
             }
 
             return MapEnumerated<T>(source);
+        }
+
+        /// <summary>
+        /// A compiled list loop and whether its element type needs the collection to hold depth.
+        /// </summary>
+        private sealed class ListLoop
+        {
+            internal readonly Delegate? Loop;
+            internal readonly bool NeedsDepth;
+
+            internal ListLoop(Delegate? loop, bool needsDepth)
+            {
+                Loop = loop;
+                NeedsDepth = needsDepth;
+            }
+        }
+
+        private static readonly ConcurrentDictionary<(Type, Type), ListLoop> _listLoopCache = new();
+
+        /// <summary>
+        /// A loop over a <see cref="List{T}"/> with the element mapping compiled into it, or null
+        /// when this pair is not a shape that can be inlined.
+        /// </summary>
+        /// <remarks>
+        /// Mapping a hundred element list spent about a fifth of its time on the loop rather than
+        /// on the mapping. Seven loop shapes were measured in one process on both architectures
+        /// before this one was written: indexing the typed list instead of the non-generic IList
+        /// won nothing, writing through CollectionsMarshal instead of Add won nothing, and the
+        /// library's own typed collection API was slower than the untyped one. What won was
+        /// compiling the loop, on x64 by 20 percent and on arm64 by 21.
+        ///
+        /// The per element runtime type check stays. A list declared List&lt;Animal&gt; may hold a
+        /// Dog and then a Cat, and applying Dog's mapping to the Cat throws from inside a compiled
+        /// lambda. An element whose type does not match goes back through the single object entry
+        /// point, which is also what happens for a shape this cannot inline at all.
+        /// </remarks>
+        private static ListLoop? GetCompiledListLoop<TDest>(Type listType)
+        {
+            // The bound cache exists to limit retained delegates, and a second unbounded cache
+            // beside it would defeat that.
+            if (_useLruCache) return null;
+
+            // Keyed on the concrete List<T> rather than its element, because reaching the element
+            // means GetGenericArguments, which allocates a Type[] every call. That is 16 bytes per
+            // map on a path whose whole budget is the destinations and the list.
+            return _listLoopCache.GetOrAdd(
+                (listType, typeof(TDest)), key => BuildCompiledListLoop<TDest>(key.Item1));
+        }
+
+        private static ListLoop BuildCompiledListLoop<TDest>(Type listType)
+        {
+            var elementType = listType.GetGenericArguments()[0];
+
+            // Depth is taken once for the whole collection rather than per element, which is what
+            // the existing loop does and why this only needs to know whether to take it. Refusing
+            // these outright was the first attempt and it excluded almost everything worth
+            // optimising: any element type holding a nested reference answers yes, which is most
+            // DTOs, including the one the performance claim is measured on.
+            var needsDepth = NeedsDepthTracking(elementType);
+
+            if (!elementType.IsVisible || elementType.IsValueType) return new ListLoop(null, needsDepth);
+
+            // A declared element type nothing can actually be leaves every element failing the
+            // runtime type check and taking the fallback, one entry point call each. List<object>
+            // measured 10.9x slower that way than List<T>, and List<object> is the shape this
+            // library exists for: items whose types are only known at runtime. The existing loop
+            // resolves against the first element's runtime type instead, which is right for these.
+            if (elementType == typeof(object) || elementType.IsAbstract || elementType.IsInterface)
+            {
+                return new ListLoop(null, needsDepth);
+            }
+
+            var destType = typeof(TDest);
+
+            // The single object builder tries a direct conversion, then a collection destination,
+            // then a dictionary, then a constructor taking IEnumerable, and only then a member
+            // initialiser. Inlining the member initialiser without those means claiming pairs it
+            // would never have reached. List<List<Src>> to List<Dst> is the one that showed it:
+            // the destination element is itself a list, and a member initialiser for a list maps
+            // its properties rather than its contents, so every inner list came back empty and
+            // nothing was raised.
+            if (destType.IsValueType
+                || destType == typeof(string)
+                || typeof(System.Collections.IEnumerable).IsAssignableFrom(destType)
+                || destType.GetConstructor(Type.EmptyTypes) is null)
+            {
+                return new ListLoop(null, needsDepth);
+            }
+
+            // A destination the element can simply be assigned to is handed over as-is by the
+            // conversion cascade, not rebuilt member by member. Constructing a new one here would
+            // return a copy where the library returns the same reference.
+            if (destType.IsAssignableFrom(elementType))
+            {
+                return new ListLoop(null, needsDepth);
+            }
+
+            var sourceParam = Expression.Parameter(typeof(object), "source");
+            var list = Expression.Variable(listType, "list");
+            var result = Expression.Variable(typeof(List<TDest>), "result");
+            var index = Expression.Variable(typeof(int), "i");
+            var count = Expression.Variable(typeof(int), "count");
+            var item = Expression.Variable(elementType, "item");
+            var done = Expression.Label("done");
+
+            var memberInit = TryBuildMemberInit(elementType, destType, item, Expression.Convert(item, typeof(object)), true);
+            if (memberInit is null) return new ListLoop(null, needsDepth);
+            if (!destType.IsAssignableFrom(memberInit.Type)) return new ListLoop(null, needsDepth);
+
+            var mapped = Expression.Convert(memberInit, typeof(TDest));
+
+            var fallback = Expression.Call(
+                typeof(Mapper).GetMethod(nameof(MapTo), new[] { typeof(object) })!.MakeGenericMethod(destType),
+                Expression.Convert(item, typeof(object)));
+
+            // A sealed element type has no derived types, so every non-null element is exactly it
+            // and the check can only ever be true.
+            Expression matched = elementType.IsSealed
+                ? mapped
+                : Expression.Condition(
+                    Expression.Equal(
+                        Expression.Call(item, typeof(object).GetMethod(nameof(GetType))!),
+                        Expression.Constant(elementType, typeof(Type))),
+                    mapped,
+                    fallback);
+
+            var perItem = Expression.Condition(
+                Expression.ReferenceEqual(item, Expression.Constant(null, elementType)),
+                Expression.Default(typeof(TDest)),
+                matched);
+
+            var body = Expression.Block(
+                new[] { list, result, index, count },
+                Expression.Assign(list, Expression.Convert(sourceParam, listType)),
+                Expression.Assign(count, Expression.Property(list, listType.GetProperty("Count")!)),
+                Expression.Assign(result, Expression.New(
+                    typeof(List<TDest>).GetConstructor(new[] { typeof(int) })!, count)),
+                Expression.Assign(index, Expression.Constant(0)),
+                Expression.Loop(
+                    Expression.IfThenElse(
+                        Expression.LessThan(index, count),
+                        Expression.Block(
+                            new[] { item },
+                            Expression.Assign(item,
+                                Expression.MakeIndex(list, listType.GetProperty("Item"), new Expression[] { index })),
+                            Expression.Call(result, typeof(List<TDest>).GetMethod(nameof(List<TDest>.Add))!, perItem),
+                            Expression.PostIncrementAssign(index)),
+                        Expression.Break(done)),
+                    done),
+                result);
+
+            return new ListLoop(
+                Expression.Lambda<Func<object, List<TDest>>>(body, sourceParam).Compile(), needsDepth);
+        }
+
+        /// <summary>
+        /// Compiled list loops that were actually built, for <see cref="CacheInfo"/>.
+        /// </summary>
+        /// <remarks>
+        /// Null entries are the pairs this cannot inline, remembered so the decision is not retaken
+        /// on every map. They are not delegates and are not counted as such.
+        /// </remarks>
+        private static int CompiledListLoopCount()
+        {
+            var built = 0;
+            foreach (var entry in _listLoopCache)
+            {
+                if (entry.Value.Loop != null) built++;
+            }
+            return built;
         }
 
         private static bool IsGenericList(Type type) =>
@@ -1844,8 +2027,50 @@ namespace Mapsicle
             return fallbackMatch;
         }
 
+        /// <summary>
+        /// Builds the member initialisation for one pair, or null when the destination cannot be
+        /// constructed without arguments.
+        /// </summary>
+        /// <remarks>
+        /// Returned as an expression rather than a delegate so it can be used two ways: compiled on
+        /// its own, which is what mapping a single object does, and inlined into a loop, which is
+        /// what mapping a list does. Those two used to be the same code only by coincidence. The
+        /// collection loop calling a delegate per element cost about 20 percent, and the alternative
+        /// to this method was a second copy of the binding logic reachable only from the loop, which
+        /// is the mistake CONTRIBUTING describes: three copies of the conversion cascade drifted and
+        /// 1.2.3 shipped a mapper that dropped nested objects only when built by MapperFactory.
+        /// </remarks>
+        private static MemberInitExpression? TryBuildMemberInit(
+            Type sourceType, Type destType, Expression typedSource, Expression sourceAsObject, bool isSourceVisible)
+        {
+            if (destType.GetConstructor(Type.EmptyTypes) is null && !destType.IsValueType) return null;
+
+            var sourceProps = GetCachedReadableProperties(sourceType);
+            var destProps = GetCachedWritableProperties(destType);
+            var bindings = new List<MemberBinding>(destProps.Length);
+
+            for (int i = 0; i < destProps.Length; i++)
+            {
+                var destProp = destProps[i];
+                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
+
+                if (sourceProp != null)
+                {
+                    var binding = CreatePropertyBinding(destProp, sourceProp, typedSource, sourceAsObject, isSourceVisible);
+                    if (binding != null) bindings.Add(binding);
+                }
+                else
+                {
+                    var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceAsObject, isSourceVisible);
+                    if (flattenedBinding != null) bindings.Add(flattenedBinding);
+                }
+            }
+
+            return Expression.MemberInit(Expression.New(destType), bindings);
+        }
+
         private static MemberBinding? CreatePropertyBinding(PropertyInfo destProp, PropertyInfo sourceProp,
-            Expression typedSource, ParameterExpression sourceParam, bool isSourceVisible)
+            Expression typedSource, Expression sourceAsObject, bool isSourceVisible)
         {
             Expression propExp;
             if (isSourceVisible && sourceProp.GetGetMethod()?.IsPublic == true)
@@ -1855,7 +2080,7 @@ namespace Mapsicle
             else
             {
                 var getValue = typeof(PropertyInfo).GetMethod("GetValue", new[] { typeof(object), typeof(object[]) })!;
-                var call = Expression.Call(Expression.Constant(sourceProp), getValue, sourceParam, Expression.Constant(null, typeof(object[])));
+                var call = Expression.Call(Expression.Constant(sourceProp), getValue, sourceAsObject, Expression.Constant(null, typeof(object[])));
                 propExp = Expression.Convert(call, sourceProp.PropertyType);
             }
 
@@ -1988,7 +2213,7 @@ namespace Mapsicle
         /// Attempts to create a binding for flattened properties (e.g., AddressCity -> Address.City).
         /// </summary>
         private static MemberBinding? TryCreateFlattenedBinding(PropertyInfo destProp, PropertyInfo[] sourceProps,
-            Expression typedSource, ParameterExpression sourceParam, bool isSourceVisible)
+            Expression typedSource, Expression sourceAsObject, bool isSourceVisible)
         {
             // Try to find nested properties by splitting the destination name
             // OPTIMIZATION: Use for loop instead of foreach

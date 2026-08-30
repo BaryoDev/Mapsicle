@@ -43,6 +43,18 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
   resolved by convention first and then overwritten; and the converter, type map, collection shape
   and override plan were four separate lookups per map. All of it is settled once per pair per
   configuration version now. A hundred such objects is 1.21x AutoMapper, from 5.20x.
+- **A `List<T>` is mapped by a loop compiled for its element type.** A hundred element collection
+  goes from 2,999 ns to 2,175 on x64, which is 1.20x AutoMapper where it had been 1.06x slower, and
+  1.09x on arm64. Mapping such a list spent roughly a fifth of its time on the loop rather than on
+  the mapping. Seven loop shapes were measured in one process on both architectures first: indexing
+  the typed list instead of the non-generic `IList` won nothing, writing through
+  `CollectionsMarshal` instead of `Add` won nothing, and the library's own typed collection API was
+  slower than the untyped one. Compiling the loop won. The element mapping is the same expression
+  the single-object path compiles, not a second copy of it.
+
+  Arrays keep the previous loop, and so do lists whose element type is `object`, an interface or
+  abstract, because a loop compiled for a type no element actually is sends every element down the
+  slower path: that measured 10.9x worse before it was guarded.
 - Allocation for a fluent map fell from 424 B to 208 B.
 
 ### Changed
@@ -52,10 +64,12 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
   interval of plus or minus 43 percent of the mean on a claimed difference of 7 percent. It could
   not have failed for its own reason. The collection bound moves from 1.60 to 1.15 as a result.
 - **The README numbers are the ones the benchmarks produce.** The published 1.33x slower on
-  collections was measured under ShortRun; at a job that reaches steady state it is 1.07x slower on
-  x64 and 1.04x faster on arm64, and the honest reading of that row is parity. Deep nesting at 8.22x
-  and ten-thousand-element collections at 2.36x were not mentioned at all. The Large Collection row
-  said 4 ms against 4 ms; the figures are 0.48 against 1.13.
+  collections was measured under ShortRun. At a job that reaches steady state it was parity, 1.07x
+  slower on x64 and 1.04x faster on arm64, and the compiled list loop in this same release then
+  took it to 1.20x and 1.09x faster. Deep nesting at 8.22x and ten-thousand-element collections at
+  2.36x were not mentioned at all. The Large Collection row said 4 ms against 4 ms; the figures are
+  0.48 against 1.13. arm64 figures are medians of repeated runs, because repeating an identical
+  commit on that machine moved the Mapperly row by 36 percent.
 - `Mapsicle.Fluent`'s cost is stated in the README and the migration guide, which recommended it
   without saying what it cost.
 - CI runs the test suite on arm64 as well as x64 and Windows.
@@ -69,8 +83,10 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
 
 ### Known and not fixed
 
-- A hundred-element collection is 1.07x AutoMapper on x64. On arm64 it is 1.04x faster. The gap is
-  architecture dependent and smaller than the measurement spread on both machines (#48).
+- Mapping an array, or a list whose element type is `object`, an interface or abstract, keeps the
+  previous loop and its previous cost (#48).
+- `Mapsicle.Fluent` maps a collection element by element rather than through the compiled loop, so a
+  hundred complex objects cost about 1.22x AutoMapper. A single one is at parity.
 
 ## Unreleased
 

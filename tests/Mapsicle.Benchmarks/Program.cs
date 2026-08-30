@@ -206,20 +206,20 @@ public class Program
             Console.WriteLine($"  AutoMapper_Collection: {autoMapperCollection.Value:F1} ns");
             Console.WriteLine($"  ratio: {collectionRatio:F2}x {(collectionRatio < 1 ? "(faster)" : "(slower)")}");
 
-            // The README publishes 1.07x slower on x64, which is what this runner is. Three runs
-            // of this job on hosted runners gave 1.03, 1.07 and 1.07, so 1.15 leaves about eight
-            // points of headroom over the worst observed. If this starts failing without a change
-            // that explains it, widen it and record the sample that forced the change rather than
-            // rerunning until it passes.
+            // The README publishes 1.20x faster on x64, which is what this runner is, measured at
+            // 2,175 ns against 2,618. The bound is parity rather than that number, because the
+            // claim worth defending is that a collection is never slower, and a bound sitting on
+            // the measurement would fail for noise instead of for regressions.
             //
-            // The old bound was 1.60, set when the job ran ShortRun and could not resolve better
-            // than plus or minus 43 percent, so it had to be loose enough to survive its own
-            // noise. It could not have caught a 40 percent regression.
-            if (collectionRatio > 1.15)
+            // It has been 1.60 and then 1.15 on the way here. 1.60 was set when the job ran
+            // ShortRun and could not resolve better than plus or minus 43 percent, so it had to be
+            // loose enough to survive its own noise and could not have caught a 40 percent
+            // regression. 1.15 described a gap that a compiled list loop then closed.
+            if (collectionRatio > 1.00)
             {
                 ClaimFailures.Add(
                     $"Mapsicle is {collectionRatio:F2}x AutoMapper on 100-item collections. The README "
-                  + "says 1.07x slower on x64. Update the code or the claim.");
+                  + "says 1.20x faster on x64. Update the code or the claim.");
             }
         }
 

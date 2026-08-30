@@ -150,14 +150,16 @@ migration. In short:
 
 - If every pair is known at compile time and you are willing to declare them, Mapperly is 2.5x to
   3x faster and generates code with no runtime apparatus at all.
-- If collection throughput at around a hundred elements is what your workload is bound by, Mapsicle
-  and AutoMapper are within 7 percent of each other and which one wins depends on the architecture:
-  Mapsicle is 1.07x slower on x64 and 1.05x faster on arm64. Mapperly beats both on either. At ten
-  thousand elements Mapsicle is 2.36x faster, because AutoMapper allocates enough more to reach
-  generation 2 collections. All of it is measured and it is in the README.
+- If collection throughput at around a hundred elements is what your workload is bound by, Mapperly
+  beats both by about 12 percent. Mapsicle is ahead of AutoMapper there, 1.20x on x64 and 1.09x on
+  arm64, because a `List<T>` is mapped by a loop compiled for its element type. Arrays, and lists
+  whose element type is `object`, an interface or abstract, keep an older loop and do not get that.
+  At ten thousand elements Mapsicle is 2.36x faster, because AutoMapper allocates enough more to
+  reach generation 2 collections. All of it is measured and it is in the README.
 - If you configure with `Mapsicle.Fluent` rather than the static API, a complex object costs about
-  1.14x AutoMapper and a hundred of them about 1.38x. The static API is the one the fast numbers
-  describe.
+  1.03x AutoMapper and a hundred of them about 1.22x, because the fluent path maps a collection
+  element by element rather than through that compiled loop. The static API is the one the fast
+  numbers describe.
 - If you need NativeAOT with no runtime code generation, Mapsicle compiles expression trees at
   first use and is not the tool.
 
