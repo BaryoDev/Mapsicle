@@ -1529,6 +1529,29 @@ namespace Mapsicle
 
             var destType = typeof(TDest);
 
+            // The single object builder tries a direct conversion, then a collection destination,
+            // then a dictionary, then a constructor taking IEnumerable, and only then a member
+            // initialiser. Inlining the member initialiser without those means claiming pairs it
+            // would never have reached. List<List<Src>> to List<Dst> is the one that showed it:
+            // the destination element is itself a list, and a member initialiser for a list maps
+            // its properties rather than its contents, so every inner list came back empty and
+            // nothing was raised.
+            if (destType.IsValueType
+                || destType == typeof(string)
+                || typeof(System.Collections.IEnumerable).IsAssignableFrom(destType)
+                || destType.GetConstructor(Type.EmptyTypes) is null)
+            {
+                return new ListLoop(null, needsDepth);
+            }
+
+            // A destination the element can simply be assigned to is handed over as-is by the
+            // conversion cascade, not rebuilt member by member. Constructing a new one here would
+            // return a copy where the library returns the same reference.
+            if (destType.IsAssignableFrom(elementType))
+            {
+                return new ListLoop(null, needsDepth);
+            }
+
             var sourceParam = Expression.Parameter(typeof(object), "source");
             var list = Expression.Variable(listType, "list");
             var result = Expression.Variable(typeof(List<TDest>), "result");

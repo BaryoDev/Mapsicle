@@ -253,6 +253,75 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
+        public void AListOfListsMapsTheInnerContentsNotTheInnerListsProperties()
+        {
+            // The destination element is itself a list. A member initialiser for a list maps its
+            // properties, so every inner list came back empty with nothing raised. The loop only
+            // inlines a member initialiser for destinations the single object builder would have
+            // used one for.
+            Mapper.ClearCache();
+            var source = new List<List<ClSource>>
+            {
+                new() { new ClSource { Id = 1, Name = "a" }, new ClSource { Id = 2, Name = "b" } },
+                new() { new ClSource { Id = 3, Name = "c" } },
+            };
+
+            var mapped = ((IEnumerable)source).MapTo<List<ClDest>>();
+
+            Assert.Equal(2, mapped.Count);
+            Assert.Equal(2, mapped[0].Count);
+            Assert.Equal(1, mapped[1].Count);
+            Assert.Equal(1, mapped[0][0].Id);
+            Assert.Equal("a", mapped[0][0].Name);
+            Assert.Equal(3, mapped[1][0].Id);
+        }
+
+        [Fact]
+        public void AListOfArraysMapsTheInnerContents()
+        {
+            Mapper.ClearCache();
+            var source = new List<ClSource[]>
+            {
+                new[] { new ClSource { Id = 1, Name = "a" } },
+            };
+
+            var mapped = ((IEnumerable)source).MapTo<ClDest[]>();
+
+            Assert.Single(mapped);
+            Assert.Single(mapped[0]);
+            Assert.Equal("a", mapped[0][0].Name);
+        }
+
+        [Fact]
+        public void AnElementMappedToItsOwnBaseTypeIsCopiedRatherThanHandedOver()
+        {
+            // Recorded rather than assumed: I expected the reference to be handed over and it is
+            // not, a new base instance is built and the shared members copied. The compiled loop
+            // refuses these pairs so the answer keeps coming from one place.
+            Mapper.ClearCache();
+            var dog = new ClDog { Name = "rex", Breed = "lab" };
+
+            var mapped = ((IEnumerable)new List<ClDog> { dog }).MapTo<ClAnimal>();
+
+            Assert.Single(mapped);
+            Assert.NotSame(dog, mapped[0]);
+            Assert.Equal("rex", mapped[0].Name);
+        }
+
+        [Fact]
+        public void MappingAListToItsOwnElementTypeStillWorks()
+        {
+            Mapper.ClearCache();
+            var item = new ClSource { Id = 4, Name = "same" };
+
+            var mapped = ((IEnumerable)new List<ClSource> { item }).MapTo<ClSource>();
+
+            Assert.Single(mapped);
+            Assert.Equal(4, mapped[0].Id);
+            Assert.Equal("same", mapped[0].Name);
+        }
+
+        [Fact]
         public void ACyclicElementTypeStillTerminates()
         {
             // The compiled loop refuses element types that can form cycles, because depth is taken
