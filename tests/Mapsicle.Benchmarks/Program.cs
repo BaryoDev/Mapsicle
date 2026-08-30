@@ -1031,7 +1031,7 @@ public class RealWorldScenarioBenchmarks
     [Benchmark(Description = "E-Commerce Orders - Mapsicle.Fluent")]
     public List<ECommerceOrderDto> MapsicleFluent_Orders()
     {
-        return _orders.Select(o => _fluentMapper.Map<ECommerceOrderDto>(o)!).ToList();
+        return _fluentMapper.Map<List<ECommerceOrderDto>>(_orders)!;
     }
 
     [Benchmark(Description = "E-Commerce Orders - AutoMapper")]
