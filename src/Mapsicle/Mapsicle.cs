@@ -849,6 +849,58 @@ namespace Mapsicle
             return null;
         }
 
+        /// <summary>
+        /// Completes a constructor-built destination by mapping the members the constructor did not.
+        /// </summary>
+        /// <remarks>
+        /// The constructor parameters were matched and filled and the mapping stopped there, so a
+        /// destination with a parameterized constructor came back with every other writable member
+        /// still at its initialiser and nothing raised. That is the shape of most immutable DTOs
+        /// and every positional record.
+        ///
+        /// A member whose name matches a constructor parameter is left alone: it already carries
+        /// the value the constructor was given, and re-binding it would either duplicate that work
+        /// or, for a get-only property, fail to build at all.
+        /// </remarks>
+        internal static Expression CompleteConstructedDestination(
+            ConstructorInfo ctor,
+            NewExpression newExp,
+            PropertyInfo[] destProps,
+            Expression typedSource,
+            PropertyInfo[] sourceProps,
+            Func<Expression, Type, Expression> nestedMapCall)
+        {
+            var fromConstructor = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var parameter in ctor.GetParameters())
+            {
+                if (parameter.Name != null) fromConstructor.Add(parameter.Name);
+            }
+
+            List<MemberBinding>? bindings = null;
+
+            for (int i = 0; i < destProps.Length; i++)
+            {
+                var destProp = destProps[i];
+                if (!destProp.CanWrite) continue;
+                if (fromConstructor.Contains(destProp.Name)) continue;
+                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
+                if (sourceProp is null) continue;
+
+                var value = PropertyConversion.TryBuild(
+                    Expression.Property(typedSource, sourceProp),
+                    sourceProp.PropertyType,
+                    destProp.PropertyType,
+                    nestedMapCall);
+
+                if (value != null)
+                {
+                    (bindings ??= new List<MemberBinding>()).Add(Expression.Bind(destProp, value));
+                }
+            }
+
+            return bindings is null ? newExp : Expression.MemberInit(newExp, bindings);
+        }
+
         private static Func<TSource, TDest> BuildConstructorBasedMapper<TSource, TDest>(ParameterExpression sourceParam, PropertyInfo[] sourceProps)
         {
             var destType = typeof(TDest);
@@ -895,7 +947,9 @@ namespace Mapsicle
                     }
                 }
                 var newExp = Expression.New(ctor, args);
-                return Expression.Lambda<Func<TSource, TDest>>(newExp, sourceParam).Compile();
+                var body = CompleteConstructedDestination(
+                    ctor, newExp, GetCachedWritableProperties(destType), sourceParam, sourceProps, BuildNestedMapCall);
+                return Expression.Lambda<Func<TSource, TDest>>(body, sourceParam).Compile();
             }
 
             return _ => default!;
@@ -1150,7 +1204,9 @@ namespace Mapsicle
                         }
                     }
                     var newExp = Expression.New(ctor, args);
-                    return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
+                    var body = CompleteConstructedDestination(
+                        ctor, newExp, GetCachedWritableProperties(destType), typedSource, sourceProps, BuildNestedMapCall);
+                    return Expression.Lambda<Func<object, T>>(body, sourceParam).Compile();
                 }
 
                 return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();

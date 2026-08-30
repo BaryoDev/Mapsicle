@@ -328,7 +328,9 @@ namespace Mapsicle
                     }
                 }
                 var newExp = Expression.New(ctor, args);
-                return Expression.Lambda<Func<object, T>>(newExp, sourceParam).Compile();
+                var body = Mapper.CompleteConstructedDestination(
+                    ctor, newExp, destProps, typedSource, sourceProps, BuildNestedMapCall);
+                return Expression.Lambda<Func<object, T>>(body, sourceParam).Compile();
             }
 
             return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();

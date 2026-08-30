@@ -21,6 +21,12 @@ performance work on the paths that were slowest. No public API changed.
 - **`Map<List<T>>` returned an empty list** (#53). Not null, not an exception, an empty list, from
   the call shape people arriving from AutoMapper write first. `Map<T[]>` returned the elements, so
   the two collection forms disagreed and the quiet one was the common one.
+- **Mapping into a type with a parameterized constructor dropped every other member** (#52). The
+  constructor parameters were matched and filled and the mapping stopped there, so every other
+  writable member kept its initialiser, with nothing raised. That is the shape of most immutable
+  DTOs and every positional record, so the result was a partially populated object that looked
+  mapped. All four entry points did it, and all four are fixed by one implementation rather than
+  the three copies that were there.
 
 ### Performance
 
@@ -63,12 +69,8 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
 
 ### Known and not fixed
 
-- Mapping into a type with a parameterized constructor fills the constructor parameters and leaves
-  every other writable member unset, silently (#52). That is the shape of most immutable DTOs and
-  every positional record. It predates this release and is not a regression, but it is the next
-  thing worth fixing.
 - A hundred-element collection is 1.07x AutoMapper on x64. On arm64 it is 1.04x faster. The gap is
-  architecture dependent and smaller than the measurement spread on both machines.
+  architecture dependent and smaller than the measurement spread on both machines (#48).
 
 ## Unreleased
 
