@@ -80,7 +80,8 @@ below, but it is a supporting argument rather than the reason to switch.
 | **License**          | **MPL 2.0**   | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
 | **Architecture**     | Runtime + Caching | Runtime + Expressions | Source Generator |
 | **Setup Required**   | **None**         | Profiles, DI | Partial class |
-| **Dependencies**     | **0** (core)     | 5+           | 0 (compile-time) |
+| **Dependencies**     | **0** (core)     | 8            | 0 (compile-time) |
+| **Deployed size**    | **45.5 KB**      | 1,117.4 KB   | 0 at runtime |
 | **Compile-time Safety** | Partial       | No           | **Full**     |
 | **AOT Compatible**   | Partial          | No           | **Yes**      |
 | **Circular Refs**    | **Handled by default** | Opt in via `PreserveReferences()` or `MaxDepth(...)` | Opt in via `UseReferenceHandling` |
@@ -88,6 +89,26 @@ below, but it is a supporting argument rather than the reason to switch.
 | **Cache Statistics** | **Yes**          | No           | N/A          |
 | **Integrated Validation** | **Yes**     | No           | No           |
 | **ASP.NET Core Helpers** | **Yes**      | No           | No           |
+
+### Size
+
+Two projects, each referencing one mapper and nothing else, `dotnet publish -c Release` on net8.0:
+
+| | Mapsicle | AutoMapper 15.1.3 |
+| :-- | --: | --: |
+| the mapper's own assembly | **45.5 KB** | 286.0 KB |
+| assemblies it brings with it | **0** | 8 |
+| total on disk | **45.5 KB** | **1,117.4 KB** |
+
+More than half of what AutoMapper 15 deploys is not mapping code. `Microsoft.IdentityModel.Tokens`,
+`JsonWebTokens`, `Logging` and `Abstractions` come to 599.1 KB, and they are there because
+AutoMapper 15 validates a signed licence key. Referencing it puts a JWT validation stack into your
+dependency closure, larger than the mapper itself, to check that you are allowed to use the mapper.
+The remaining 232.4 KB is `Microsoft.Extensions.*` for dependency injection, options and logging.
+
+Mapsicle's core has none of that, and not by luck: the `core-has-no-dependencies` job packs
+`src/Mapsicle` and fails if the nuspec declares a single dependency. Everything else in the
+ecosystem is a separate opt-in package.
 
 ---
 
