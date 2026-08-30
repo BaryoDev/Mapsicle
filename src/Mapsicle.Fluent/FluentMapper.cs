@@ -699,6 +699,18 @@ namespace Mapsicle.Fluent
                 return (TDest)converter(source);
             }
 
+            // A collection destination maps element by element through the configured map. Without
+            // this the whole call fell through to the core mapper, which knows nothing about this
+            // configuration, so ForMember, Condition and Ignore were all skipped for collections
+            // while working for a single object. An ignored member is a control, and it protected
+            // one object but not a list of them.
+            if (source is System.Collections.IEnumerable sequence
+                && source is not string
+                && CollectionShape.Of(destType) is { } shape)
+            {
+                return (TDest)shape.Map(this, sequence);
+            }
+
             // Get the type map - check for polymorphic mapping
             var typeMap = _config.GetTypeMap(sourceType, destType);
 
@@ -920,6 +932,90 @@ namespace Mapsicle.Fluent
                 {
                     return null;
                 }
+            }
+        }
+
+        /// <summary>
+        /// A destination type that holds many elements, and how to fill it.
+        /// </summary>
+        /// <remarks>
+        /// Resolved once per destination type. The element mapping itself goes back through the
+        /// single-object path, so a collection and one object cannot disagree about what the
+        /// configuration says: there is one implementation of that and this is not a second one.
+        /// </remarks>
+        private sealed class CollectionShape
+        {
+            private static readonly ConcurrentDictionary<Type, CollectionShape?> Shapes = new();
+
+            private readonly Func<FluentMapper, System.Collections.IEnumerable, object> _map;
+
+            private CollectionShape(Func<FluentMapper, System.Collections.IEnumerable, object> map) => _map = map;
+
+            internal object Map(FluentMapper mapper, System.Collections.IEnumerable source) => _map(mapper, source);
+
+            internal static CollectionShape? Of(Type destType) => Shapes.GetOrAdd(destType, Build);
+
+            private static CollectionShape? Build(Type destType)
+            {
+                if (destType == typeof(string)) return null;
+
+                Type? elementType = null;
+                var asArray = false;
+
+                if (destType.IsArray && destType.GetArrayRank() == 1)
+                {
+                    elementType = destType.GetElementType();
+                    asArray = true;
+                }
+                else if (destType.IsGenericType)
+                {
+                    var definition = destType.GetGenericTypeDefinition();
+                    if (definition == typeof(List<>)
+                        || definition == typeof(IEnumerable<>)
+                        || definition == typeof(ICollection<>)
+                        || definition == typeof(IList<>)
+                        || definition == typeof(IReadOnlyCollection<>)
+                        || definition == typeof(IReadOnlyList<>))
+                    {
+                        elementType = destType.GetGenericArguments()[0];
+                    }
+                }
+
+                if (elementType is null) return null;
+
+                var builder = typeof(CollectionShape)
+                    .GetMethod(nameof(BuildFor), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(elementType);
+
+                return (CollectionShape)builder.Invoke(null, new object[] { asArray })!;
+            }
+
+            private static CollectionShape BuildFor<TElement>(bool asArray)
+            {
+                if (asArray)
+                {
+                    return new CollectionShape(static (mapper, source) => Collect<TElement>(mapper, source).ToArray());
+                }
+                return new CollectionShape(static (mapper, source) => Collect<TElement>(mapper, source));
+            }
+
+            private static List<TElement> Collect<TElement>(FluentMapper mapper, System.Collections.IEnumerable source)
+            {
+                var result = source is System.Collections.ICollection sized
+                    ? new List<TElement>(sized.Count)
+                    : new List<TElement>();
+
+                foreach (var item in source)
+                {
+                    if (item is null)
+                    {
+                        result.Add(default!);
+                        continue;
+                    }
+                    result.Add(mapper.MapInternal<TElement>(item, item.GetType())!);
+                }
+
+                return result;
             }
         }
 
