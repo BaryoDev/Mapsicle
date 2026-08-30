@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Mapsicle.Tests" />
+    <InternalsVisibleTo Include="Mapsicle.Fluent" />
   </ItemGroup>
 
 </Project>

@@ -1181,39 +1181,30 @@ namespace Mapsicle
         }
 
         /// <summary>
-        /// Maps onto an existing destination, leaving the named members untouched.
+        /// The in-place mapping delegate for one pair, optionally skipping named members.
         /// </summary>
         /// <remarks>
-        /// For a caller that is going to write some members itself and would rather the convention
-        /// pass did not compute them first. <c>Mapsicle.Fluent</c> is that caller: a member with a
-        /// custom mapping was resolved by convention and then immediately overwritten, so a DTO
-        /// with six configured members out of ten paid for sixteen assignments to keep ten.
+        /// Deliberately internal and deliberately returning the delegate rather than doing the
+        /// map. The first attempt at this was a public <c>Map(source, destination, excluded)</c>
+        /// overload, which had to turn the member names into a cache key on every call: an array,
+        /// a lowercased string per name and a joined string, per map. It made the caller it was
+        /// written for three times slower and quadrupled its allocation. Handing back the delegate
+        /// lets the caller resolve once and keep it, which is the only way to use this well, so it
+        /// is the only way it is offered.
         ///
-        /// Names are matched the way the mapper matches everything else, without case sensitivity.
-        /// A name that matches nothing on the destination is not an error, because a configuration
-        /// naming a member that a particular destination does not have is a normal thing for a
-        /// caller with several destinations to hold.
+        /// <c>Mapsicle.Fluent</c> is the caller: it writes some members itself and would rather
+        /// the convention pass did not compute them first.
         /// </remarks>
-        /// <typeparam name="TDestination">The destination type.</typeparam>
-        /// <param name="source">The source object.</param>
-        /// <param name="destination">The instance to populate.</param>
-        /// <param name="excludedMembers">Destination member names to leave alone.</param>
-        /// <returns>The same destination instance.</returns>
-        public static TDestination Map<TDestination>(
-            this object? source, TDestination destination, IReadOnlyCollection<string>? excludedMembers)
+        internal static Action<object, object> GetInPlaceMapper(
+            Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers)
         {
-            if (source is null || destination is null) return destination;
-            if (excludedMembers is null || excludedMembers.Count == 0) return source.Map(destination);
+            if (excludedMembers is null || excludedMembers.Count == 0)
+            {
+                return GetOrAddMapDelegate((sourceType, destType), k => BuildInPlaceMapper(k.Item1, k.Item2, null));
+            }
 
-            var sourceType = source.GetType();
-            var destType = typeof(TDestination);
             var key = (sourceType, destType, ExclusionKey(excludedMembers));
-
-            var mapAction = _excludingMapCache.GetOrAdd(
-                key, k => BuildInPlaceMapper(k.Item1, k.Item2, excludedMembers));
-
-            mapAction(source, destination);
-            return destination;
+            return _excludingMapCache.GetOrAdd(key, k => BuildInPlaceMapper(k.Item1, k.Item2, excludedMembers));
         }
 
         private static readonly ConcurrentDictionary<(Type, Type, string), Action<object, object>> _excludingMapCache = new();

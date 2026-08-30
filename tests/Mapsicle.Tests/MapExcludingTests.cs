@@ -15,13 +15,17 @@ namespace Mapsicle.Tests
 
         private static MeSource Sample() => new() { Id = 5, Name = "name", Note = "note" };
 
+        private static void MapExcluding(MeSource source, MeDest dest, params string[] excluded) =>
+            Mapper.GetInPlaceMapper(typeof(MeSource), typeof(MeDest), excluded)(source, dest);
+
+
         [Fact]
         public void AnExcludedMemberKeepsWhateverTheDestinationAlreadyHeld()
         {
             Mapper.ClearCache();
             var dest = new MeDest { Note = "untouched" };
 
-            Sample().Map(dest, new[] { "Note" });
+            MapExcluding(Sample(), dest, "Note");
 
             Assert.Equal(5, dest.Id);
             Assert.Equal("name", dest.Name);
@@ -34,7 +38,7 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
             var dest = new MeDest { Note = "untouched" };
 
-            Sample().Map(dest, new[] { "nOtE" });
+            MapExcluding(Sample(), dest, "nOtE");
 
             Assert.Equal("untouched", dest.Note);
         }
@@ -45,11 +49,11 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
 
             var viaNull = new MeDest();
-            Sample().Map(viaNull, null);
+            Mapper.GetInPlaceMapper(typeof(MeSource), typeof(MeDest), null)(Sample(), viaNull);
             Assert.Equal("note", viaNull.Note);
 
             var viaEmpty = new MeDest();
-            Sample().Map(viaEmpty, Array.Empty<string>());
+            MapExcluding(Sample(), viaEmpty);
             Assert.Equal("note", viaEmpty.Note);
         }
 
@@ -59,7 +63,7 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
             var dest = new MeDest();
 
-            Sample().Map(dest, new[] { "NoSuchMember" });
+            MapExcluding(Sample(), dest, "NoSuchMember");
 
             Assert.Equal("name", dest.Name);
             Assert.Equal("note", dest.Note);
@@ -74,12 +78,12 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
 
             var excludeNote = new MeDest { Name = "keptName", Note = "keptNote" };
-            Sample().Map(excludeNote, new[] { "Note" });
+            MapExcluding(Sample(), excludeNote, "Note");
             Assert.Equal("name", excludeNote.Name);
             Assert.Equal("keptNote", excludeNote.Note);
 
             var excludeName = new MeDest { Name = "keptName", Note = "keptNote" };
-            Sample().Map(excludeName, new[] { "Name" });
+            MapExcluding(Sample(), excludeName, "Name");
             Assert.Equal("keptName", excludeName.Name);
             Assert.Equal("note", excludeName.Note);
         }
@@ -90,10 +94,10 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
 
             var first = new MeDest { Name = "a", Note = "b" };
-            Sample().Map(first, new[] { "Name", "Note" });
+            MapExcluding(Sample(), first, "Name", "Note");
 
             var second = new MeDest { Name = "a", Note = "b" };
-            Sample().Map(second, new[] { "Note", "Name" });
+            MapExcluding(Sample(), second, "Note", "Name");
 
             Assert.Equal("a", second.Name);
             Assert.Equal("b", second.Note);
@@ -106,7 +110,7 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
             var dest = new MeDest { Id = 99, Name = "a", Note = "b" };
 
-            Sample().Map(dest, new[] { "Id", "Name", "Note" });
+            MapExcluding(Sample(), dest, "Id", "Name", "Note");
 
             Assert.Equal(99, dest.Id);
             Assert.Equal("a", dest.Name);
@@ -119,7 +123,9 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
             var dest = new MeDest { Name = "kept" };
 
-            ((object?)null).Map(dest, new[] { "Note" });
+            // The accessor hands back a delegate; a null source is the caller's business, and the
+            // public Map overload still guards it.
+            ((object?)null).Map(dest);
 
             Assert.Equal("kept", dest.Name);
         }
@@ -132,13 +138,13 @@ namespace Mapsicle.Tests
             Mapper.ClearCache();
 
             var before = new MeDest { Note = "untouched" };
-            Sample().Map(before, new[] { "Note" });
+            MapExcluding(Sample(), before, "Note");
             Assert.Equal("untouched", before.Note);
 
             Mapper.ClearCache();
 
             var after = new MeDest { Note = "still untouched" };
-            Sample().Map(after, new[] { "Note" });
+            MapExcluding(Sample(), after, "Note");
             Assert.Equal("still untouched", after.Note);
             Assert.Equal("name", after.Name);
         }

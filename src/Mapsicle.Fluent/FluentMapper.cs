@@ -764,7 +764,14 @@ namespace Mapsicle.Fluent
 
             if (!usedFactory)
             {
-                source.Map(result, plan?.Skip);
+                if (plan != null)
+                {
+                    plan.Convention(source, result);
+                }
+                else
+                {
+                    source.Map(result);
+                }
             }
 
             // 4. Custom overrides
@@ -812,11 +819,17 @@ namespace Mapsicle.Fluent
             /// </remarks>
             internal readonly string[]? Skip;
 
-            internal OverridePlan(int version, Delegate? apply, string[]? skip)
+            /// <summary>
+            /// The convention pass for this pair, already resolved, already skipping Skip.
+            /// </summary>
+            internal readonly Action<object, object> Convention;
+
+            internal OverridePlan(int version, Delegate? apply, string[]? skip, Action<object, object> convention)
             {
                 Version = version;
                 Apply = apply;
                 Skip = skip;
+                Convention = convention;
             }
         }
 
@@ -832,8 +845,12 @@ namespace Mapsicle.Fluent
                 return existing;
             }
 
+            var skip = UnconditionallyOverwritten<TDest>(typeMap);
             var plan = new OverridePlan(
-                version, BuildOverrideAction<TDest>(typeMap), UnconditionallyOverwritten<TDest>(typeMap));
+                version,
+                BuildOverrideAction<TDest>(typeMap),
+                skip,
+                Mapper.GetInPlaceMapper(sourceType, typeof(TDest), skip));
             _overridePlans[key] = plan;
             return plan;
         }
