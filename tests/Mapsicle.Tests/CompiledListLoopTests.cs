@@ -270,7 +270,7 @@ namespace Mapsicle.Tests
 
             Assert.Equal(2, mapped.Count);
             Assert.Equal(2, mapped[0].Count);
-            Assert.Equal(1, mapped[1].Count);
+            Assert.Single(mapped[1]);
             Assert.Equal(1, mapped[0][0].Id);
             Assert.Equal("a", mapped[0][0].Name);
             Assert.Equal(3, mapped[1][0].Id);
