@@ -64,10 +64,12 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
   interval of plus or minus 43 percent of the mean on a claimed difference of 7 percent. It could
   not have failed for its own reason. The collection bound moves from 1.60 to 1.15 as a result.
 - **The README numbers are the ones the benchmarks produce.** The published 1.33x slower on
-  collections was measured under ShortRun; at a job that reaches steady state it is 1.07x slower on
-  x64 and 1.04x faster on arm64, and the honest reading of that row is parity. Deep nesting at 8.22x
-  and ten-thousand-element collections at 2.36x were not mentioned at all. The Large Collection row
-  said 4 ms against 4 ms; the figures are 0.48 against 1.13.
+  collections was measured under ShortRun. At a job that reaches steady state it was parity, 1.07x
+  slower on x64 and 1.04x faster on arm64, and the compiled list loop in this same release then
+  took it to 1.20x and 1.09x faster. Deep nesting at 8.22x and ten-thousand-element collections at
+  2.36x were not mentioned at all. The Large Collection row said 4 ms against 4 ms; the figures are
+  0.48 against 1.13. arm64 figures are medians of repeated runs, because repeating an identical
+  commit on that machine moved the Mapperly row by 36 percent.
 - `Mapsicle.Fluent`'s cost is stated in the README and the migration guide, which recommended it
   without saying what it cost.
 - CI runs the test suite on arm64 as well as x64 and Windows.
