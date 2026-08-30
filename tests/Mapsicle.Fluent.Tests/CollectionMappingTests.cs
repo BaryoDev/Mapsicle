@@ -142,6 +142,49 @@ namespace Mapsicle.Fluent.Tests
             Assert.Null(IgnoringPasswordHash().Map<List<CmUserDto>>(null));
         }
 
+        public class CmBase { public string Name { get; set; } = ""; }
+        public class CmDerived : CmBase { public string Extra { get; set; } = ""; }
+        public class CmBaseDto { public string Name { get; set; } = ""; }
+
+        [Fact]
+        public void AListHoldingMoreThanOneRuntimeTypeMapsEachAsWhatItIs()
+        {
+            // The loop resolves the configuration when it first sees a runtime type and reuses it
+            // while that holds. A list that alternates types never gets to keep an answer, and
+            // correctness must not depend on it keeping one.
+            var mapper = new MapperConfiguration(c =>
+            {
+                c.CreateMap<CmBase, CmBaseDto>().ForMember(d => d.Name, o => o.ResolveUsing(s => "base:" + s.Name));
+                c.CreateMap<CmDerived, CmBaseDto>().ForMember(d => d.Name, o => o.ResolveUsing(s => "derived:" + s.Name));
+            }).CreateMapper();
+
+            var source = new List<CmBase>
+            {
+                new CmBase { Name = "a" },
+                new CmDerived { Name = "b" },
+                new CmBase { Name = "c" },
+                new CmDerived { Name = "d" },
+            };
+
+            var dtos = mapper.Map<List<CmBaseDto>>(source);
+
+            Assert.Equal(new[] { "base:a", "derived:b", "base:c", "derived:d" }, dtos!.Select(d => d.Name));
+        }
+
+        [Fact]
+        public void ANullElementInTheMiddleDoesNotDisturbTheOnesAroundIt()
+        {
+            var mapper = new MapperConfiguration(c => c.CreateMap<CmUser, CmUserDto>()).CreateMapper();
+            var source = new List<CmUser> { new CmUser { Name = "a" }, null!, new CmUser { Name = "c" } };
+
+            var dtos = mapper.Map<List<CmUserDto>>(source);
+
+            Assert.Equal(3, dtos!.Count);
+            Assert.Equal("a", dtos[0].Name);
+            Assert.Null(dtos[1]);
+            Assert.Equal("c", dtos[2].Name);
+        }
+
         [Fact]
         public void ConfiguringAfterTheFirstCollectionMapTakesEffect()
         {

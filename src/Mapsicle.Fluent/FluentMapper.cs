@@ -720,6 +720,19 @@ namespace Mapsicle.Fluent
                 typeMap = FindPolymorphicTypeMap(sourceType, destType);
             }
 
+            return MapResolved<TDest>(source, sourceType, typeMap);
+        }
+
+        /// <summary>
+        /// Maps one object once the configuration lookups for its pair have already been done.
+        /// </summary>
+        /// <remarks>
+        /// Split out so a collection can do those lookups once instead of once per element. The
+        /// element loop used to call back into the full entry point, paying a converter lookup, a
+        /// collection-shape lookup, a type map lookup and a plan lookup for every item in the list.
+        /// </remarks>
+        private TDest? MapResolved<TDest>(object source, Type sourceType, ITypeMapConfiguration? typeMap)
+        {
             // 1. Create destination
             var factory = typeMap?.GetConstructorFactory();
             TDest? result;
@@ -1060,6 +1073,14 @@ namespace Mapsicle.Fluent
                     ? new List<TElement>(sized.Count)
                     : new List<TElement>();
 
+                // The configuration for a pair does not change between two elements of one list,
+                // so it is looked up when the first element's runtime type is seen and reused
+                // while that holds. A list declared List<Animal> may hold a Dog and then a Cat,
+                // so the type is still checked per element and an odd one out goes the long way.
+                Type? resolvedFor = null;
+                ITypeMapConfiguration? typeMap = null;
+                var hasConverter = false;
+
                 foreach (var item in source)
                 {
                     if (item is null)
@@ -1067,7 +1088,22 @@ namespace Mapsicle.Fluent
                         result.Add(default!);
                         continue;
                     }
-                    result.Add(mapper.MapInternal<TElement>(item, item.GetType())!);
+
+                    var itemType = item.GetType();
+
+                    if (!ReferenceEquals(itemType, resolvedFor))
+                    {
+                        resolvedFor = itemType;
+                        hasConverter = mapper._config.GetTypeConverter(itemType, typeof(TElement)) != null;
+                        typeMap = mapper._config.GetTypeMap(itemType, typeof(TElement))
+                                  ?? mapper.FindPolymorphicTypeMap(itemType, typeof(TElement));
+                    }
+
+                    // A converter replaces the whole mapping, and a nested collection element is
+                    // not a shape this loop resolves, so both go back through the entry point.
+                    result.Add(hasConverter
+                        ? mapper.MapInternal<TElement>(item, itemType)!
+                        : mapper.MapResolved<TElement>(item, itemType, typeMap)!);
                 }
 
                 return result;
