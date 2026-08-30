@@ -206,11 +206,15 @@ public class Program
             Console.WriteLine($"  AutoMapper_Collection: {autoMapperCollection.Value:F1} ns");
             Console.WriteLine($"  ratio: {collectionRatio:F2}x {(collectionRatio < 1 ? "(faster)" : "(slower)")}");
 
-            if (collectionRatio > 1.60)
+            // The README publishes 1.07x slower on x64, which is what this runner is, measured at
+            // an error under one percent. The old bound was 1.60, set when the job could not
+            // resolve better than plus or minus 43 percent and had to be loose enough to survive
+            // its own noise. It could not have caught a 40 percent regression. This one can.
+            if (collectionRatio > 1.15)
             {
                 ClaimFailures.Add(
                     $"Mapsicle is {collectionRatio:F2}x AutoMapper on 100-item collections. The README "
-                  + "says about 1.33x slower. Update the code or the claim.");
+                  + "says 1.07x slower on x64. Update the code or the claim.");
             }
         }
 
