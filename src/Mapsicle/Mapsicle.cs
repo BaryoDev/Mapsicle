@@ -232,6 +232,7 @@ namespace Mapsicle
             System.Threading.Interlocked.Increment(ref _cacheGeneration);
             _mapToCache.Clear();
             _mapCache.Clear();
+            _excludingMapCache.Clear();
             _propertyCache.Clear();
             _readablePropertyCache.Clear();
             _writablePropertyCache.Clear();
@@ -266,6 +267,7 @@ namespace Mapsicle
                 System.Threading.Interlocked.Increment(ref _cacheGeneration);
                 _mapToCache.Clear();
                 _mapCache.Clear();
+                _excludingMapCache.Clear();
                 _lruMapToCache?.Clear();
                 _lruMapCache?.Clear();
                 _propertyCache.Clear();
@@ -1174,53 +1176,110 @@ namespace Mapsicle
             if (source is null || destination is null) return destination;
 
             var key = (source.GetType(), typeof(TDestination));
+            GetOrAddMapDelegate(key, k => BuildInPlaceMapper(k.Item1, k.Item2, null))(source, destination);
+            return destination;
+        }
 
-            var mapAction = GetOrAddMapDelegate(key, k =>
-            {
-                var sourceType = k.Item1;
-                var destType = k.Item2;
-                var sourceParam = Expression.Parameter(typeof(object), "source");
-                var destParam = Expression.Parameter(typeof(object), "destination");
+        /// <summary>
+        /// Maps onto an existing destination, leaving the named members untouched.
+        /// </summary>
+        /// <remarks>
+        /// For a caller that is going to write some members itself and would rather the convention
+        /// pass did not compute them first. <c>Mapsicle.Fluent</c> is that caller: a member with a
+        /// custom mapping was resolved by convention and then immediately overwritten, so a DTO
+        /// with six configured members out of ten paid for sixteen assignments to keep ten.
+        ///
+        /// Names are matched the way the mapper matches everything else, without case sensitivity.
+        /// A name that matches nothing on the destination is not an error, because a configuration
+        /// naming a member that a particular destination does not have is a normal thing for a
+        /// caller with several destinations to hold.
+        /// </remarks>
+        /// <typeparam name="TDestination">The destination type.</typeparam>
+        /// <param name="source">The source object.</param>
+        /// <param name="destination">The instance to populate.</param>
+        /// <param name="excludedMembers">Destination member names to leave alone.</param>
+        /// <returns>The same destination instance.</returns>
+        public static TDestination Map<TDestination>(
+            this object? source, TDestination destination, IReadOnlyCollection<string>? excludedMembers)
+        {
+            if (source is null || destination is null) return destination;
+            if (excludedMembers is null || excludedMembers.Count == 0) return source.Map(destination);
 
-                var typedSource = Expression.Convert(sourceParam, sourceType);
-                var typedDest = Expression.Convert(destParam, destType);
+            var sourceType = source.GetType();
+            var destType = typeof(TDestination);
+            var key = (sourceType, destType, ExclusionKey(excludedMembers));
 
-                // OPTIMIZATION: Use cached property arrays
-                var sourceProps = GetCachedReadableProperties(sourceType);
-                var destProps = GetCachedWritableProperties(destType);
-                var assignments = new List<Expression>(destProps.Length);
-
-                for (int i = 0; i < destProps.Length; i++)
-                {
-                    var destProp = destProps[i];
-                    if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
-
-                    if (sourceProp != null)
-                    {
-                        var propExp = Expression.Property(typedSource, sourceProp);
-                        var destPropExp = Expression.Property(typedDest, destProp);
-
-                        var value = PropertyConversion.TryBuild(
-                            propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
-
-                        if (value != null)
-                        {
-                            assignments.Add(Expression.Assign(destPropExp, value));
-                        }
-                    }
-                }
-
-                if (assignments.Count == 0)
-                {
-                    return (s, d) => { };
-                }
-
-                var block = Expression.Block(assignments);
-                return Expression.Lambda<Action<object, object>>(block, sourceParam, destParam).Compile();
-            });
+            var mapAction = _excludingMapCache.GetOrAdd(
+                key, k => BuildInPlaceMapper(k.Item1, k.Item2, excludedMembers));
 
             mapAction(source, destination);
             return destination;
+        }
+
+        private static readonly ConcurrentDictionary<(Type, Type, string), Action<object, object>> _excludingMapCache = new();
+
+        /// <summary>
+        /// A stable key for a set of member names, independent of the order they arrived in.
+        /// </summary>
+        private static string ExclusionKey(IReadOnlyCollection<string> excludedMembers)
+        {
+            var names = new string[excludedMembers.Count];
+            var i = 0;
+            foreach (var name in excludedMembers) names[i++] = name.ToLowerInvariant();
+            Array.Sort(names, StringComparer.Ordinal);
+            return string.Join("\u001f", names);
+        }
+
+        /// <summary>
+        /// Builds the in-place mapping delegate for one pair, optionally skipping named members.
+        /// </summary>
+        private static Action<object, object> BuildInPlaceMapper(
+            Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers)
+        {
+            var sourceParam = Expression.Parameter(typeof(object), "source");
+            var destParam = Expression.Parameter(typeof(object), "destination");
+
+            var typedSource = Expression.Convert(sourceParam, sourceType);
+            var typedDest = Expression.Convert(destParam, destType);
+
+            var sourceProps = GetCachedReadableProperties(sourceType);
+            var destProps = GetCachedWritableProperties(destType);
+            var assignments = new List<Expression>(destProps.Length);
+
+            HashSet<string>? excluded = null;
+            if (excludedMembers is { Count: > 0 })
+            {
+                excluded = new HashSet<string>(excludedMembers, StringComparer.OrdinalIgnoreCase);
+            }
+
+            for (int i = 0; i < destProps.Length; i++)
+            {
+                var destProp = destProps[i];
+                if (excluded != null && excluded.Contains(destProp.Name)) continue;
+                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
+
+                if (sourceProp != null)
+                {
+                    var propExp = Expression.Property(typedSource, sourceProp);
+                    var destPropExp = Expression.Property(typedDest, destProp);
+
+                    var value = PropertyConversion.TryBuild(
+                        propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
+
+                    if (value != null)
+                    {
+                        assignments.Add(Expression.Assign(destPropExp, value));
+                    }
+                }
+            }
+
+            if (assignments.Count == 0)
+            {
+                return (s, d) => { };
+            }
+
+            var block = Expression.Block(assignments);
+            return Expression.Lambda<Action<object, object>>(block, sourceParam, destParam).Compile();
         }
 
         #endregion

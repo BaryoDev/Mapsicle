@@ -20,6 +20,7 @@ class Mapsicle.Mapper
     public static T MapTo<T>(System.Object source)
     public static TDest MapTo<TSource,TDest>(TSource source)
     public static TDestination Map<TDestination>(System.Object source, TDestination destination)
+    public static TDestination Map<TDestination>(System.Object source, TDestination destination, System.Collections.Generic.IReadOnlyCollection<System.String> excludedMembers)
     public static T[] MapToArray<T>(System.Collections.IEnumerable source)
 class Mapsicle.MapperFactory
     public static Mapsicle.IMapperInstance Create(Mapsicle.MapperOptions options = null)
