@@ -21,7 +21,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # arm64 is in here because the mapper's own numbers move with the architecture and
+        # everything was previously tested on x64 only. GitHub's arm64 Linux runners are free for
+        # public repositories, which this is.
+        os: [ubuntu-latest, windows-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v4
         with:

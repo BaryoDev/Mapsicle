@@ -306,6 +306,12 @@ types as it meets them.
 **If your mappings are all known at compile time and you are willing to declare them, choose
 Mapperly.** Mapsicle is for the case where they are not, and its comparison is with AutoMapper.
 
+The Mapperly column is here for scale, not as a fair fight. It is a source generator measured
+against two runtime mappers, and it wins on throughput by construction. The comparison becomes
+like for like when 3.0.0 lands its own generator as an opt-in lane, which is described under
+Unreleased in [CHANGELOG.md](CHANGELOG.md). Read the AutoMapper column as the competitive one and
+the Mapperly column as the ceiling.
+
 **Other scenarios:**
 
 | Scenario                        |    Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
