@@ -1,4 +1,4 @@
-<img src="assets/logo.png" alt="Mapsicle" width="120" align="right">
+![Mapsicle](https://raw.githubusercontent.com/BaryoDev/Mapsicle/main/assets/logo-120.png)
 
 # Mapsicle
 
@@ -66,11 +66,12 @@ be known when you compile.
 | Situation | Choose |
 | :-------- | :----- |
 | Every mapping is known at compile time and you will declare them | **Mapperly.** 2.5x to 3x faster and indistinguishable from hand-written code. |
-| Collection throughput is what your workload is bounded by | **Mapperly**, then AutoMapper. Mapsicle is 1.33x slower than AutoMapper here. |
+| Collection throughput at around a hundred elements is what your workload is bounded by | **Mapperly.** Mapsicle and AutoMapper are within 7 percent of each other and which one wins depends on the architecture. |
 | You need AOT with no runtime code generation | **Mapperly.** Mapsicle compiles expression trees at first use. |
 
-Mapsicle is about 1.4x faster than AutoMapper on single objects, on both x64 and arm64. That is
-real and it is measured below, but it is a supporting argument rather than the reason to switch.
+Mapsicle is 1.27x to 1.41x faster than AutoMapper on single objects depending on the architecture,
+and faster again on deeply nested graphs and large collections. That is real and it is measured
+below, but it is a supporting argument rather than the reason to switch.
 
 ### Quick Comparison
 
@@ -274,20 +275,19 @@ Do you need EF Core query translation (ProjectTo)?
 
 ## Benchmark Results
 
-Real benchmarks on Apple M1, .NET 8.0, BenchmarkDotNet v0.13.12:
-
 ### Core Mapping Performance
 
-BenchmarkDotNet, short job, .NET 8, measured on two architectures because one is not evidence of
-anything portable. Reproduce with
-`dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --core`.
+BenchmarkDotNet 0.13.12, .NET 8, five warmup iterations and twenty measured, on two architectures
+because one is not evidence of anything portable. Reproduce with
+`dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --core`, which is the job the CI gate
+runs.
 
 **Single object, five properties:**
 
 | Runtime | Manual  | Mapsicle    | AutoMapper | Mapperly | Mapsicle vs AutoMapper |
 | :------ | ------: | ----------: | ---------: | -------: | :--------------------- |
-| x64 Linux (CI runner) | 18.3 ns | **60.4 ns** | 82.7 ns | 18.2 ns | 1.37x faster |
-| arm64 macOS           | 12.2 ns | **33.1 ns** | 49.0 ns | 12.5 ns | 1.48x faster |
+| x64 Linux (CI runner)   | 18.6 ns | **59.3 ns** | 83.7 ns | 19.4 ns | 1.41x faster |
+| arm64 Linux (Ampere VM) | 23.3 ns | **101.6 ns** | 128.9 ns | 33.7 ns | 1.27x faster |
 
 **Mapperly is not a competitor, it is a different trade, and it wins the one this table measures.**
 At 18.2 ns against hand-written code's 18.3 ns it is not close to manual, it is indistinguishable
@@ -306,25 +306,41 @@ types as it meets them.
 **If your mappings are all known at compile time and you are willing to declare them, choose
 Mapperly.** Mapsicle is for the case where they are not, and its comparison is with AutoMapper.
 
-**Other scenarios, arm64:**
+**Other scenarios:**
 
-| Scenario             |   Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
-| :------------------- | ---------: | ---------: | --------: | :------------ |
-| **Flattening**       | **38.4 ns** |    54.1 ns |  15.2 ns  | 1.41x faster  |
-| **Collection (100)** | **2,428 ns** |  1,823 ns | 1,451 ns  | 1.33x slower  |
+| Scenario                        |    Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
+| :------------------------------ | ----------: | ---------: | --------: | :------------ |
+| **Flattening**, x64             |  **66.3 ns** |    87.7 ns |   21.6 ns | 1.32x faster  |
+| **Flattening**, arm64           | **117.0 ns** |   137.4 ns |   39.3 ns | 1.17x faster  |
+| **Collection (100)**, x64       | **2,802 ns** |  2,620 ns  |  2,032 ns | 1.07x slower  |
+| **Collection (100)**, arm64     | **4,511 ns** |  4,721 ns  |  2,855 ns | 1.05x faster  |
+| **Collection (10,000)**, arm64  | **481 us**   |  1,134 us  |    322 us | 2.36x faster  |
+| **Deep nesting (15 levels)**, arm64 | **626 ns** | 5,145 ns  |    282 ns | 8.22x faster  |
 
 Allocation per operation matches hand-written code for single objects and flattening (48 B and
-56 B, the destination and nothing else). On collections Mapsicle allocates 5,696 B against
-AutoMapper's 6,992 B, about 19 percent less, while taking longer.
+56 B, the destination and nothing else). On a collection Mapsicle allocates 5,656 B against
+AutoMapper's 6,992 B, about 19 percent less, and the same as source-generated Mapperly.
 
-**Read that collection row rather than skipping it.** Mapsicle is slower than AutoMapper mapping
-collections. If collection throughput is what your workload is bounded by, Mapperly is faster than
-both.
+**Read the collection rows rather than skipping them.** At a hundred elements Mapsicle and
+AutoMapper are close enough that the answer depends on the machine: Mapsicle loses by 7 percent on
+x64 and wins by 5 on arm64. If collection throughput at that size is what your workload is bounded
+by, Mapperly is faster than both on either.
 
-Two things worth more than the table:
+At ten thousand the picture changes, and not because the per-element cost changed. AutoMapper
+allocates 742 KB there against Mapsicle's 560 KB, enough to reach generation 2 collections while
+Mapsicle stays in 0 and 1. The 2.36x is mostly that.
 
-- The flattening row has wide error bars at this job length. Run it on your hardware before it
-  decides anything.
+Three things worth more than the table:
+
+- **The job length changes the answer.** These numbers come from five warmup iterations and twenty
+  measured. The same commits under BenchmarkDotNet's ShortRun, three and three, put the arm64
+  collection row at 1.05x slower rather than 1.05x faster, because three warmup iterations do not
+  get compiled delegates to steady state and the mapper that compiles more pays for it. On a hosted
+  runner ShortRun gave an interval of plus or minus 43 percent of the mean. The gate used to run
+  that job. It does not now.
+- **`Mapsicle.Fluent` is not on this table and is slower.** A complex object through the fluent
+  configuration API is about 1.14x AutoMapper, and a hundred of them about 1.38x. The static API is
+  what the rows above measure.
 - An earlier version of this table claimed 2.1x on single objects and rough parity on collections.
   Neither held when the benchmark was re-run. It went unnoticed because CI measured the comparison,
   printed it and exited zero regardless. CI now fails when the comparison changes direction, and it
@@ -335,9 +351,9 @@ Two things worth more than the table:
 
 | Scenario                     | Mapsicle      | AutoMapper    | Mapperly      | Notes                     |
 | :--------------------------- | :------------ | :------------ | :------------ | :------------------------ |
-| **Deep Nesting (15 levels)** | ✅ Safe        | ✅ Safe        | ✅ Safe        | All handle with limits    |
+| **Deep Nesting (15 levels)** | **626 ns**    | 5,145 ns      | 282 ns        | All safe; Mapsicle 8.22x AutoMapper |
 | **Circular References**      | Handled by default | Opt in via `PreserveReferences()` | Opt in via `UseReferenceHandling` | Only Mapsicle needs no configuration |
-| **Large Collection (10K)**   | **4 ms**      | 4 ms          | ~3.5 ms       | Mapperly fastest          |
+| **Large Collection (10K)**   | **0.48 ms**   | 1.13 ms       | 0.32 ms       | Mapsicle 2.36x AutoMapper |
 | **Parallel (1000 threads)**  | ✅ Thread-safe | ✅ Thread-safe | ✅ Thread-safe | All thread-safe           |
 | **Cold Start**               | Medium        | Slow          | **None**      | Mapperly pre-compiled     |
 
@@ -1994,7 +2010,6 @@ MPL 2.0 License © [Arnel Isiderio Robles](https://github.com/arnelirobles)
 
 ---
 
-<p align="center">
-  <strong>Stop configuring. Start mapping.</strong><br>
-  <em>Free forever. Zero dependencies. Pure performance.</em>
-</p>
+**Stop configuring. Start mapping.**
+
+*Free forever. Zero dependencies. Pure performance.*
