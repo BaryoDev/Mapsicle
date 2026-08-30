@@ -690,13 +690,15 @@ namespace Mapsicle.Fluent
 
         private TDest? MapInternal<TDest>(object source, Type sourceType)
         {
-            var destType = typeof(TDest);
+            // One lookup, not four. This used to ask the configuration for a converter, then ask
+            // whether the destination was a collection, then ask for a type map, then ask for the
+            // override plan, on every map. All four answers depend only on the pair and the
+            // configuration version, so they are settled together and kept together.
+            var plan = GetPlan<TDest>(sourceType);
 
-            // Check for type converter first
-            var converter = _config.GetTypeConverter(sourceType, destType);
-            if (converter != null)
+            if (plan.Converter != null)
             {
-                return (TDest)converter(source);
+                return (TDest)plan.Converter(source);
             }
 
             // A collection destination maps element by element through the configured map. Without
@@ -706,21 +708,12 @@ namespace Mapsicle.Fluent
             // one object but not a list of them.
             if (source is System.Collections.IEnumerable sequence
                 && source is not string
-                && CollectionShape.Of(destType) is { } shape)
+                && CollectionShapeFor<TDest>.Shape is { } shape)
             {
                 return (TDest)shape.Map(this, sequence);
             }
 
-            // Get the type map - check for polymorphic mapping
-            var typeMap = _config.GetTypeMap(sourceType, destType);
-
-            // If no direct mapping, check for polymorphic mappings
-            if (typeMap == null)
-            {
-                typeMap = FindPolymorphicTypeMap(sourceType, destType);
-            }
-
-            return MapResolved<TDest>(source, sourceType, typeMap);
+            return MapResolved<TDest>(source, plan);
         }
 
         /// <summary>
@@ -731,8 +724,9 @@ namespace Mapsicle.Fluent
         /// element loop used to call back into the full entry point, paying a converter lookup, a
         /// collection-shape lookup, a type map lookup and a plan lookup for every item in the list.
         /// </remarks>
-        private TDest? MapResolved<TDest>(object source, Type sourceType, ITypeMapConfiguration? typeMap)
+        private TDest? MapResolved<TDest>(object source, OverridePlan plan)
         {
+            var typeMap = plan.TypeMap;
             // 1. Create destination
             var factory = typeMap?.GetConstructorFactory();
             TDest? result;
@@ -757,8 +751,7 @@ namespace Mapsicle.Fluent
 
                     // Apply overrides and hooks on the already-mapped result
                     typeMap?.GetBeforeMap()?.Invoke(source, result);
-                    if (typeMap != null
-                        && GetOverridePlan<TDest>(sourceType, typeMap).Apply is Action<object, TDest> overrides)
+                    if (plan.Apply is Action<object, TDest> overrides)
                     {
                         overrides(source, result);
                     }
@@ -773,11 +766,9 @@ namespace Mapsicle.Fluent
 
             // 3. Core mapping (map properties into existing object)
             // Skip when factory was used — factory is expected to produce a fully initialized object
-            var plan = typeMap is null ? null : GetOverridePlan<TDest>(sourceType, typeMap);
-
             if (!usedFactory)
             {
-                if (plan != null)
+                if (plan.Convention != null)
                 {
                     plan.Convention(source, result);
                 }
@@ -788,7 +779,7 @@ namespace Mapsicle.Fluent
             }
 
             // 4. Custom overrides
-            if (plan?.Apply is Action<object, TDest> applyOverrides)
+            if (plan.Apply is Action<object, TDest> applyOverrides)
             {
                 applyOverrides(source, result);
             }
@@ -821,6 +812,12 @@ namespace Mapsicle.Fluent
             internal readonly int Version;
             internal readonly Delegate? Apply;
 
+            /// <summary>The registered converter for this pair, if any.</summary>
+            internal Func<object, object>? Converter;
+
+            /// <summary>The type map for this pair, direct or polymorphic.</summary>
+            internal ITypeMapConfiguration? TypeMap;
+
             /// <summary>
             /// Members the override pass always writes, so the convention pass can skip them.
             /// </summary>
@@ -835,9 +832,9 @@ namespace Mapsicle.Fluent
             /// <summary>
             /// The convention pass for this pair, already resolved, already skipping Skip.
             /// </summary>
-            internal readonly Action<object, object> Convention;
+            internal readonly Action<object, object>? Convention;
 
-            internal OverridePlan(int version, Delegate? apply, string[]? skip, Action<object, object> convention)
+            internal OverridePlan(int version, Delegate? apply, string[]? skip, Action<object, object>? convention)
             {
                 Version = version;
                 Apply = apply;
@@ -848,7 +845,7 @@ namespace Mapsicle.Fluent
 
         private readonly ConcurrentDictionary<(Type, Type), OverridePlan> _overridePlans = new();
 
-        private OverridePlan GetOverridePlan<TDest>(Type sourceType, ITypeMapConfiguration typeMap)
+        private OverridePlan GetPlan<TDest>(Type sourceType)
         {
             var key = (sourceType, typeof(TDest));
             var version = _config.Version;
@@ -858,12 +855,29 @@ namespace Mapsicle.Fluent
                 return existing;
             }
 
-            var skip = UnconditionallyOverwritten<TDest>(typeMap);
-            var plan = new OverridePlan(
-                version,
-                BuildOverrideAction<TDest>(typeMap),
-                skip,
-                Mapper.GetInPlaceMapper(sourceType, typeof(TDest), skip));
+            var destType = typeof(TDest);
+            var converter = _config.GetTypeConverter(sourceType, destType);
+            var typeMap = _config.GetTypeMap(sourceType, destType) ?? FindPolymorphicTypeMap(sourceType, destType);
+
+            OverridePlan plan;
+            if (converter != null || typeMap is null || CollectionShape.Of(destType) != null)
+            {
+                // Nothing for the convention and override passes to do, or the destination is a
+                // collection and the elements are what carry a plan.
+                plan = new OverridePlan(version, null, null, null);
+            }
+            else
+            {
+                var skip = UnconditionallyOverwritten<TDest>(typeMap);
+                plan = new OverridePlan(
+                    version,
+                    BuildOverrideAction<TDest>(typeMap),
+                    skip,
+                    Mapper.GetInPlaceMapper(sourceType, destType, skip));
+            }
+
+            plan.Converter = converter;
+            plan.TypeMap = typeMap;
             _overridePlans[key] = plan;
             return plan;
         }
@@ -1011,6 +1025,18 @@ namespace Mapsicle.Fluent
         /// single-object path, so a collection and one object cannot disagree about what the
         /// configuration says: there is one implementation of that and this is not a second one.
         /// </remarks>
+        /// <summary>
+        /// The collection shape for one destination type, resolved by the runtime once.
+        /// </summary>
+        /// <remarks>
+        /// A static field on a closed generic rather than a dictionary lookup, because every map
+        /// of every kind asks this question and the answer for a given destination never changes.
+        /// </remarks>
+        private static class CollectionShapeFor<TDest>
+        {
+            internal static readonly CollectionShape? Shape = CollectionShape.Of(typeof(TDest));
+        }
+
         private sealed class CollectionShape
         {
             private static readonly ConcurrentDictionary<Type, CollectionShape?> Shapes = new();
@@ -1078,8 +1104,7 @@ namespace Mapsicle.Fluent
                 // while that holds. A list declared List<Animal> may hold a Dog and then a Cat,
                 // so the type is still checked per element and an odd one out goes the long way.
                 Type? resolvedFor = null;
-                ITypeMapConfiguration? typeMap = null;
-                var hasConverter = false;
+                OverridePlan? plan = null;
 
                 foreach (var item in source)
                 {
@@ -1094,16 +1119,15 @@ namespace Mapsicle.Fluent
                     if (!ReferenceEquals(itemType, resolvedFor))
                     {
                         resolvedFor = itemType;
-                        hasConverter = mapper._config.GetTypeConverter(itemType, typeof(TElement)) != null;
-                        typeMap = mapper._config.GetTypeMap(itemType, typeof(TElement))
-                                  ?? mapper.FindPolymorphicTypeMap(itemType, typeof(TElement));
+                        plan = mapper.GetPlan<TElement>(itemType);
                     }
 
-                    // A converter replaces the whole mapping, and a nested collection element is
-                    // not a shape this loop resolves, so both go back through the entry point.
-                    result.Add(hasConverter
+                    // A converter replaces the whole mapping, and an element that is itself a
+                    // collection is not a shape this loop resolves, so both go back through the
+                    // entry point.
+                    result.Add(plan!.Converter != null || CollectionShapeFor<TElement>.Shape != null
                         ? mapper.MapInternal<TElement>(item, itemType)!
-                        : mapper.MapResolved<TElement>(item, itemType, typeMap)!);
+                        : mapper.MapResolved<TElement>(item, plan)!);
                 }
 
                 return result;
