@@ -43,14 +43,18 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
   resolved by convention first and then overwritten; and the converter, type map, collection shape
   and override plan were four separate lookups per map. All of it is settled once per pair per
   configuration version now. A hundred such objects is 1.21x AutoMapper, from 5.20x.
-- **A list is mapped by a loop compiled for its element type, about 20 percent faster.** Mapping a
-  hundred element list spent roughly a fifth of its time on the loop rather than on the mapping.
-  Seven loop shapes were measured in one process on both architectures first: indexing the typed
-  list instead of the non-generic `IList` won nothing, writing through `CollectionsMarshal` instead
-  of `Add` won nothing, and the library's own typed collection API was slower than the untyped one.
-  Compiling the loop won, and it puts a hundred element collection at 0.87x AutoMapper on x64 where
-  it was at parity. The element mapping is the same expression the single-object path compiles, not
-  a second copy of it. Cyclic element types and the bounded cache keep the previous loop.
+- **A `List<T>` is mapped by a loop compiled for its element type.** A hundred element collection
+  goes from 2,999 ns to 2,175 on x64, which is 1.20x AutoMapper where it had been 1.06x slower, and
+  1.09x on arm64. Mapping such a list spent roughly a fifth of its time on the loop rather than on
+  the mapping. Seven loop shapes were measured in one process on both architectures first: indexing
+  the typed list instead of the non-generic `IList` won nothing, writing through
+  `CollectionsMarshal` instead of `Add` won nothing, and the library's own typed collection API was
+  slower than the untyped one. Compiling the loop won. The element mapping is the same expression
+  the single-object path compiles, not a second copy of it.
+
+  Arrays keep the previous loop, and so do lists whose element type is `object`, an interface or
+  abstract, because a loop compiled for a type no element actually is sends every element down the
+  slower path: that measured 10.9x worse before it was guarded.
 - Allocation for a fluent map fell from 424 B to 208 B.
 
 ### Changed
@@ -77,8 +81,10 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
 
 ### Known and not fixed
 
-- Mapping a collection that is not a `List<T>`, or whose elements can form cycles, keeps the
-  previous loop and its previous cost. Arrays are the common case there (#48).
+- Mapping an array, or a list whose element type is `object`, an interface or abstract, keeps the
+  previous loop and its previous cost (#48).
+- `Mapsicle.Fluent` maps a collection element by element rather than through the compiled loop, so a
+  hundred complex objects cost about 1.22x AutoMapper. A single one is at parity.
 
 ## Unreleased
 

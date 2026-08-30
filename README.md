@@ -66,12 +66,12 @@ be known when you compile.
 | Situation | Choose |
 | :-------- | :----- |
 | Every mapping is known at compile time and you will declare them | **Mapperly.** 2.5x to 3x faster and indistinguishable from hand-written code. |
-| Collection throughput at around a hundred elements is what your workload is bounded by | **Mapperly.** Mapsicle and AutoMapper are within 7 percent of each other and which one wins depends on the architecture. |
+| Collection throughput at around a hundred elements is what your workload is bounded by | **Mapperly**, by about 12 percent over Mapsicle on x64. Mapsicle is ahead of AutoMapper on both architectures. |
 | You need AOT with no runtime code generation | **Mapperly.** Mapsicle compiles expression trees at first use. |
 
-Mapsicle is 1.27x to 1.41x faster than AutoMapper on single objects depending on the architecture,
-and faster again on deeply nested graphs and large collections. That is real and it is measured
-below, but it is a supporting argument rather than the reason to switch.
+Mapsicle is 1.30x to 1.44x faster than AutoMapper on single objects depending on the architecture,
+1.09x to 1.20x on collections, and faster again on deeply nested graphs and large collections. That
+is real and it is measured below, but it is a supporting argument rather than the reason to switch.
 
 ### Quick Comparison
 
@@ -313,8 +313,8 @@ has never touched. A single run of any of these rows is one sample.
 
 | Runtime | Manual  | Mapsicle    | AutoMapper | Mapperly | Mapsicle vs AutoMapper |
 | :------ | ------: | ----------: | ---------: | -------: | :--------------------- |
-| x64 Linux (CI runner)   | 18.6 ns | **59.3 ns** | 83.7 ns | 19.4 ns | 1.41x faster |
-| arm64 Linux (Ampere VM) | 23.0 ns | **101.1 ns** | 131.0 ns | 28.2 ns | 1.30x faster |
+| x64 Linux (CI runner)   | 18.6 ns | **57.8 ns** | 83.2 ns | 18.8 ns | 1.44x faster |
+| arm64 Linux (Ampere VM) | 23.0 ns | **101.2 ns** | 131.3 ns | 28.2 ns | 1.30x faster |
 
 **Mapperly is not a competitor, it is a different trade, and it wins the one this table measures.**
 At 18.2 ns against hand-written code's 18.3 ns it is not close to manual, it is indistinguishable
@@ -343,10 +343,10 @@ the Mapperly column as the ceiling.
 
 | Scenario                        |    Mapsicle | AutoMapper |  Mapperly | vs AutoMapper |
 | :------------------------------ | ----------: | ---------: | --------: | :------------ |
-| **Flattening**, x64             |  **66.3 ns** |    87.7 ns |   21.6 ns | 1.32x faster  |
-| **Flattening**, arm64           | **116.5 ns** |   144.8 ns |   33.0 ns | 1.24x faster  |
-| **Collection (100)**, x64       | **2,802 ns** |  2,620 ns  |  2,032 ns | 1.07x slower  |
-| **Collection (100)**, arm64     | **4,593 ns** |  4,790 ns  |  2,894 ns | 1.04x faster  |
+| **Flattening**, x64             |  **64.9 ns** |   101.2 ns |   21.1 ns | 1.56x faster  |
+| **Flattening**, arm64           | **110.0 ns** |   140.2 ns |   33.0 ns | 1.28x faster  |
+| **Collection (100)**, x64       | **2,175 ns** |  2,618 ns  |  1,933 ns | 1.20x faster  |
+| **Collection (100)**, arm64     | **4,311 ns** |  4,696 ns  |  2,894 ns | 1.09x faster  |
 | **Collection (10,000)**, arm64  | **481 us**   |  1,134 us  |    322 us | 2.36x faster  |
 | **Deep nesting (15 levels)**, arm64 | **626 ns** | 5,145 ns  |    282 ns | 8.22x faster  |
 
@@ -354,12 +354,13 @@ Allocation per operation matches hand-written code for single objects and flatte
 56 B, the destination and nothing else). On a collection Mapsicle allocates 5,656 B against
 AutoMapper's 6,992 B, about 19 percent less, and the same as source-generated Mapperly.
 
-**Read the collection rows rather than skipping them.** At a hundred elements Mapsicle and
-AutoMapper are close enough that the difference is smaller than the run-to-run spread on the
-machines used to measure it: Mapsicle loses by 7 percent on x64 and wins by 4 on arm64, and five of
-six arm64 runs landed between 1.04x and 1.07x faster with one at 1.09x slower. Treat that row as
-parity rather than as a win for either. If collection throughput at that size is what your workload
-is bounded by, Mapperly is faster than both on either architecture.
+**About the collection rows.** A `List<T>` is mapped by a loop compiled for its element type, which
+is where most of that number comes from. Before that loop existed these rows were 1.07x slower on
+x64 and 1.04x faster on arm64, which is to say parity. Arrays, and lists whose element type is
+`object`, an interface or abstract, keep the older loop and its older cost, because a loop compiled
+for a type no element actually is sends every element down a slower path. If collection throughput
+at this size is what your workload is bounded by, Mapperly is still faster than both, though at
+2,175 ns against its 1,933 the gap on x64 is now about 12 percent.
 
 At ten thousand the picture changes, and not because the per-element cost changed. AutoMapper
 allocates 742 KB there against Mapsicle's 560 KB, enough to reach generation 2 collections while
@@ -373,9 +374,10 @@ Three things worth more than the table:
   get compiled delegates to steady state and the mapper that compiles more pays for it. On a hosted
   runner ShortRun gave an interval of plus or minus 43 percent of the mean. The gate used to run
   that job. It does not now.
-- **`Mapsicle.Fluent` is not on this table and is slower.** A complex object through the fluent
-  configuration API is about 1.14x AutoMapper, and a hundred of them about 1.38x. The static API is
-  what the rows above measure.
+- **`Mapsicle.Fluent` is not on this table.** A complex object through the fluent configuration API
+  is about 1.03x AutoMapper, and a hundred of them about 1.22x, because the fluent path maps a
+  collection element by element rather than through the compiled loop. The static API is what the
+  rows above measure.
 - An earlier version of this table claimed 2.1x on single objects and rough parity on collections.
   Neither held when the benchmark was re-run. It went unnoticed because CI measured the comparison,
   printed it and exited zero regardless. CI now fails when the comparison changes direction, and it
