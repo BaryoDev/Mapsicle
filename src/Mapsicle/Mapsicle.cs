@@ -1424,9 +1424,28 @@ namespace Mapsicle
             if (source is System.Collections.IList list && IsGenericList(source.GetType()))
             {
                 var compiled = GetCompiledListLoop<T>(source.GetType());
-                if (compiled != null)
+                if (compiled?.Loop is Func<object, List<T>> loop)
                 {
-                    return compiled(source);
+                    if (!compiled.NeedsDepth)
+                    {
+                        return loop(source);
+                    }
+
+                    // Mapping a collection is one level of nesting however many items it holds, so
+                    // depth is taken once here rather than per element. When it cannot be taken the
+                    // existing loop below runs instead, because it already produces the right thing
+                    // at the ceiling and that edge is not worth a second implementation.
+                    if (IncrementDepth())
+                    {
+                        try
+                        {
+                            return loop(source);
+                        }
+                        finally
+                        {
+                            DecrementDepth();
+                        }
+                    }
                 }
 
                 var result = new List<T>(list.Count);
@@ -1438,7 +1457,22 @@ namespace Mapsicle
             return MapEnumerated<T>(source);
         }
 
-        private static readonly ConcurrentDictionary<(Type, Type), Delegate?> _listLoopCache = new();
+        /// <summary>
+        /// A compiled list loop and whether its element type needs the collection to hold depth.
+        /// </summary>
+        private sealed class ListLoop
+        {
+            internal readonly Delegate? Loop;
+            internal readonly bool NeedsDepth;
+
+            internal ListLoop(Delegate? loop, bool needsDepth)
+            {
+                Loop = loop;
+                NeedsDepth = needsDepth;
+            }
+        }
+
+        private static readonly ConcurrentDictionary<(Type, Type), ListLoop> _listLoopCache = new();
 
         /// <summary>
         /// A loop over a <see cref="List{T}"/> with the element mapping compiled into it, or null
@@ -1457,7 +1491,7 @@ namespace Mapsicle
         /// lambda. An element whose type does not match goes back through the single object entry
         /// point, which is also what happens for a shape this cannot inline at all.
         /// </remarks>
-        private static Func<object, List<TDest>>? GetCompiledListLoop<TDest>(Type listType)
+        private static ListLoop? GetCompiledListLoop<TDest>(Type listType)
         {
             // The bound cache exists to limit retained delegates, and a second unbounded cache
             // beside it would defeat that.
@@ -1466,20 +1500,22 @@ namespace Mapsicle
             // Keyed on the concrete List<T> rather than its element, because reaching the element
             // means GetGenericArguments, which allocates a Type[] every call. That is 16 bytes per
             // map on a path whose whole budget is the destinations and the list.
-            var cached = _listLoopCache.GetOrAdd(
+            return _listLoopCache.GetOrAdd(
                 (listType, typeof(TDest)), key => BuildCompiledListLoop<TDest>(key.Item1));
-
-            return (Func<object, List<TDest>>?)cached;
         }
 
-        private static Delegate? BuildCompiledListLoop<TDest>(Type listType)
+        private static ListLoop BuildCompiledListLoop<TDest>(Type listType)
         {
             var elementType = listType.GetGenericArguments()[0];
-            if (!elementType.IsVisible || elementType.IsValueType) return null;
 
-            // Cyclic element types take depth once for the whole collection, which the existing
-            // loop already does correctly. Rather than restate those semantics here, they keep it.
-            if (NeedsDepthTracking(elementType)) return null;
+            // Depth is taken once for the whole collection rather than per element, which is what
+            // the existing loop does and why this only needs to know whether to take it. Refusing
+            // these outright was the first attempt and it excluded almost everything worth
+            // optimising: any element type holding a nested reference answers yes, which is most
+            // DTOs, including the one the performance claim is measured on.
+            var needsDepth = NeedsDepthTracking(elementType);
+
+            if (!elementType.IsVisible || elementType.IsValueType) return new ListLoop(null, needsDepth);
 
             var destType = typeof(TDest);
 
@@ -1492,8 +1528,8 @@ namespace Mapsicle
             var done = Expression.Label("done");
 
             var memberInit = TryBuildMemberInit(elementType, destType, item, Expression.Convert(item, typeof(object)), true);
-            if (memberInit is null) return null;
-            if (!destType.IsAssignableFrom(memberInit.Type)) return null;
+            if (memberInit is null) return new ListLoop(null, needsDepth);
+            if (!destType.IsAssignableFrom(memberInit.Type)) return new ListLoop(null, needsDepth);
 
             var mapped = Expression.Convert(memberInit, typeof(TDest));
 
@@ -1531,7 +1567,8 @@ namespace Mapsicle
                     done),
                 result);
 
-            return Expression.Lambda<Func<object, List<TDest>>>(body, sourceParam).Compile();
+            return new ListLoop(
+                Expression.Lambda<Func<object, List<TDest>>>(body, sourceParam).Compile(), needsDepth);
         }
 
         /// <summary>
@@ -1546,7 +1583,7 @@ namespace Mapsicle
             var built = 0;
             foreach (var entry in _listLoopCache)
             {
-                if (entry.Value != null) built++;
+                if (entry.Value.Loop != null) built++;
             }
             return built;
         }

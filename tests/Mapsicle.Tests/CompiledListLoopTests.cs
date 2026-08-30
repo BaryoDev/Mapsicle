@@ -132,6 +132,78 @@ namespace Mapsicle.Tests
             Assert.Equal(9, dtos[0].Id);
         }
 
+        public class ClAddress { public string City { get; set; } = ""; public string Country { get; set; } = ""; }
+        public class ClAddressDto { public string City { get; set; } = ""; public string Country { get; set; } = ""; }
+        public class ClUser { public int Id { get; set; } public ClAddress? Address { get; set; } }
+        public class ClUserDto { public int Id { get; set; } public ClAddressDto? Address { get; set; } }
+        public class ClUserFlatDto { public int Id { get; set; } public string AddressCity { get; set; } = ""; }
+
+        [Fact]
+        public void AnElementTypeHoldingANestedReferenceMapsThroughTheCompiledLoop()
+        {
+            // This shape was excluded by the first version of the loop, which refused any element
+            // type that answers yes to depth tracking. That is every type holding a nested
+            // reference, which is most DTOs, including the one the performance claim measures. The
+            // loop takes depth once for the whole collection now instead of refusing the type.
+            Mapper.ClearCache();
+            var source = Enumerable.Range(1, 4).Select(i => new ClUser
+            {
+                Id = i,
+                Address = new ClAddress { City = "city" + i, Country = "PH" },
+            }).ToList();
+
+            var dtos = ((IEnumerable)source).MapTo<ClUserDto>();
+
+            Assert.Equal(4, dtos.Count);
+            Assert.Equal(new[] { 1, 2, 3, 4 }, dtos.Select(d => d.Id));
+            Assert.Equal("city3", dtos[2].Address?.City);
+            Assert.Equal("PH", dtos[2].Address?.Country);
+        }
+
+        [Fact]
+        public void ANullNestedReferenceInAnElementStaysNull()
+        {
+            Mapper.ClearCache();
+            var source = new List<ClUser> { new() { Id = 1, Address = null } };
+
+            var dtos = ((IEnumerable)source).MapTo<ClUserDto>();
+
+            Assert.Equal(1, dtos[0].Id);
+            Assert.Null(dtos[0].Address);
+        }
+
+        [Fact]
+        public void FlatteningStillWorksThroughTheCompiledLoop()
+        {
+            // The loop inlines whatever the single object path builds, and flattening is part of
+            // that. If it inlined something narrower this would come back empty.
+            Mapper.ClearCache();
+            var source = new List<ClUser> { new() { Id = 1, Address = new ClAddress { City = "Cebu" } } };
+
+            var dtos = ((IEnumerable)source).MapTo<ClUserFlatDto>();
+
+            Assert.Equal("Cebu", dtos[0].AddressCity);
+        }
+
+        [Fact]
+        public void AListAndAnArrayOfNestedElementsAgree()
+        {
+            // The array keeps the old loop, so this checks the two implementations against each
+            // other on the shape that used to be excluded.
+            Mapper.ClearCache();
+            var items = Enumerable.Range(1, 5).Select(i => new ClUser
+            {
+                Id = i,
+                Address = new ClAddress { City = "c" + i, Country = "PH" },
+            }).ToList();
+
+            var fromList = ((IEnumerable)items).MapTo<ClUserDto>();
+            var fromArray = ((IEnumerable)items.ToArray()).MapTo<ClUserDto>();
+
+            Assert.Equal(fromList.Select(d => d.Id), fromArray.Select(d => d.Id));
+            Assert.Equal(fromList.Select(d => d.Address?.City), fromArray.Select(d => d.Address?.City));
+        }
+
         [Fact]
         public void ACyclicElementTypeStillTerminates()
         {
