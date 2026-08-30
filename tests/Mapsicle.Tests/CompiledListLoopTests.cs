@@ -204,6 +204,54 @@ namespace Mapsicle.Tests
             Assert.Equal(fromList.Select(d => d.Address?.City), fromArray.Select(d => d.Address?.City));
         }
 
+        public interface IClShape { string Name { get; set; } }
+        public class ClSquare : ClAnimal, IClShape { }
+        public abstract class ClBaseThing { public string Name { get; set; } = ""; }
+        public class ClRealThing : ClBaseThing { }
+
+        [Fact]
+        public void AListOfObjectStillMapsByEachElementsRuntimeType()
+        {
+            // The loop is compiled for the declared element type. For List<object> that type is
+            // object, which has nothing to map, so every element would fail the runtime check and
+            // take the fallback one entry point call at a time: measured 10.9x slower than
+            // List<T>. These lists keep the previous loop, which resolves against the first
+            // element's runtime type. This is the shape the library exists for, items whose types
+            // are only known at runtime, so it must not be the slow one.
+            Mapper.ClearCache();
+            var source = Enumerable.Range(1, 4)
+                .Select(i => (object)new ClSource { Id = i, Name = "n" + i })
+                .ToList();
+
+            var dtos = ((IEnumerable)source).MapTo<ClDest>();
+
+            Assert.Equal(4, dtos.Count);
+            Assert.Equal(new[] { 1, 2, 3, 4 }, dtos.Select(d => d.Id));
+            Assert.Equal("n4", dtos[3].Name);
+        }
+
+        [Fact]
+        public void AListOfAnAbstractTypeMapsByRuntimeType()
+        {
+            Mapper.ClearCache();
+            var source = new List<ClBaseThing> { new ClRealThing { Name = "real" } };
+
+            var dtos = ((IEnumerable)source).MapTo<ClAnimalDto>();
+
+            Assert.Equal("real", dtos[0].Name);
+        }
+
+        [Fact]
+        public void AListOfAnInterfaceMapsByRuntimeType()
+        {
+            Mapper.ClearCache();
+            var source = new List<IClShape> { new ClSquare { Name = "square" } };
+
+            var dtos = ((IEnumerable)source).MapTo<ClAnimalDto>();
+
+            Assert.Equal("square", dtos[0].Name);
+        }
+
         [Fact]
         public void ACyclicElementTypeStillTerminates()
         {
