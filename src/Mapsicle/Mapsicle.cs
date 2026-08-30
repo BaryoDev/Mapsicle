@@ -1878,11 +1878,6 @@ namespace Mapsicle
             }
         }
 
-        private static readonly MethodInfo MapToObjectOverload =
-            typeof(Mapper).GetMethod(nameof(MapTo), new[] { typeof(object) })
-            ?? throw new InvalidOperationException(
-                "Mapper.MapTo<T>(object) was not found. Renaming or changing that overload breaks nested mapping.");
-
         /// <summary>
         /// Attempts to create a binding for flattened properties (e.g., AddressCity -> Address.City).
         /// </summary>
