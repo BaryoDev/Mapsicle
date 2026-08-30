@@ -178,23 +178,28 @@ public class Program
         var mapsicleCollection = MeanNs("Mapsicle_Collection");
         var autoMapperCollection = MeanNs("AutoMapper_Collection");
 
+        // Recorded rather than returned on. Returning here would exit before the reporting block
+        // below, so a single-object failure already in the list would never be printed: the run
+        // would say only that a collection result was missing. A gate that reports one failure
+        // while hiding another is the shape this whole gate exists to prevent.
         if (mapsicleCollection is null || autoMapperCollection is null)
         {
-            Console.WriteLine("Could not read both collection results from the benchmark summary.");
-            return 1;
+            ClaimFailures.Add("Could not read both collection results from the benchmark summary.");
         }
-
-        var collectionRatio = mapsicleCollection.Value / autoMapperCollection.Value;
-        Console.WriteLine();
-        Console.WriteLine($"  Mapsicle_Collection:   {mapsicleCollection.Value:F1} ns");
-        Console.WriteLine($"  AutoMapper_Collection: {autoMapperCollection.Value:F1} ns");
-        Console.WriteLine($"  ratio: {collectionRatio:F2}x {(collectionRatio < 1 ? "(faster)" : "(slower)")}");
-
-        if (collectionRatio > 1.60)
+        else
         {
-            ClaimFailures.Add(
-                $"Mapsicle is {collectionRatio:F2}x AutoMapper on 100-item collections. The README "
-              + "says about 1.33x slower. Update the code or the claim.");
+            var collectionRatio = mapsicleCollection.Value / autoMapperCollection.Value;
+            Console.WriteLine();
+            Console.WriteLine($"  Mapsicle_Collection:   {mapsicleCollection.Value:F1} ns");
+            Console.WriteLine($"  AutoMapper_Collection: {autoMapperCollection.Value:F1} ns");
+            Console.WriteLine($"  ratio: {collectionRatio:F2}x {(collectionRatio < 1 ? "(faster)" : "(slower)")}");
+
+            if (collectionRatio > 1.60)
+            {
+                ClaimFailures.Add(
+                    $"Mapsicle is {collectionRatio:F2}x AutoMapper on 100-item collections. The README "
+                  + "says about 1.33x slower. Update the code or the claim.");
+            }
         }
 
         if (ClaimFailures.Count > 0)
