@@ -288,13 +288,9 @@ namespace Mapsicle.Fluent.Tests
             Assert.NotNull(dto);
             Assert.Equal(7, dto!.Id);
 
-            // Recorded, not endorsed. The constructor parameter is matched and filled, and the
-            // remaining writable members are then left alone, so Name stays at its initialiser
-            // rather than becoming "name". This predates the switch from Activator to a compiled
-            // constructor: the same assertion fails identically on the commit before it. Filed
-            // separately rather than changed here, because this is a mapping question and this
-            // change is about how the destination is allocated.
-            Assert.Equal("", dto.Name);
+            // This asserted "" until the constructor path was fixed. The parameter was matched and
+            // filled and the mapping stopped, so everything else kept its initialiser.
+            Assert.Equal("name", dto.Name);
         }
 
         [Fact]
