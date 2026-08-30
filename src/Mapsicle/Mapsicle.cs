@@ -126,6 +126,12 @@ namespace Mapsicle
         [ThreadStatic]
         private static int _mappingDepth;
 
+        // Bumped whenever the delegate caches are cleared. Call-site holders compare against it, so
+        // ClearCache still means what it says: a holder that resolved before the clear is stale and
+        // resolves again. Without it a test calling ClearCache would keep using the very delegate it
+        // was trying to discard, which is the coincidental pass CLAUDE.md section 4 warns about.
+        private static int _cacheGeneration;
+
         // Cache statistics
         private static long _cacheHits;
         private static long _cacheMisses;
@@ -223,6 +229,7 @@ namespace Mapsicle
 
         private static void ReinitializeCaches()
         {
+            System.Threading.Interlocked.Increment(ref _cacheGeneration);
             _mapToCache.Clear();
             _mapCache.Clear();
             _propertyCache.Clear();
@@ -256,6 +263,7 @@ namespace Mapsicle
         {
             lock (_configLock)
             {
+                System.Threading.Interlocked.Increment(ref _cacheGeneration);
                 _mapToCache.Clear();
                 _mapCache.Clear();
                 _lruMapToCache?.Clear();
@@ -1767,8 +1775,107 @@ namespace Mapsicle
         /// </remarks>
         private static Expression BuildNestedMapCall(Expression propExp, Type targetType)
         {
-            var mapMethod = MapToObjectOverload.MakeGenericMethod(targetType);
-            return Expression.Call(null, mapMethod, Expression.Convert(propExp, typeof(object)));
+            // One holder per nested member per compiled parent, captured as a constant in the
+            // expression tree. It outlives nothing the parent delegate does not.
+            var holderType = typeof(NestedMemberMapper<>).MakeGenericType(targetType);
+            var holder = Activator.CreateInstance(holderType)!;
+
+            return Expression.Call(
+                Expression.Constant(holder, holderType),
+                holderType.GetMethod(nameof(NestedMemberMapper<object>.Map))!,
+                Expression.Convert(propExp, typeof(object)));
+        }
+
+        /// <summary>
+        /// Maps one nested member of one compiled parent, remembering what it resolved last time.
+        /// </summary>
+        /// <remarks>
+        /// The nested call used to go back through the public <c>MapTo&lt;T&gt;(object)</c> entry
+        /// point, which is correct and was measurably the most expensive thing in a map. Per nested
+        /// member per item it paid a <c>GetType</c>, a tuple key construction, a dictionary lookup
+        /// for the delegate and a second one inside <c>NeedsDepthTracking</c>. Measured on an idle
+        /// machine at 100 items, one nested reference cost 65 ns per item against 39.6 ns for the
+        /// whole of the rest of the mapping, and a second nested reference cost the same again.
+        ///
+        /// Resolution is per call site rather than global because the answer is almost always the
+        /// same one: a given member of a given parent nearly always holds the same runtime type.
+        /// The runtime type is still checked on every call, so a member declared as a base type and
+        /// holding a derived one is handled exactly as before. It just stops paying for two hash
+        /// lookups to learn what it already knew.
+        ///
+        /// The whole thing is skipped under <see cref="UseLruCache"/>. That mode exists to bound
+        /// memory, and a per-call-site cache nothing evicts is the opposite of that.
+        /// </remarks>
+        internal sealed class NestedMemberMapper<TDest>
+        {
+            private sealed class Resolved
+            {
+                internal readonly Type SourceType;
+                internal readonly Func<object, TDest> Map;
+                internal readonly bool NeedsDepth;
+                internal readonly int Generation;
+
+                internal Resolved(Type sourceType, Func<object, TDest> map, bool needsDepth, int generation)
+                {
+                    SourceType = sourceType;
+                    Map = map;
+                    NeedsDepth = needsDepth;
+                    Generation = generation;
+                }
+            }
+
+            // A single reference, written and read atomically, so a torn pair is not possible. Two
+            // threads racing to resolve compute the same answer, so the loser overwriting the
+            // winner costs nothing.
+            private volatile Resolved? _resolved;
+
+            public TDest? Map(object? source)
+            {
+                if (source is null) return default;
+
+                var resolved = _resolved;
+                var sourceType = source.GetType();
+
+                if (resolved is null
+                    || !ReferenceEquals(resolved.SourceType, sourceType)
+                    || resolved.Generation != System.Threading.Volatile.Read(ref _cacheGeneration))
+                {
+                    return ResolveAndMap(source, sourceType);
+                }
+
+                if (!resolved.NeedsDepth)
+                {
+                    return resolved.Map(source);
+                }
+
+                if (!IncrementDepth()) return default;
+                try
+                {
+                    return resolved.Map(source);
+                }
+                finally
+                {
+                    DecrementDepth();
+                }
+            }
+
+            private TDest? ResolveAndMap(object source, Type sourceType)
+            {
+                // The public path compiles and caches the delegate, and tracks depth while doing
+                // it, so the first call through a holder is exactly what it always was.
+                var result = source.MapTo<TDest>();
+
+                if (!_useLruCache && _mapToCache.TryGetValue((sourceType, typeof(TDest)), out var cached))
+                {
+                    _resolved = new Resolved(
+                        sourceType,
+                        (Func<object, TDest>)cached,
+                        NeedsDepthTracking(sourceType),
+                        System.Threading.Volatile.Read(ref _cacheGeneration));
+                }
+
+                return result;
+            }
         }
 
         private static readonly MethodInfo MapToObjectOverload =
