@@ -91,6 +91,26 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
+        public void ANestedMemberPicksUpARegistrationMadeAfterItFirstMapped()
+        {
+            // The order ANestedMemberUsesIt does not cover, and the one that was broken. A holder
+            // caches what it resolved and keeps it while the source type and the cache generation
+            // both still match. Registering dropped the compiled list loop and left the holders
+            // alone, so a parent mapped before the registration kept invoking the delegate the
+            // registration replaced, for the rest of the process.
+            Mapper.ResetGeneratedRegistrations();
+            Mapper.ClearCache();
+
+            var before = ((object)new RgHolder { Item = Sample() }).MapTo<RgHolderDest>();
+            Assert.Equal("convention-would-copy-this", before!.Item?.Name);
+
+            RegisterMarker();
+
+            var after = ((object)new RgHolder { Item = Sample() }).MapTo<RgHolderDest>();
+            Assert.Equal(Marker, after!.Item?.Name);
+        }
+
+        [Fact]
         public void RegisteringAfterThePairHasAlreadyMappedStillWins()
         {
             // A module initializer runs before user code, but a plugin loaded later should still win

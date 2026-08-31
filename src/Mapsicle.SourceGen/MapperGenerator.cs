@@ -475,15 +475,17 @@ namespace Mapsicle.SourceGen
 
                 foreach (var member in fromEnum.GetMembers().OfType<IFieldSymbol>().Where(f => f.HasConstantValue))
                 {
+                    // Claim the value before looking for a destination name, which is the order the
+                    // runtime rule uses. Reversing the two disagrees on an alias whose first name is
+                    // absent from the destination and whose second name is present: matching first
+                    // would let the second name emit a case for a value the runtime rule had already
+                    // spent on the first. The engine yields the default there, so this must too.
+                    if (!seen.Add(member.ConstantValue?.ToString() ?? member.Name)) continue;
+
                     var match = destNames.FirstOrDefault(
                         n => string.Equals(n, member.Name, StringComparison.OrdinalIgnoreCase));
 
                     if (match is null) continue;
-
-                    // An alias declares two names for one value. A switch rejects a repeated label,
-                    // so the first name wins, which is the one declaration order gives, matching
-                    // what Enum.GetNames hands the runtime rule.
-                    if (!seen.Add(member.ConstantValue?.ToString() ?? member.Name)) continue;
 
                     helper.Assignments.Add(new Assignment(match, member.Name, member.Name));
                 }
@@ -599,8 +601,21 @@ namespace Mapsicle.SourceGen
                 .Where(p => !p.IsIndexer && p.GetMethod is { DeclaredAccessibility: Accessibility.Public })
                 .ToList();
 
+        /// <summary>Every public instance property, most derived declaration only.</summary>
+        /// <remarks>
+        /// The walk goes from the type down its base chain, so an override and the virtual property
+        /// it overrides both appear. Emitting both puts the same member in one object initializer
+        /// twice and the consumer's build fails with CS1912, inside a generated file they did not
+        /// write and cannot edit. The most derived declaration wins because it is the one reached
+        /// first, and a name seen once is not yielded again.
+        ///
+        /// Name rather than symbol identity, because <c>new</c> shadowing produces two unrelated
+        /// symbols with the same name and the same problem.
+        /// </remarks>
         private static IEnumerable<IPropertySymbol> Properties(ITypeSymbol type)
         {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
             for (var current = type; current is not null; current = current.BaseType)
             {
                 if (current.SpecialType == SpecialType.System_Object) yield break;
@@ -609,6 +624,7 @@ namespace Mapsicle.SourceGen
                 {
                     if (member.IsStatic) continue;
                     if (member.DeclaredAccessibility != Accessibility.Public) continue;
+                    if (!seen.Add(member.Name)) continue;
                     yield return member;
                 }
             }

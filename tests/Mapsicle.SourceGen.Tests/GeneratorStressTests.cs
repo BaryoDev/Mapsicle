@@ -21,6 +21,8 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StFlattenSource), typeof(Mapsicle.SourceGen.Tests.StFlattenDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StRefused), typeof(Mapsicle.SourceGen.Tests.StRefusedDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StCycle), typeof(Mapsicle.SourceGen.Tests.StCycleDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StOverride), typeof(Mapsicle.SourceGen.Tests.StOverrideDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StAliasSource), typeof(Mapsicle.SourceGen.Tests.StAliasDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -43,6 +45,24 @@ namespace Mapsicle.SourceGen.Tests
     public class StCycle { public int Id { get; set; } public StCycleOwner Owner { get; set; } = new(); }
     public class StCycleOwnerDto { public string Name { get; set; } = ""; public List<StCycleDto> Items { get; set; } = new(); }
     public class StCycleDto { public int Id { get; set; } public StCycleOwnerDto Owner { get; set; } = new(); }
+
+    // An override and the virtual it overrides both appear when walking the base chain. Emitting
+    // both put the same member in one object initializer twice, and the consumer's build failed
+    // with CS1912 inside a generated file. There is no assertion for this beyond the suite
+    // compiling: if the generator regresses, this file does not build.
+    public abstract class StOverrideBase { public virtual int Id { get; set; } }
+    public class StOverride : StOverrideBase { public override int Id { get; set; } public string Tag { get; set; } = ""; }
+    public abstract class StOverrideBaseDto { public virtual int Id { get; set; } }
+    public class StOverrideDto : StOverrideBaseDto { public override int Id { get; set; } public string Tag { get; set; } = ""; }
+
+    // Two names for one value, and the destination declares only the second. The runtime rule
+    // claims the value on the first name and then finds no destination member for it, so the value
+    // maps to the default. Matching the name before claiming the value would emit a case for the
+    // second name instead and quietly disagree.
+    public enum StAliasFrom { None = 0, First = 1, Second = 1 }
+    public enum StAliasTo { None = 0, Second = 5 }
+    public class StAliasSource { public StAliasFrom Colour { get; set; } }
+    public class StAliasDto { public StAliasTo Colour { get; set; } }
 
     public class StEnumToString { public StColour Colour { get; set; } }
     public class StEnumToStringDto { public string Colour { get; set; } = ""; }
@@ -268,6 +288,18 @@ namespace Mapsicle.SourceGen.Tests
         }
 
         [Fact]
+        public void AnOverriddenMemberIsEmittedOnce() =>
+            AgreesWithTheEngine<StOverride, StOverrideDto>(
+                new StOverride { Id = 7, Tag = "t" }, d => d.Id, d => d.Tag);
+
+        [Fact]
+        public void AnEnumAliasAgreesWithTheEngine() =>
+            // Both lanes must land on the default. The generator used to match the name before
+            // claiming the value, so it emitted a case the runtime rule had already spent.
+            AgreesWithTheEngine<StAliasSource, StAliasDto>(
+                new StAliasSource { Colour = StAliasFrom.First }, d => d.Colour);
+
+        [Fact]
         public void ACyclicGraphIsRefusedAndStillTerminatesThroughTheEngine()
         {
             // The refusal that matters most, because getting it wrong does not return a wrong value,
@@ -319,6 +351,7 @@ namespace Mapsicle.SourceGen.Tests
                 nameof(StWidening), nameof(StEnumToString), nameof(StNested),
                 nameof(StCollection), nameof(StNullableToValue), nameof(StValueToNullable),
                 nameof(StDeepInherit), nameof(StManyMembers), nameof(StFlattenSource),
+                nameof(StOverride), nameof(StAliasSource),
             };
 
             var missing = expected

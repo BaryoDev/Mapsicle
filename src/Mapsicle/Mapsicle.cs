@@ -640,6 +640,14 @@ namespace Mapsicle
             {
                 if (entry.Key.Item2 == typeof(TDest)) _listLoopCache.TryRemove(entry.Key, out _);
             }
+
+            // A nested-member holder caches what it resolved last time and keeps it while the source
+            // type still matches and the generation still matches. Dropping the list loop alone left
+            // those holders untouched, so a parent mapped before this call kept invoking the
+            // delegate this call replaced: map a parent, register, map the parent again, and the
+            // nested member still came back from the expression builder. Bumping the generation is
+            // what makes them re-resolve.
+            System.Threading.Interlocked.Increment(ref _cacheGeneration);
         }
 
         private static void ApplyGenerated<TSource, TDest>(Func<TSource, TDest> mapper, bool requiresDepthTracking)
