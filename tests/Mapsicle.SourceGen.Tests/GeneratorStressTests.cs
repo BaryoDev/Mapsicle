@@ -62,17 +62,25 @@ namespace Mapsicle.SourceGen.Tests
 
     public class StManyMembers
     {
-        public int A { get; set; } public int B { get; set; } public int C { get; set; }
+        public int A { get; set; }
+        public int B { get; set; }
+        public int C { get; set; }
         public string D { get; set; } = ""; public string E { get; set; } = ""; public string F { get; set; } = "";
-        public bool G { get; set; } public double H { get; set; } public decimal I { get; set; }
+        public bool G { get; set; }
+        public double H { get; set; }
+        public decimal I { get; set; }
         public Guid J { get; set; }
     }
 
     public class StManyMembersDto
     {
-        public int A { get; set; } public int B { get; set; } public int C { get; set; }
+        public int A { get; set; }
+        public int B { get; set; }
+        public int C { get; set; }
         public string D { get; set; } = ""; public string E { get; set; } = ""; public string F { get; set; } = "";
-        public bool G { get; set; } public double H { get; set; } public decimal I { get; set; }
+        public bool G { get; set; }
+        public double H { get; set; }
+        public decimal I { get; set; }
         public Guid J { get; set; }
     }
 
@@ -191,8 +199,16 @@ namespace Mapsicle.SourceGen.Tests
             AgreesWithTheEngine<StManyMembers, StManyMembersDto>(
                 new StManyMembers
                 {
-                    A = 1, B = 2, C = 3, D = "d", E = "e", F = "f",
-                    G = true, H = 1.5, I = 2.5m, J = Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                    A = 1,
+                    B = 2,
+                    C = 3,
+                    D = "d",
+                    E = "e",
+                    F = "f",
+                    G = true,
+                    H = 1.5,
+                    I = 2.5m,
+                    J = Guid.Parse("11111111-2222-3333-4444-555555555555"),
                 },
                 d => d.A, d => d.B, d => d.C, d => d.D, d => d.E,
                 d => d.F, d => d.G, d => d.H, d => d.I, d => d.J);
