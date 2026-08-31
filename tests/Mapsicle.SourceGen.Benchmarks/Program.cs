@@ -83,6 +83,7 @@ public class GeneratedVsRuntime
     private IMapperInstance _runtime;
     private AutoMapper.IMapper _autoMapper;
     private SgMapperly _mapperly;
+    private Func<SgUser, SgUserDto> _held;
 
     [GlobalSetup]
     public void Setup()
@@ -97,6 +98,16 @@ public class GeneratedVsRuntime
 
         _runtime = MapperFactory.Create();
         _mapperly = new SgMapperly();
+
+        // The generated delegate itself, pulled out of the typed cache. Invoking this is the
+        // generated code with none of the engine around it.
+        var entryField = typeof(Mapper).GetNestedType("TypedMapperCache`2", System.Reflection.BindingFlags.NonPublic)
+            !.MakeGenericType(typeof(SgUser), typeof(SgUserDto))
+            .GetProperty("Entry", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            !.GetValue(null)!;
+        _held = (Func<SgUser, SgUserDto>)entryField.GetType()
+            .GetField("CompiledMapper", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            !.GetValue(entryField)!;
         _autoMapper = new AutoMapper.MapperConfiguration(
             c => c.CreateMap<SgUser, SgUserDto>(),
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateMapper();
@@ -108,6 +119,34 @@ public class GeneratedVsRuntime
             throw new Exception("the lanes disagree, so these numbers would be comparing different work");
         Console.WriteLine("lane agreement check ok");
     }
+
+    // ---- where the time goes ---------------------------------------------------------------
+    //
+    // Every row below maps the same object into the same destination. The only thing that varies is
+    // how the mapping is reached, so the differences are the cost of the route rather than the cost
+    // of the work.
+
+    [Benchmark(Description = "route: hand written")]
+    public SgUserDto RouteManual() => new SgUserDto
+    {
+        Id = _one.Id,
+        FirstName = _one.FirstName,
+        LastName = _one.LastName,
+        Email = _one.Email,
+        IsActive = _one.IsActive,
+    };
+
+    [Benchmark(Description = "route: Mapperly, direct call")]
+    public SgUserDto RouteMapperly() => _mapperly.Map(_one);
+
+    [Benchmark(Description = "route: generated delegate, held directly")]
+    public SgUserDto RouteHeldDelegate() => _held(_one);
+
+    [Benchmark(Description = "route: typed door, static field read")]
+    public SgUserDto RouteTypedDoor() => _one.MapTo<SgUser, SgUserDto>();
+
+    [Benchmark(Description = "route: untyped door, dictionary lookup")]
+    public SgUserDto RouteUntypedDoor() => ((object)_one).MapTo<SgUserDto>();
 
     [Benchmark(Baseline = true, Description = "single, generated")]
     public SgUserDto SingleGenerated() => ((object)_one).MapTo<SgUserDto>();
