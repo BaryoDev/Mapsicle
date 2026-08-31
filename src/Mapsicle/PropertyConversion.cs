@@ -83,6 +83,24 @@ namespace Mapsicle
                 return numeric;
             }
 
+            // String into an enum. The reverse already worked, so a status round-tripped out to a
+            // string and would not come back: it silently became the enum's zero member, which is a
+            // wrong record rather than an incomplete one. Names are matched without case, and a
+            // numeric string is accepted by value, both of which are what Enum.TryParse does.
+            if (srcType == typeof(string) && (targetType.IsEnum || Nullable.GetUnderlyingType(targetType)?.IsEnum == true))
+            {
+                return BuildParseEnum(propExp, targetType);
+            }
+
+            // DateTime into DateTimeOffset. The framework defines an implicit conversion, which the
+            // CLR type system does not expose, so IsAssignableFrom says false and the destination
+            // was left at DateTimeOffset.MinValue. A timestamp becoming year one is silent and
+            // catastrophic in a way a missing field is not.
+            if (BuildDateTimeToOffset(propExp, srcType, targetType) is { } offset)
+            {
+                return offset;
+            }
+
             // Nullable source to its non-nullable counterpart: null becomes the destination default.
             var underlyingSource = Nullable.GetUnderlyingType(srcType);
             if (underlyingSource != null && targetType.IsAssignableFrom(underlyingSource))
@@ -142,6 +160,82 @@ namespace Mapsicle
         /// default. Both delegate builders call this, because there were two copies of the old one
         /// and copies of this logic are what CONTRIBUTING exists to prevent.
         /// </remarks>
+        /// <summary>
+        /// Copies a source sequence into a destination collection that has no setter.
+        /// </summary>
+        /// <remarks>
+        /// A getter only collection cannot be bound by a member initialiser, which is the only shape
+        /// the delegate builders emit, so these members were skipped and came back empty. That is
+        /// the standard read model shape for a collection you do not want replaced, and how EF Core
+        /// entities are usually written, so an empty list is a common and quiet way to lose data.
+        ///
+        /// The destination is cleared first. Mapping twice into the same instance appending twice
+        /// would be worse than not mapping at all, and a caller mapping onto an existing object
+        /// expects the result to reflect the source rather than the source plus history.
+        /// </remarks>
+        internal static void CopyInto<TSource, TDest>(IEnumerable<TSource>? source, ICollection<TDest>? destination)
+        {
+            if (destination is null || destination.IsReadOnly) return;
+
+            destination.Clear();
+            if (source is null) return;
+
+            foreach (var item in source)
+            {
+                destination.Add(item is TDest already ? already : Mapper.MapTo<TDest>(item!)!);
+            }
+        }
+
+        /// <summary>Parses a string into an enum, yielding the default for null or an unknown name.</summary>
+        /// <remarks>
+        /// <c>Enum.TryParse</c> rather than <c>Enum.Parse</c>, so a value that names no member gives
+        /// the enum's default instead of throwing from inside a compiled lambda. That matches what
+        /// the rest of the cascade does with a value it cannot convert, and it matches AutoMapper.
+        /// </remarks>
+        private static Expression BuildParseEnum(Expression propExp, Type targetType)
+        {
+            var enumType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            var parse = typeof(PropertyConversion)
+                .GetMethod(nameof(ParseEnumOrDefault), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(enumType);
+
+            Expression parsed = Expression.Call(parse, propExp);
+
+            return targetType == enumType ? parsed : Expression.Convert(parsed, targetType);
+        }
+
+        private static TEnum ParseEnumOrDefault<TEnum>(string? value) where TEnum : struct, Enum =>
+            Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : default;
+
+        /// <summary>The framework's implicit DateTime to DateTimeOffset conversion, including nullable.</summary>
+        private static Expression? BuildDateTimeToOffset(Expression propExp, Type srcType, Type targetType)
+        {
+            var sourceIsNullable = Nullable.GetUnderlyingType(srcType) == typeof(DateTime);
+            var targetIsNullable = Nullable.GetUnderlyingType(targetType) == typeof(DateTimeOffset);
+
+            var sourceIsDate = srcType == typeof(DateTime) || sourceIsNullable;
+            var targetIsOffset = targetType == typeof(DateTimeOffset) || targetIsNullable;
+
+            if (!sourceIsDate || !targetIsOffset) return null;
+
+            if (!sourceIsNullable)
+            {
+                Expression value = Expression.Convert(propExp, typeof(DateTimeOffset));
+                return targetIsNullable ? Expression.Convert(value, targetType) : value;
+            }
+
+            // A null source cannot become a non nullable offset, so that pair stays unmapped rather
+            // than inventing MinValue, which is the value this whole conversion exists to stop.
+            if (!targetIsNullable) return null;
+
+            var hasValue = Expression.Property(propExp, "HasValue");
+            var inner = Expression.Convert(
+                Expression.Convert(Expression.Property(propExp, "Value"), typeof(DateTimeOffset)), targetType);
+
+            return Expression.Condition(hasValue, inner, Expression.Default(targetType));
+        }
+
         internal static bool TryFindFlattenedPath(
             PropertyInfo destProp,
             PropertyInfo[] sourceProps,

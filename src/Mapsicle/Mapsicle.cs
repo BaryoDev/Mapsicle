@@ -937,7 +937,8 @@ namespace Mapsicle
                 }
 
                 var init = Expression.MemberInit(Expression.New(destType), bindings);
-                return Expression.Lambda<Func<TSource, TDest>>(init, sourceParam).Compile();
+                var body = WithFilledCollections(init, sourceType, destType, sourceParam);
+                return Expression.Lambda<Func<TSource, TDest>>(body, sourceParam).Compile();
             }
 
             // Fallback to constructor-based mapping
@@ -1263,7 +1264,8 @@ namespace Mapsicle
                 var memberInit = TryBuildMemberInit(sourceType, destType, typedSource, sourceParam, isSourceVisible);
                 if (memberInit != null)
                 {
-                    return Expression.Lambda<Func<object, T>>(memberInit, sourceParam).Compile();
+                    var body = WithFilledCollections(memberInit, sourceType, destType, typedSource);
+                    return Expression.Lambda<Func<object, T>>(body, sourceParam).Compile();
                 }
 
                 var destProps = GetCachedWritableProperties(destType);
@@ -1429,6 +1431,31 @@ namespace Mapsicle
                         assignments.Add(Expression.Assign(destPropExp, value));
                     }
                 }
+            }
+
+            // A setterless collection cannot be assigned, so the in-place map fills it the same way
+            // the constructing maps do, or mapping onto an existing object would silently skip it.
+            foreach (var (dest, source) in FindFieldMembers(sourceType, destType))
+            {
+                if (excluded != null && excluded.Contains(dest.Name)) continue;
+
+                assignments.Add(Expression.Assign(
+                    Expression.MakeMemberAccess(typedDest, dest),
+                    Expression.MakeMemberAccess(typedSource, source)));
+            }
+
+            foreach (var (destProp, sourceProp, sourceItem, destItem) in FindFillableCollections(sourceType, destType))
+            {
+                if (excluded != null && excluded.Contains(destProp.Name)) continue;
+
+                var copy = typeof(PropertyConversion)
+                    .GetMethod(nameof(PropertyConversion.CopyInto), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)!
+                    .MakeGenericMethod(sourceItem, destItem);
+
+                assignments.Add(Expression.Call(
+                    copy,
+                    Expression.Property(typedSource, sourceProp),
+                    Expression.Convert(Expression.Property(typedDest, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
             }
 
             if (assignments.Count == 0)
@@ -2182,6 +2209,148 @@ namespace Mapsicle
         /// is the mistake CONTRIBUTING describes: three copies of the conversion cascade drifted and
         /// 1.2.3 shipped a mapper that dropped nested objects only when built by MapperFactory.
         /// </remarks>
+        /// <summary>
+        /// Assignments involving a public field on either side, which the property paths never see.
+        /// </summary>
+        /// <remarks>
+        /// The resolution machinery is built on <c>PropertyInfo</c> throughout, so a field was
+        /// invisible: a type exposing public fields mapped to nothing at all, with no diagnostic.
+        /// AutoMapper and Mapperly both map them, and a caller mapping a struct or an interop type
+        /// hits this immediately.
+        ///
+        /// Done as a separate pass rather than by widening every cache and signature to a member
+        /// abstraction. That change would touch the conversion cascade, member resolution and all
+        /// four delegate builders at once, for a case that is a minority of real DTOs. This pass
+        /// only claims pairs the property paths did not, so it cannot disturb what already worked.
+        /// </remarks>
+        private static List<(MemberInfo Dest, MemberInfo Source)> FindFieldMembers(Type sourceType, Type destType)
+        {
+            const BindingFlags Public = BindingFlags.Public | BindingFlags.Instance;
+
+            var sourceMembers = sourceType.GetFields(Public).Cast<MemberInfo>()
+                .Concat(sourceType.GetProperties(Public).Where(p => p.CanRead && p.GetIndexParameters().Length == 0))
+                .ToList();
+
+            var found = new List<(MemberInfo, MemberInfo)>();
+
+            foreach (var destField in destType.GetFields(Public).Where(f => !f.IsInitOnly && !f.IsLiteral))
+            {
+                var match = sourceMembers.FirstOrDefault(
+                    m => string.Equals(m.Name, destField.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (match != null && TypeOf(match) == destField.FieldType) found.Add((destField, match));
+            }
+
+            // A destination property whose only source is a field. The property paths matched on
+            // source properties alone, so these were dropped.
+            foreach (var destProp in destType.GetProperties(Public).Where(p => p.CanWrite && p.GetIndexParameters().Length == 0))
+            {
+                if (sourceType.GetProperties(Public).Any(
+                        p => string.Equals(p.Name, destProp.Name, StringComparison.OrdinalIgnoreCase))) continue;
+
+                var field = sourceType.GetFields(Public).FirstOrDefault(
+                    f => string.Equals(f.Name, destProp.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (field != null && field.FieldType == destProp.PropertyType) found.Add((destProp, field));
+            }
+
+            return found;
+        }
+
+        private static Type TypeOf(MemberInfo member) =>
+            member is PropertyInfo p ? p.PropertyType : ((FieldInfo)member).FieldType;
+
+        /// <summary>
+        /// Destination collections with no setter, which a member initialiser cannot bind.
+        /// </summary>
+        private static List<(PropertyInfo Dest, PropertyInfo Source, Type SourceItem, Type DestItem)> FindFillableCollections(
+            Type sourceType, Type destType)
+        {
+            var found = new List<(PropertyInfo, PropertyInfo, Type, Type)>();
+            var readable = GetCachedReadableProperties(sourceType);
+
+            foreach (var destProp in destType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (destProp.CanWrite || destProp.GetIndexParameters().Length > 0) continue;
+
+                var destItem = ElementTypeOf(destProp.PropertyType);
+                if (destItem is null) continue;
+                if (!typeof(System.Collections.ICollection).IsAssignableFrom(destProp.PropertyType)
+                    && !destProp.PropertyType.IsGenericType) continue;
+
+                foreach (var sourceProp in readable)
+                {
+                    if (!string.Equals(sourceProp.Name, destProp.Name, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var sourceItem = ElementTypeOf(sourceProp.PropertyType);
+                    if (sourceItem is null) continue;
+
+                    found.Add((destProp, sourceProp, sourceItem, destItem));
+                    break;
+                }
+            }
+
+            return found;
+        }
+
+        private static Type? ElementTypeOf(Type type)
+        {
+            if (type == typeof(string)) return null;
+            if (type.IsArray) return type.GetElementType();
+
+            foreach (var i in type.GetInterfaces().Concat(new[] { type }))
+            {
+                if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return i.GetGenericArguments()[0];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Wraps a member initialiser so setterless collections are filled after construction.
+        /// </summary>
+        /// <remarks>
+        /// A member initialiser can only bind members it can assign, so a collection with no setter
+        /// was skipped entirely and came back empty. Filling it needs statements after the object
+        /// exists, which is a block rather than an initialiser, so the initialiser is assigned to a
+        /// variable and the copies follow it.
+        /// </remarks>
+        internal static Expression WithFilledCollections(
+            Expression memberInit, Type sourceType, Type destType, Expression typedSource)
+        {
+            var fillable = FindFillableCollections(sourceType, destType);
+            var fieldMembers = FindFieldMembers(sourceType, destType);
+            if (fillable.Count == 0 && fieldMembers.Count == 0) return memberInit;
+
+            var result = Expression.Variable(destType, "result");
+            var body = new List<Expression> { Expression.Assign(result, memberInit) };
+
+            foreach (var (dest, source) in fieldMembers)
+            {
+                body.Add(Expression.Assign(
+                    Expression.MakeMemberAccess(result, dest),
+                    Expression.MakeMemberAccess(typedSource, source)));
+            }
+
+            foreach (var (destProp, sourceProp, sourceItem, destItem) in fillable)
+            {
+                var copy = typeof(PropertyConversion)
+                    .GetMethod(nameof(PropertyConversion.CopyInto), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)!
+                    .MakeGenericMethod(sourceItem, destItem);
+
+                body.Add(Expression.Call(
+                    copy,
+                    Expression.Property(typedSource, sourceProp),
+                    Expression.Convert(Expression.Property(result, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
+            }
+
+            body.Add(result);
+            return Expression.Block(new[] { result }, body);
+        }
+
         private static MemberInitExpression? TryBuildMemberInit(
             Type sourceType, Type destType, Expression typedSource, Expression sourceAsObject, bool isSourceVisible)
         {

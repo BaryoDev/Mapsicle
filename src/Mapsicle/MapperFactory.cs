@@ -299,7 +299,8 @@ namespace Mapsicle
                     }
                 }
                 var init = Expression.MemberInit(Expression.New(destType), bindings);
-                return Expression.Lambda<Func<object, T>>(init, sourceParam).Compile();
+                var body = Mapper.WithFilledCollections(init, sourceType, destType, typedSource);
+                return Expression.Lambda<Func<object, T>>(body, sourceParam).Compile();
             }
 
             // Constructor / Record Path
