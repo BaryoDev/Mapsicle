@@ -7,6 +7,7 @@ using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Running;
 using Mapsicle;
+using Riok.Mapperly.Abstractions;
 
 [assembly: MapsicleGenerate(typeof(SgUser), typeof(SgUserDto))]
 
@@ -50,7 +51,22 @@ public class SgPlainDto
 }
 
 /// <summary>
-/// What the generated lane costs against the runtime lane and AutoMapper, in one process.
+/// Mapperly, the source generator this one is measured against.
+/// </summary>
+/// <remarks>
+/// It emits a direct call at the call site: no delegate, no cache, no lookup. That is the ceiling a
+/// cache pre-loader is being compared to, and the reason the comparison is worth making rather than
+/// assuming.
+/// </remarks>
+[Mapper]
+public partial class SgMapperly
+{
+    public partial SgUserDto Map(SgUser source);
+    public partial List<SgUserDto> MapList(List<SgUser> source);
+}
+
+/// <summary>
+/// What the generated lane costs against the runtime lane, Mapperly and AutoMapper, in one process.
 /// </summary>
 /// <remarks>
 /// The generated pair is registered by a module initializer, so the static door invokes generated
@@ -66,6 +82,7 @@ public class GeneratedVsRuntime
     private List<SgPlain> _hundredPlain;
     private IMapperInstance _runtime;
     private AutoMapper.IMapper _autoMapper;
+    private SgMapperly _mapperly;
 
     [GlobalSetup]
     public void Setup()
@@ -79,6 +96,7 @@ public class GeneratedVsRuntime
         { Id = i, FirstName = "f", LastName = "l", Email = "e", IsActive = true }).ToList();
 
         _runtime = MapperFactory.Create();
+        _mapperly = new SgMapperly();
         _autoMapper = new AutoMapper.MapperConfiguration(
             c => c.CreateMap<SgUser, SgUserDto>(),
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateMapper();
@@ -100,6 +118,9 @@ public class GeneratedVsRuntime
     [Benchmark(Description = "single, instance mapper")]
     public SgUserDto SingleInstance() => _runtime.MapTo<SgUserDto>(_one);
 
+    [Benchmark(Description = "single, Mapperly")]
+    public SgUserDto SingleMapperly() => _mapperly.Map(_one);
+
     [Benchmark(Description = "single, AutoMapper")]
     public SgUserDto SingleAutoMapper() => _autoMapper.Map<SgUserDto>(_one);
 
@@ -108,6 +129,9 @@ public class GeneratedVsRuntime
 
     [Benchmark(Description = "100, engine (undeclared pair)")]
     public List<SgPlainDto> ManyEngine() => ((IEnumerable)_hundredPlain).MapTo<SgPlainDto>();
+
+    [Benchmark(Description = "100, Mapperly")]
+    public List<SgUserDto> ManyMapperly() => _mapperly.MapList(_hundred);
 
     [Benchmark(Description = "100, AutoMapper")]
     public List<SgUserDto> ManyAutoMapper() => _autoMapper.Map<List<SgUserDto>>(_hundred);
@@ -149,14 +173,19 @@ public static class Program
 
             const int rounds = 200;
 
+            var mapperly = new SgMapperly();
+            _ = mapperly.Map(declared);
+
             var generated = Measure(rounds, () => _ = ((object)declared).MapTo<SgUserDto>());
             var engine = Measure(rounds, () => _ = ((object)undeclared).MapTo<SgPlainDto>());
+            var mapperlyCold = Measure(rounds, () => _ = mapperly.Map(declared));
 
             Console.WriteLine();
             Console.WriteLine($"  first map after ClearCache, mean of {rounds}");
-            Console.WriteLine($"    generated pair    {generated,10:N0} ns");
-            Console.WriteLine($"    undeclared pair   {engine,10:N0} ns");
-            Console.WriteLine($"    the generator avoids {engine - generated,10:N0} ns of compile on first use");
+            Console.WriteLine($"    Mapsicle generated   {generated,10:N0} ns");
+            Console.WriteLine($"    Mapsicle engine      {engine,10:N0} ns");
+            Console.WriteLine($"    Mapperly             {mapperlyCold,10:N0} ns   (nothing to warm, ClearCache does not reach it)");
+            Console.WriteLine($"    compile avoided      {engine - generated,10:N0} ns");
         }
 
         private static double Measure(int rounds, Action firstMap)
