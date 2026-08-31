@@ -20,6 +20,7 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StManyMembers), typeof(Mapsicle.SourceGen.Tests.StManyMembersDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StFlattenSource), typeof(Mapsicle.SourceGen.Tests.StFlattenDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StRefused), typeof(Mapsicle.SourceGen.Tests.StRefusedDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StCycle), typeof(Mapsicle.SourceGen.Tests.StCycleDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -35,6 +36,13 @@ namespace Mapsicle.SourceGen.Tests
     // purpose, so replace this type rather than "fixing" it if that ever changes.
     public class StRefused { public decimal Amount { get; set; } = 1234.5m; public int Id { get; set; } = 3; }
     public class StRefusedDto { public string Amount { get; set; } = ""; public int Id { get; set; } }
+
+    // A destination that exposes the back reference, so the cycle is there to follow. The engine
+    // stops at a depth ceiling; generated code has no ceiling to stop at, so the pair is refused.
+    public class StCycleOwner { public string Name { get; set; } = ""; public List<StCycle> Items { get; set; } = new(); }
+    public class StCycle { public int Id { get; set; } public StCycleOwner Owner { get; set; } = new(); }
+    public class StCycleOwnerDto { public string Name { get; set; } = ""; public List<StCycleDto> Items { get; set; } = new(); }
+    public class StCycleDto { public int Id { get; set; } public StCycleOwnerDto Owner { get; set; } = new(); }
 
     public class StEnumToString { public StColour Colour { get; set; } }
     public class StEnumToStringDto { public string Colour { get; set; } = ""; }
@@ -257,6 +265,36 @@ namespace Mapsicle.SourceGen.Tests
 
             // StManyMembers is entirely identical-typed, so it must be.
             Assert.Contains(keys, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void ACyclicGraphIsRefusedAndStillTerminatesThroughTheEngine()
+        {
+            // The refusal that matters most, because getting it wrong does not return a wrong value,
+            // it ends the process. Emitted code has no depth counter, so a mapper that followed this
+            // would recurse until the stack ran out, which is what the nearest competitor does on the
+            // same shape: it aborts with exit 134. The engine stops at a ceiling and returns.
+            var registry = typeof(Mapper)
+                .GetField("_generatedPairs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                !.GetValue(null)!;
+
+            var keys = ((System.Collections.IEnumerable)registry.GetType().GetProperty("Keys")!.GetValue(registry)!)
+                .Cast<object>()
+                .Select(k => k.ToString() ?? "")
+                .ToList();
+
+            Assert.DoesNotContain(keys, k => k.Contains(nameof(StCycle) + ",", StringComparison.Ordinal));
+
+            var owner = new StCycleOwner { Name = "root" };
+            var item = new StCycle { Id = 1, Owner = owner };
+            owner.Items.Add(item);
+
+            // The positive control: refusing is only correct if the pair still maps.
+            var dto = ((object)item).MapTo<StCycleDto>();
+
+            Assert.NotNull(dto);
+            Assert.Equal(1, dto!.Id);
+            Assert.Equal("root", dto.Owner.Name);
         }
 
         [Fact]
