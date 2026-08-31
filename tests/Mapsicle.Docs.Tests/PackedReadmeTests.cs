@@ -72,6 +72,15 @@ namespace Mapsicle.Docs.Tests
         ///
         /// Read from the projects rather than from a list kept by hand, because a list kept by hand
         /// is what was already wrong.
+        ///
+        /// The name checked is <c>PackageId</c> where the project declares one, because that is what
+        /// a reader types after <c>dotnet add package</c>. A first version used the directory name,
+        /// which is the same string today and would quietly check the wrong one the day a project is
+        /// renamed or its id set apart from its folder.
+        ///
+        /// The count assertion is not decoration. A test that walks a directory and finds nothing
+        /// passes: break the search and this reports success while checking no packages at all,
+        /// which is the shape of decorative gate this repository has now found four times.
         /// </remarks>
         [Fact]
         public void EveryPackableProjectIsInTheReadme()
@@ -86,23 +95,38 @@ namespace Mapsicle.Docs.Tests
 
             var readme = Readme();
             var missing = new System.Collections.Generic.List<string>();
+            var checkedPackages = 0;
 
-            foreach (var project in new DirectoryInfo(Path.Combine(root!.FullName, "src")).GetDirectories())
+            var source = new DirectoryInfo(Path.Combine(root!.FullName, "src"));
+            Assert.True(source.Exists, $"no src directory found from {AppContext.BaseDirectory}");
+
+            foreach (var csproj in source.GetFiles("*.csproj", SearchOption.AllDirectories))
             {
-                var csproj = Path.Combine(project.FullName, project.Name + ".csproj");
-                if (!File.Exists(csproj)) continue;
-                if (File.ReadAllText(csproj).Contains("<IsPackable>false</IsPackable>", StringComparison.Ordinal)) continue;
+                var text = File.ReadAllText(csproj.FullName);
 
-                if (!readme.Contains($"| **{project.Name}**", StringComparison.Ordinal))
+                if (Regex.IsMatch(text, @"<IsPackable>\s*false\s*</IsPackable>", RegexOptions.IgnoreCase)) continue;
+
+                var declared = Regex.Match(text, @"<PackageId>\s*([^<\s]+)\s*</PackageId>");
+                var package = declared.Success
+                    ? declared.Groups[1].Value
+                    : Path.GetFileNameWithoutExtension(csproj.Name);
+
+                checkedPackages++;
+
+                if (!readme.Contains($"| **{package}**", StringComparison.Ordinal))
                 {
-                    missing.Add($"{project.Name} is not in the package table");
+                    missing.Add($"{package} is not in the package table");
                 }
 
-                if (!Regex.IsMatch(readme, @"^dotnet add package " + Regex.Escape(project.Name) + @"\s*$", RegexOptions.Multiline))
+                if (!Regex.IsMatch(readme, @"^dotnet add package " + Regex.Escape(package) + @"\s*$", RegexOptions.Multiline))
                 {
-                    missing.Add($"{project.Name} has no install line");
+                    missing.Add($"{package} has no install line");
                 }
             }
+
+            Assert.True(checkedPackages >= 10,
+                $"only {checkedPackages} packages were discovered under src, so this check is not "
+                + "looking at what it thinks it is looking at");
 
             Assert.True(missing.Count == 0,
                 "these packages ship and the README does not tell anyone:\n  " + string.Join("\n  ", missing));
