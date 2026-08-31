@@ -115,7 +115,66 @@ public class GeneratedVsRuntime
 
 public static class Program
 {
-    public static void Main() => BenchmarkRunner.Run<GeneratedVsRuntime>(
+    public static void Main(string[] args)
+    {
+        if (args.Length > 0 && args[0] == "--cold")
+        {
+            ColdStart.Report();
+            return;
+        }
+
+        Run();
+    }
+
+    /// <summary>
+    /// What the first map of a pair costs, which is what the generator actually removes.
+    /// </summary>
+    /// <remarks>
+    /// Steady state is not where a cache pre-loader helps: once the engine has compiled a pair it
+    /// invokes a delegate, and so does the generated lane. The difference is the compile, and a
+    /// benchmark that measures the thousandth map cannot see it. Clearing the cache forces the
+    /// engine to build again while a generated registration is re-applied, so the gap between these
+    /// two is the Expression.Compile the generator avoids.
+    /// </remarks>
+    private static class ColdStart
+    {
+        internal static void Report()
+        {
+            var declared = new SgUser { Id = 1, FirstName = "Ada", LastName = "L", Email = "a@b.c", IsActive = true };
+            var undeclared = new SgPlain { Id = 1, FirstName = "Ada", LastName = "L", Email = "a@b.c", IsActive = true };
+
+            // Warm both paths once so neither pays for JIT during the measurement.
+            _ = ((object)declared).MapTo<SgUserDto>();
+            _ = ((object)undeclared).MapTo<SgPlainDto>();
+
+            const int rounds = 200;
+
+            var generated = Measure(rounds, () => _ = ((object)declared).MapTo<SgUserDto>());
+            var engine = Measure(rounds, () => _ = ((object)undeclared).MapTo<SgPlainDto>());
+
+            Console.WriteLine();
+            Console.WriteLine($"  first map after ClearCache, mean of {rounds}");
+            Console.WriteLine($"    generated pair    {generated,10:N0} ns");
+            Console.WriteLine($"    undeclared pair   {engine,10:N0} ns");
+            Console.WriteLine($"    the generator avoids {engine - generated,10:N0} ns of compile on first use");
+        }
+
+        private static double Measure(int rounds, Action firstMap)
+        {
+            var total = 0L;
+            for (var i = 0; i < rounds; i++)
+            {
+                Mapper.ClearCache();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                firstMap();
+                sw.Stop();
+                total += sw.ElapsedTicks;
+            }
+            return (double)total / rounds * (1_000_000_000.0 / System.Diagnostics.Stopwatch.Frequency);
+        }
+    }
+
+    private static void Run() => BenchmarkRunner.Run<GeneratedVsRuntime>(
         DefaultConfig.Instance
             .WithOptions(ConfigOptions.DisableOptimizationsValidator)
             .AddJob(Job.Default.WithWarmupCount(5).WithIterationCount(20)));
