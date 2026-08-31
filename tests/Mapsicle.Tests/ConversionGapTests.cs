@@ -184,5 +184,85 @@ namespace Mapsicle.Tests
 
             Assert.Equal(2, dest.Values.Count);
         }
+        // ---- enum into a different enum type ----------------------------------------------------
+
+        public enum CgSrcColour { Unset = 0, Teal = 1, Amber = 7 }
+        public enum CgDstColour { Unset = 0, Amber = 2, Teal = 5 }
+
+        public class CgEnumToEnumSource { public CgSrcColour Colour { get; set; } public CgSrcColour? Maybe { get; set; } }
+        public class CgEnumToEnumDest { public CgDstColour Colour { get; set; } public CgDstColour? Maybe { get; set; } }
+
+        public enum CgAligned { Unset = 0, Teal = 1, Amber = 7 }
+        public class CgAlignedDest { public CgAligned Colour { get; set; } }
+
+        [Fact]
+        public void AnEnumMapsIntoADifferentEnumType()
+        {
+            // Found by mapping the same order through all three in mapsicle_samples: the source
+            // Channel was Mobile and Mapsicle returned Web, the zero member, because the cascade had
+            // no enum into enum rule at all and the member fell out of it entirely.
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgEnumToEnumSource { Colour = CgSrcColour.Amber }).MapTo<CgEnumToEnumDest>();
+
+            Assert.Equal(CgDstColour.Amber, dto!.Colour);
+        }
+
+        [Fact]
+        public void AnEnumIsMatchedByNameNotByValue()
+        {
+            // The two reference mappers disagree here, so this is a choice rather than a copy.
+            // AutoMapper 15.1.3 matches by name: Amber(7) becomes Amber(2). Mapperly 4.1.1 matches
+            // by value and emits raw 7, which names no member of the destination at all.
+            //
+            // By name, because the cascade already reads and writes enums by name everywhere else:
+            // an enum into a string is ToString, and a string into an enum is a case insensitive
+            // Enum.TryParse. Matching by value would mean Amber round tripping through a string
+            // arrives as Amber while the direct map arrives as 7, and a mapper that disagrees with
+            // itself depending on the route is worse than one that picks the less common rule.
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgEnumToEnumSource { Colour = CgSrcColour.Teal }).MapTo<CgEnumToEnumDest>();
+
+            Assert.Equal(CgDstColour.Teal, dto!.Colour);
+            Assert.Equal(5, (int)dto.Colour);
+        }
+
+        [Fact]
+        public void AnEnumWhoseNameIsAbsentYieldsTheDestinationDefault()
+        {
+            // Never a value the destination enum does not define. An undefined member reaches a
+            // switch that has no case for it and a database column that rejects it, and it does so
+            // far from the mapping that produced it.
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgAlignedSource { Colour = CgOrphan.Missing }).MapTo<CgAlignedDest>();
+
+            Assert.Equal(CgAligned.Unset, dto!.Colour);
+        }
+
+        public enum CgOrphan { Missing = 3 }
+        public class CgAlignedSource { public CgOrphan Colour { get; set; } }
+
+        [Fact]
+        public void ANullableEnumMapsIntoADifferentNullableEnum()
+        {
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgEnumToEnumSource { Maybe = CgSrcColour.Amber }).MapTo<CgEnumToEnumDest>();
+
+            Assert.Equal(CgDstColour.Amber, dto!.Maybe);
+        }
+
+        [Fact]
+        public void ANullNullableEnumStaysNull()
+        {
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgEnumToEnumSource { Maybe = null }).MapTo<CgEnumToEnumDest>();
+
+            Assert.Null(dto!.Maybe);
+        }
+
     }
 }

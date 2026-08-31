@@ -73,6 +73,14 @@ namespace Mapsicle
                 return Expression.Convert(propExp, targetType);
             }
 
+            // One enum into a different enum. The member used to fall out of the cascade entirely, so
+            // a Channel of Mobile arrived as Web, the zero member: a wrong record rather than an
+            // incomplete one. Found by mapping the same order through all three mappers.
+            if (BuildEnumToEnum(propExp, srcType, targetType) is { } crossEnum)
+            {
+                return crossEnum;
+            }
+
             // Widening numeric. The CLR type system has no notion of the implicit numeric conversions
             // the C# language defines, so IsAssignableFrom above says false for int -> long and every
             // widening pair used to fall out of the cascade entirely, leaving the destination at its
@@ -118,22 +126,6 @@ namespace Mapsicle
         private static bool IsMappableSource(Type srcType) =>
             (srcType.IsClass || srcType.IsInterface) && srcType != typeof(string);
 
-        /// <summary>
-        /// Whether <paramref name="destProp"/> can be filled by flattening <paramref name="sourceProp"/>,
-        /// for example <c>AddressCity</c> from <c>Address.City</c>.
-        /// </summary>
-        /// <remarks>
-        /// This is the rule the mapper applies, and it lives here so the validator cannot answer
-        /// differently. It used to: <c>AssertMappingValid&lt;Source, Dest&gt;()</c> reported
-        /// <c>NameLength</c> as mapped from a <c>string Name</c>, because <c>Name</c> is a prefix of
-        /// <c>NameLength</c> and <c>string</c> has a <c>Length</c> property. The mapper skips
-        /// <c>string</c> sources outright, so the property was never populated and the validator's
-        /// pass was false assurance, which is worse than having no validator.
-        ///
-        /// Two conditions the validator was missing, both enforced here: the source property must be
-        /// a class and not a <c>string</c>, and the nested property's type must be assignable to the
-        /// destination property's type.
-        /// </remarks>
         /// <summary>
         /// How many levels a flattened name may descend before the search gives up.
         /// </summary>
@@ -186,6 +178,89 @@ namespace Mapsicle
             }
         }
 
+        /// <summary>Maps one enum type onto another by member name, resolved when the tree is built.</summary>
+        /// <remarks>
+        /// By name, and the two reference mappers disagree about that, so it is a choice rather than
+        /// a copy. AutoMapper 15.1.3 matches by name. Mapperly 4.1.1 matches by value and will hand
+        /// back a number the destination enum defines no member for.
+        ///
+        /// Name wins because the rest of the cascade already reads and writes enums by name: an enum
+        /// into a string is ToString, and a string into an enum is a case insensitive
+        /// <c>Enum.TryParse</c>. Matching by value would make the same value arrive differently
+        /// depending on whether it went through a string on the way, and a mapper that disagrees
+        /// with itself by route is worse than one that picks the less common rule.
+        ///
+        /// The name lookup happens once, here, while the expression tree is built. The compiled
+        /// delegate is a switch over constants, so the warm path neither allocates a name string nor
+        /// touches reflection.
+        /// </remarks>
+        private static Expression? BuildEnumToEnum(Expression propExp, Type srcType, Type targetType)
+        {
+            var srcEnum = Nullable.GetUnderlyingType(srcType) ?? srcType;
+            var dstEnum = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (!srcEnum.IsEnum || !dstEnum.IsEnum || srcEnum == dstEnum)
+            {
+                return null;
+            }
+
+            var destNames = Enum.GetNames(dstEnum);
+            var seen = new HashSet<object>();
+            var cases = new List<SwitchCase>();
+
+            foreach (var name in Enum.GetNames(srcEnum))
+            {
+                var value = Enum.Parse(srcEnum, name);
+
+                // An alias declares two names for one value. Expression.Switch rejects a repeated
+                // test, so the first name wins, which is the one Enum.GetNames orders first.
+                if (!seen.Add(Convert.ChangeType(value, Enum.GetUnderlyingType(srcEnum), CultureInfo.InvariantCulture)))
+                {
+                    continue;
+                }
+
+                var match = Array.Find(destNames, n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+                if (match is null)
+                {
+                    continue;
+                }
+
+                cases.Add(Expression.SwitchCase(
+                    Expression.Constant(Enum.Parse(dstEnum, match), dstEnum),
+                    Expression.Constant(value, srcEnum)));
+            }
+
+            // A name the destination does not declare gives the destination's default, never a value
+            // it defines no member for. An undefined member reaches a switch with no case for it and
+            // a column that rejects it, far from the mapping that produced it.
+            var fallback = Expression.Default(dstEnum);
+
+            var sourceValue = Nullable.GetUnderlyingType(srcType) is null
+                ? propExp
+                : Expression.Property(propExp, "Value");
+
+            Expression mapped = cases.Count == 0
+                ? fallback
+                : Expression.Switch(dstEnum, sourceValue, fallback, comparison: null, cases);
+
+            if (Nullable.GetUnderlyingType(targetType) is not null)
+            {
+                mapped = Expression.Convert(mapped, targetType);
+            }
+
+            if (Nullable.GetUnderlyingType(srcType) is null)
+            {
+                return mapped;
+            }
+
+            // A null source enum stays null when the destination allows it, and takes the
+            // destination's default when it does not.
+            return Expression.Condition(
+                Expression.Property(propExp, "HasValue"),
+                mapped,
+                Expression.Default(targetType));
+        }
+
         /// <summary>Parses a string into an enum, yielding the default for null or an unknown name.</summary>
         /// <remarks>
         /// <c>Enum.TryParse</c> rather than <c>Enum.Parse</c>, so a value that names no member gives
@@ -236,6 +311,22 @@ namespace Mapsicle
             return Expression.Condition(hasValue, inner, Expression.Default(targetType));
         }
 
+        /// <summary>
+        /// Whether <paramref name="destProp"/> can be filled by flattening one of <paramref name="sourceProps"/>,
+        /// for example <c>AddressCity</c> from <c>Address.City</c>.
+        /// </summary>
+        /// <remarks>
+        /// This is the rule the mapper applies, and it lives here so the validator cannot answer
+        /// differently. It used to: <c>AssertMappingValid&lt;Source, Dest&gt;()</c> reported
+        /// <c>NameLength</c> as mapped from a <c>string Name</c>, because <c>Name</c> is a prefix of
+        /// <c>NameLength</c> and <c>string</c> has a <c>Length</c> property. The mapper skips
+        /// <c>string</c> sources outright, so the property was never populated and the validator's
+        /// pass was false assurance, which is worse than having no validator.
+        ///
+        /// Two conditions the validator was missing, both enforced here: the source property must be
+        /// a class and not a <c>string</c>, and the nested property's type must be assignable to the
+        /// destination property's type.
+        /// </remarks>
         internal static bool TryFindFlattenedPath(
             PropertyInfo destProp,
             PropertyInfo[] sourceProps,
