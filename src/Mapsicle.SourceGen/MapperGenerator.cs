@@ -229,8 +229,20 @@ namespace Mapsicle.SourceGen
                 // Any setter, not just a public one. Reflection writes a private setter and
                 // generated code cannot, so a member with one is a member the engine fills and this
                 // would silently leave at its default.
-                var match = readable.FirstOrDefault(
-                    p => string.Equals(p.Name, destProp.Name, StringComparison.OrdinalIgnoreCase));
+                // [IgnoreMap] means leave the member alone, and it is a control rather than a
+                // preference: section 6 of CLAUDE.md states it is honoured on every entry point, and
+                // a generated extension is an entry point. Matching on name alone filled a member
+                // the engine deliberately refuses, so declaring a pair silently turned the control
+                // off. Skipped rather than refused, because skipping is exactly what the engine does.
+                if (HasAttribute(destProp, "Mapsicle.IgnoreMapAttribute")) continue;
+
+                // [MapFrom] names the source member, falling back to the destination's own name when
+                // the named one does not exist. Without this the emitter read the wrong member, or
+                // found nothing and generated the pair short.
+                var primaryName = MapFromName(destProp) ?? destProp.Name;
+
+                var match = readable.FirstOrDefault(p => string.Equals(p.Name, primaryName, StringComparison.OrdinalIgnoreCase))
+                            ?? readable.FirstOrDefault(p => string.Equals(p.Name, destProp.Name, StringComparison.OrdinalIgnoreCase));
 
                 if (destProp.SetMethod.DeclaredAccessibility != Accessibility.Public)
                 {
@@ -278,8 +290,52 @@ namespace Mapsicle.SourceGen
                 }
             }
 
+            // A required member the emitter did not assign is CS9035 in the consumer's build, inside
+            // a file they did not write. The engine maps the pair and simply leaves the member at its
+            // default, which reflection is allowed to do and an object initializer is not, so the
+            // pair has to go back to the engine.
+            var unassigned = Properties(destination).FirstOrDefault(
+                p => p.IsRequired && !assignments.Any(a => string.Equals(a.DestinationName, p.Name, StringComparison.Ordinal)));
+
+            if (unassigned != null)
+            {
+                refusal = $"'{unassigned.Name}' is required and nothing maps to it, and generated code "
+                        + "cannot leave a required member unset the way reflection can";
+                return null;
+            }
+
             refusal = null;
             return assignments;
+        }
+
+        /// <summary>An order key that survives every enum backing type.</summary>
+        /// <remarks>
+        /// Converting to <c>long</c> threw <c>OverflowException</c> on a ulong-backed member above
+        /// <c>long.MaxValue</c>, and a generator that throws contributes nothing: the build still
+        /// succeeded, every declared pair in the assembly silently fell back, and no MSG001 said so.
+        /// Unsigned also matches how <c>Enum.GetNames</c> orders a negative long.
+        /// </remarks>
+        private static ulong UnsignedKey(object? value) => value switch
+        {
+            ulong u => u,
+            null => 0UL,
+            _ => unchecked((ulong)System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture)),
+        };
+
+        private static bool HasAttribute(ISymbol symbol, string fullName) =>
+            symbol.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == fullName);
+
+        /// <summary>The member name a <c>[MapFrom]</c> points at, or null.</summary>
+        private static string? MapFromName(ISymbol symbol)
+        {
+            foreach (var attribute in symbol.GetAttributes())
+            {
+                if (attribute.AttributeClass?.ToDisplayString() != "Mapsicle.MapFromAttribute") continue;
+                if (attribute.ConstructorArguments.Length == 0) continue;
+                if (attribute.ConstructorArguments[0].Value is string name) return name;
+            }
+
+            return null;
         }
 
         // ---- the conversion rules, in the cascade's order ----------------------------------------
@@ -470,7 +526,12 @@ namespace Mapsicle.SourceGen
             helper.ElementSourceType = Full(sourceElement);
             helper.ElementDestinationType = Full(destElement);
 
-            var element = Convert(sourceElement, destElement, "item", context);
+            // The element rule is narrower than the member rule on purpose. The engine's element path
+            // performs identity, reference assignment, a nested object map and a non-nullable enum
+            // conversion, and nothing else, so running the full cascade here made generated lists
+            // disagree with engine lists: a List of int into a List of long came back with the values
+            // where the engine produced zeros. Anything outside that set refuses the pair.
+            var element = ElementConvert(sourceElement, destElement, "item", context);
             context.End(key);
 
             if (element is null)
@@ -481,6 +542,32 @@ namespace Mapsicle.SourceGen
 
             helper.ElementExpression = element;
             return $"{helper.Name}({expression})";
+        }
+
+        /// <summary>The conversion the engine's collection element path performs, or null.</summary>
+        /// <remarks>
+        /// Kept separate from <c>Convert</c> because the engine treats an element differently from a
+        /// member. Widening, nullable lifting, enum to string and the nullable enum conversions all
+        /// apply to a member and none of them apply to an element. Emitting them produced lists the
+        /// engine would not produce, which contract 3 forbids whichever lane you think is right.
+        /// </remarks>
+        private static string? ElementConvert(ITypeSymbol from, ITypeSymbol to, string expression, PlanContext context)
+        {
+            if (SymbolEqualityComparer.Default.Equals(from, to)) return expression;
+            if (IsReferenceAssignable(from, to)) return expression;
+
+            if (from.TypeKind == TypeKind.Enum && to.TypeKind == TypeKind.Enum
+                && Underlying(from) is null && Underlying(to) is null)
+            {
+                return EnumCall(from, to, from, to, expression, context);
+            }
+
+            if (IsMappable(from) && to.TypeKind == TypeKind.Class && !IsString(to))
+            {
+                return NestedCall(from, to, expression, context);
+            }
+
+            return null;
         }
 
         /// <summary>Plans the enum switch and returns the call, resolving names now rather than later.</summary>
@@ -501,7 +588,7 @@ namespace Mapsicle.SourceGen
                 // while Bravo = 1 won at runtime.
                 var destNames = toEnum.GetMembers().OfType<IFieldSymbol>()
                     .Where(f => f.HasConstantValue)
-                    .OrderBy(f => System.Convert.ToInt64(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture))
+                    .OrderBy(f => UnsignedKey(f.ConstantValue))
                     .Select(f => f.Name)
                     .ToList();
 
@@ -603,7 +690,7 @@ namespace Mapsicle.SourceGen
             var leaf = path[path.Count - 1];
             var access = "source" + string.Concat(path.Select(p => $".@{p.Name}"));
 
-            var converted = Convert(leaf.Type, destType, access, context);
+            var converted = FlattenLeafConvert(leaf.Type, destType, access);
             if (converted is null) return null;
 
             var guards = new List<string>();
@@ -618,6 +705,31 @@ namespace Mapsicle.SourceGen
             if (guards.Count == 0) return converted;
 
             return $"({string.Join(" || ", guards)} ? default({Full(destType)}) : {converted})";
+        }
+
+        /// <summary>The conversion the engine performs at the end of a flattened path, or null.</summary>
+        /// <remarks>
+        /// Narrower than <c>Convert</c>, and it has to be. The engine's leaf rule is
+        /// <c>to.IsAssignableFrom(from)</c> plus lossless widening on the RAW declared types, so an
+        /// <c>int?</c> leaf into a <c>long</c> destination finds no path and the member is left at
+        /// its default. Running the member cascade here unwrapped the nullable first and filled a
+        /// member the engine does not, which is the mirror image of the skip this file already had.
+        ///
+        /// Assignability is deliberately conservative: anything this cannot prove returns null,
+        /// which refuses the pair and sends it to the engine. Refusing costs speed, never data.
+        /// </remarks>
+        private static string? FlattenLeafConvert(ITypeSymbol from, ITypeSymbol to, string expression)
+        {
+            if (SymbolEqualityComparer.Default.Equals(from, to)) return expression;
+            if (IsReferenceAssignable(from, to)) return expression;
+
+            // int into int?, which reflection's IsAssignableFrom allows through its Nullable case.
+            if (SymbolEqualityComparer.Default.Equals(Underlying(to), from)) return expression;
+
+            // Lossless widening, on the raw types, matching IsLosslessNumericWidening.
+            if (Widening(from, to)) return $"({Full(to)}){expression}";
+
+            return null;
         }
 
         private static bool CanDescendInto(ITypeSymbol type) =>
@@ -635,11 +747,20 @@ namespace Mapsicle.SourceGen
         /// no path is indistinguishable from "the engine would not map it either". Widen this before
         /// assuming a flattening difference is harmless.
         /// </remarks>
-        private static bool IsAssignableForFlattening(ITypeSymbol from, ITypeSymbol to) =>
-            SymbolEqualityComparer.Default.Equals(from, to)
-            || IsReferenceAssignable(from, to)
-            || SymbolEqualityComparer.Default.Equals(Underlying(to), from)
-            || Widening(Underlying(from) ?? from, Underlying(to) ?? to);
+        /// <summary>Whether a name-complete path counts as a candidate leaf.</summary>
+        /// <remarks>
+        /// Deliberately permissive, and the permissiveness is the fix. This used to mirror the
+        /// engine's assignability test, and being even slightly narrower was silently dangerous: a
+        /// leaf the engine could assign and this could not produced no path at all, and no path is
+        /// indistinguishable from "there was nothing to map", so the member was skipped rather than
+        /// refused. Variance found that hole, a List of string leaf into an IEnumerable of object
+        /// destination, and any future difference would have found it again.
+        ///
+        /// So the name match alone makes a candidate, and <c>Convert</c> decides whether it can be
+        /// emitted. A leaf it cannot emit returns null from <c>FlattenedExpression</c>, which
+        /// refuses the pair. Refusing costs speed; skipping costs data.
+        /// </remarks>
+        private static bool IsAssignableForFlattening(ITypeSymbol from, ITypeSymbol to) => true;
 
         // ---- symbols ----------------------------------------------------------------------------
 
@@ -664,6 +785,9 @@ namespace Mapsicle.SourceGen
             var sourceNames = new HashSet<string>(
                 Members(source).Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
 
+            var sourceProperties = new HashSet<string>(
+                ReadableProperties(source).Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+
             foreach (var member in Members(destination))
             {
                 if (!sourceNames.Contains(member.Name)) continue;
@@ -672,6 +796,16 @@ namespace Mapsicle.SourceGen
 
                 if (member is IPropertySymbol { IsIndexer: false, SetMethod: null } getterOnly
                     && IsFillableCollection(getterOnly.Type))
+                {
+                    return member.Name;
+                }
+
+                // A destination property whose only source is a public field. The emitter reads
+                // properties, so it found nothing and generated the pair without the member while
+                // the engine copied it across the kinds.
+                if (member is IPropertySymbol { IsIndexer: false } prop
+                    && prop.SetMethod is not null
+                    && !sourceProperties.Contains(member.Name))
                 {
                     return member.Name;
                 }
@@ -711,10 +845,23 @@ namespace Mapsicle.SourceGen
         ///
         /// Erring wide is free here. A refusal costs speed and never correctness.
         /// </remarks>
-        private static bool IsFillableCollection(ITypeSymbol type) =>
-            type is INamedTypeSymbol { IsGenericType: true } named
-            && (named.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T
-                || named.AllInterfaces.Any(i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T));
+        private static bool IsFillableCollection(ITypeSymbol type)
+        {
+            if (IsString(type)) return false;
+
+            // The declared type does not have to be generic itself. The engine finds the element
+            // through the interfaces, so a getter-only member declared as a non-generic subclass of
+            // Collection<T> is filled, and requiring IsGenericType here meant the pair generated
+            // without it. Erring wide only costs a refusal.
+            if (type is INamedTypeSymbol { IsGenericType: true } named
+                && named.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T)
+            {
+                return true;
+            }
+
+            return type.AllInterfaces.Any(
+                i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T);
+        }
 
         /// <summary>Every public instance property, most derived declaration only.</summary>
         /// <remarks>
@@ -1100,9 +1247,12 @@ namespace Mapsicle.SourceGen
             var parameter = helper.SourceIsArray ? $"{element}[]" : $"global::System.Collections.Generic.List<{element}>";
             var count = helper.SourceIsArray ? "Length" : "Count";
 
-            sb.AppendLine($"        internal static global::System.Collections.Generic.List<{destElement}> {helper.Name}({parameter}? source)");
+            sb.AppendLine($"        internal static global::System.Collections.Generic.List<{destElement}>? {helper.Name}({parameter}? source)");
             sb.AppendLine("        {");
-            sb.AppendLine($"            if (source is null) return new global::System.Collections.Generic.List<{destElement}>();");
+            // Null, not an empty list. The engine reaches a collection member through the nested map
+            // call, which returns null for a null source, so returning an empty list made the two
+            // lanes disagree on a shape that is ordinary in data loaded from a database.
+            sb.AppendLine($"            if (source is null) return null;");
             sb.AppendLine();
             sb.AppendLine($"            var target = new global::System.Collections.Generic.List<{destElement}>(source.{count});");
             sb.AppendLine($"            for (var i = 0; i < source.{count}; i++)");

@@ -28,6 +28,11 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StStructSource), typeof(Mapsicle.SourceGen.Tests.StStructDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StSelfList), typeof(Mapsicle.SourceGen.Tests.StSelfListDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StNullableStamp), typeof(Mapsicle.SourceGen.Tests.StNullableStampDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StIgnored), typeof(Mapsicle.SourceGen.Tests.StIgnoredDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StMapFrom), typeof(Mapsicle.SourceGen.Tests.StMapFromDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StRequired), typeof(Mapsicle.SourceGen.Tests.StRequiredDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StBigEnumSource), typeof(Mapsicle.SourceGen.Tests.StBigEnumDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StNullList), typeof(Mapsicle.SourceGen.Tests.StNullListDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -97,6 +102,35 @@ namespace Mapsicle.SourceGen.Tests
     // so the engine leaves the member at its default and the emitter must too.
     public class StNullableStamp { public DateTime? When { get; set; } }
     public class StNullableStampDto { public DateTimeOffset When { get; set; } }
+
+    // [IgnoreMap] is a control, not a preference. Matching on name alone filled a member the engine
+    // deliberately refuses, so declaring a pair silently turned the control off.
+    public class StIgnored { public int Id { get; set; } public string Secret { get; set; } = "hunter2"; }
+    public class StIgnoredDto { public int Id { get; set; } [IgnoreMap] public string? Secret { get; set; } }
+
+    // [MapFrom] names the source member and falls back to the destination's own name. Ignoring it
+    // read the wrong member, or found nothing and generated the pair short.
+    public class StMapFrom { public string A { get; set; } = "fromA"; public string B { get; set; } = "fromB"; }
+    public class StMapFromDto { [MapFrom("A")] public string? B { get; set; } }
+
+    // A required member nothing maps to. The engine leaves it at its default; an object initializer
+    // cannot, so the emitted file failed the consumer's build with CS9035.
+    public class StRequired { public int Id { get; set; } }
+    public class StRequiredDto { public int Id { get; set; } public required string Name { get; set; } }
+
+    // A ulong-backed member above long.MaxValue threw from inside the generator, which contributes
+    // nothing when it throws: every declared pair in the assembly fell back with no diagnostic.
+    public enum StBigFrom : ulong { None = 0, Max = ulong.MaxValue }
+    public enum StBigTo : ulong { None = 0, Max = ulong.MaxValue }
+    public class StBigEnumSource { public StBigFrom Value { get; set; } }
+    public class StBigEnumDto { public StBigTo Value { get; set; } }
+
+    // A null source collection. The engine reaches a member-typed list through the nested map call,
+    // which returns null, so returning an empty list made the lanes disagree.
+    public class StNlItem { public int Id { get; set; } }
+    public class StNlItemDto { public int Id { get; set; } }
+    public class StNullList { public List<StNlItem>? Items { get; set; } }
+    public class StNullListDto { public List<StNlItemDto>? Items { get; set; } }
 
     public class StEnumToString { public StColour Colour { get; set; } }
     public class StEnumToStringDto { public string Colour { get; set; } = ""; }
@@ -416,6 +450,39 @@ namespace Mapsicle.SourceGen.Tests
                 d => d.When);
 
         [Fact]
+        public void IgnoreMapIsHonouredByGeneratedCode() =>
+            // Section 6 of CLAUDE.md says this is honoured on every entry point, and a generated
+            // extension is an entry point.
+            AgreesWithTheEngine<StIgnored, StIgnoredDto>(
+                new StIgnored { Id = 3 }, d => d.Id, d => d.Secret);
+
+        [Fact]
+        public void MapFromIsHonouredByGeneratedCode() =>
+            AgreesWithTheEngine<StMapFrom, StMapFromDto>(new StMapFrom(), d => d.B);
+
+        [Fact]
+        public void ARequiredMemberWithNoSourceRefusesThePair()
+        {
+            // Most of this test is the suite compiling: emitting the pair is CS9035 in a file the
+            // consumer did not write.
+            var keys = Registry();
+            Assert.Contains(keys, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
+            Assert.DoesNotContain(keys, k => k.Contains(nameof(StRequired), StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void AUlongEnumAboveLongMaxValueDoesNotStopTheGenerator() =>
+            // The generator threw here, and a generator that throws silently turns every declared
+            // pair in the assembly off. The registry check below is the real assertion.
+            AgreesWithTheEngine<StBigEnumSource, StBigEnumDto>(
+                new StBigEnumSource { Value = StBigFrom.Max }, d => d.Value);
+
+        [Fact]
+        public void ANullSourceCollectionAgreesWithTheEngine() =>
+            AgreesWithTheEngine<StNullList, StNullListDto>(
+                new StNullList { Items = null }, d => d.Items);
+
+        [Fact]
         public void ACyclicGraphIsRefusedAndStillTerminatesThroughTheEngine()
         {
             // The refusal that matters most, because getting it wrong does not return a wrong value,
@@ -469,6 +536,7 @@ namespace Mapsicle.SourceGen.Tests
                 nameof(StCollection), nameof(StNullableToValue), nameof(StValueToNullable),
                 nameof(StDeepInherit), nameof(StManyMembers), nameof(StFlattenSource),
                 nameof(StOverride), nameof(StAliasSource), nameof(StStructSource),
+                nameof(StIgnored), nameof(StMapFrom), nameof(StBigEnumSource), nameof(StNullList),
             };
 
             var missing = expected
