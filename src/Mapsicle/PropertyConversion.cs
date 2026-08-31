@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -72,6 +73,14 @@ namespace Mapsicle
                 return Expression.Convert(propExp, targetType);
             }
 
+            // One enum into a different enum. The member used to fall out of the cascade entirely, so
+            // a Channel of Mobile arrived as Web, the zero member: a wrong record rather than an
+            // incomplete one. Found by mapping the same order through all three mappers.
+            if (BuildEnumToEnum(propExp, srcType, targetType) is { } crossEnum)
+            {
+                return crossEnum;
+            }
+
             // Widening numeric. The CLR type system has no notion of the implicit numeric conversions
             // the C# language defines, so IsAssignableFrom above says false for int -> long and every
             // widening pair used to fall out of the cascade entirely, leaving the destination at its
@@ -80,6 +89,24 @@ namespace Mapsicle
             if (numeric is not null)
             {
                 return numeric;
+            }
+
+            // String into an enum. The reverse already worked, so a status round-tripped out to a
+            // string and would not come back: it silently became the enum's zero member, which is a
+            // wrong record rather than an incomplete one. Names are matched without case, and a
+            // numeric string is accepted by value, both of which are what Enum.TryParse does.
+            if (srcType == typeof(string) && (targetType.IsEnum || Nullable.GetUnderlyingType(targetType)?.IsEnum == true))
+            {
+                return BuildParseEnum(propExp, targetType);
+            }
+
+            // DateTime into DateTimeOffset. The framework defines an implicit conversion, which the
+            // CLR type system does not expose, so IsAssignableFrom says false and the destination
+            // was left at DateTimeOffset.MinValue. A timestamp becoming year one is silent and
+            // catastrophic in a way a missing field is not.
+            if (BuildDateTimeToOffset(propExp, srcType, targetType) is { } offset)
+            {
+                return offset;
             }
 
             // Nullable source to its non-nullable counterpart: null becomes the destination default.
@@ -100,7 +127,192 @@ namespace Mapsicle
             (srcType.IsClass || srcType.IsInterface) && srcType != typeof(string);
 
         /// <summary>
-        /// Whether <paramref name="destProp"/> can be filled by flattening <paramref name="sourceProp"/>,
+        /// How many levels a flattened name may descend before the search gives up.
+        /// </summary>
+        /// <remarks>
+        /// A ceiling rather than a preference. A type holding itself, like a category with a parent
+        /// category, gives the search an infinite supply of candidate paths, and this runs while the
+        /// delegate is being built rather than while it runs, so a runaway hangs the compile instead
+        /// of overflowing a stack. Four covers the shapes people actually write: an aggregate root,
+        /// an entity it owns, something that entity owns, and a field on it.
+        /// </remarks>
+        internal const int MaxFlattenDepth = 4;
+
+        /// <summary>
+        /// Resolves a flattened destination name into the chain of source properties that produces it.
+        /// </summary>
+        /// <remarks>
+        /// <c>CustomerAddressCity</c> becomes Customer, then Address, then City. The search takes the
+        /// longest prefix that matches a readable property and recurses on the remainder, so a name
+        /// spelling more than one real path resolves to the one whose first step is longest, and the
+        /// result does not depend on the order properties are enumerated in.
+        ///
+        /// This replaced a single level lookup that could form <c>CustomerAddress</c> and never
+        /// descended into <c>Address</c>, so a three level name silently left its member at the
+        /// default. Both delegate builders call this, because there were two copies of the old one
+        /// and copies of this logic are what CONTRIBUTING exists to prevent.
+        /// </remarks>
+        /// <summary>
+        /// Copies a source sequence into a destination collection that has no setter.
+        /// </summary>
+        /// <remarks>
+        /// A getter only collection cannot be bound by a member initialiser, which is the only shape
+        /// the delegate builders emit, so these members were skipped and came back empty. That is
+        /// the standard read model shape for a collection you do not want replaced, and how EF Core
+        /// entities are usually written, so an empty list is a common and quiet way to lose data.
+        ///
+        /// The destination is cleared first. Mapping twice into the same instance appending twice
+        /// would be worse than not mapping at all, and a caller mapping onto an existing object
+        /// expects the result to reflect the source rather than the source plus history.
+        /// </remarks>
+        internal static void CopyInto<TSource, TDest>(IEnumerable<TSource>? source, ICollection<TDest>? destination)
+        {
+            if (destination is null || destination.IsReadOnly) return;
+
+            destination.Clear();
+            if (source is null) return;
+
+            foreach (var item in source)
+            {
+                destination.Add(item is TDest already ? already : Mapper.MapTo<TDest>(item!)!);
+            }
+        }
+
+        /// <summary>Maps one enum type onto another by member name, resolved when the tree is built.</summary>
+        /// <remarks>
+        /// By name, and the two reference mappers disagree about that, so it is a choice rather than
+        /// a copy. AutoMapper 15.1.3 matches by name. Mapperly 4.1.1 matches by value and will hand
+        /// back a number the destination enum defines no member for.
+        ///
+        /// Name wins because the rest of the cascade already reads and writes enums by name: an enum
+        /// into a string is ToString, and a string into an enum is a case insensitive
+        /// <c>Enum.TryParse</c>. Matching by value would make the same value arrive differently
+        /// depending on whether it went through a string on the way, and a mapper that disagrees
+        /// with itself by route is worse than one that picks the less common rule.
+        ///
+        /// The name lookup happens once, here, while the expression tree is built. The compiled
+        /// delegate is a switch over constants, so the warm path neither allocates a name string nor
+        /// touches reflection.
+        /// </remarks>
+        private static Expression? BuildEnumToEnum(Expression propExp, Type srcType, Type targetType)
+        {
+            var srcEnum = Nullable.GetUnderlyingType(srcType) ?? srcType;
+            var dstEnum = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (!srcEnum.IsEnum || !dstEnum.IsEnum || srcEnum == dstEnum)
+            {
+                return null;
+            }
+
+            var destNames = Enum.GetNames(dstEnum);
+            var seen = new HashSet<object>();
+            var cases = new List<SwitchCase>();
+
+            foreach (var name in Enum.GetNames(srcEnum))
+            {
+                var value = Enum.Parse(srcEnum, name);
+
+                // An alias declares two names for one value. Expression.Switch rejects a repeated
+                // test, so the first name wins, which is the one Enum.GetNames orders first.
+                if (!seen.Add(Convert.ChangeType(value, Enum.GetUnderlyingType(srcEnum), CultureInfo.InvariantCulture)))
+                {
+                    continue;
+                }
+
+                var match = Array.Find(destNames, n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+                if (match is null)
+                {
+                    continue;
+                }
+
+                cases.Add(Expression.SwitchCase(
+                    Expression.Constant(Enum.Parse(dstEnum, match), dstEnum),
+                    Expression.Constant(value, srcEnum)));
+            }
+
+            // A name the destination does not declare gives the destination's default, never a value
+            // it defines no member for. An undefined member reaches a switch with no case for it and
+            // a column that rejects it, far from the mapping that produced it.
+            var fallback = Expression.Default(dstEnum);
+
+            var sourceValue = Nullable.GetUnderlyingType(srcType) is null
+                ? propExp
+                : Expression.Property(propExp, "Value");
+
+            Expression mapped = cases.Count == 0
+                ? fallback
+                : Expression.Switch(dstEnum, sourceValue, fallback, comparison: null, cases);
+
+            if (Nullable.GetUnderlyingType(targetType) is not null)
+            {
+                mapped = Expression.Convert(mapped, targetType);
+            }
+
+            if (Nullable.GetUnderlyingType(srcType) is null)
+            {
+                return mapped;
+            }
+
+            // A null source enum stays null when the destination allows it, and takes the
+            // destination's default when it does not.
+            return Expression.Condition(
+                Expression.Property(propExp, "HasValue"),
+                mapped,
+                Expression.Default(targetType));
+        }
+
+        /// <summary>Parses a string into an enum, yielding the default for null or an unknown name.</summary>
+        /// <remarks>
+        /// <c>Enum.TryParse</c> rather than <c>Enum.Parse</c>, so a value that names no member gives
+        /// the enum's default instead of throwing from inside a compiled lambda. That matches what
+        /// the rest of the cascade does with a value it cannot convert, and it matches AutoMapper.
+        /// </remarks>
+        private static Expression BuildParseEnum(Expression propExp, Type targetType)
+        {
+            var enumType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            var parse = typeof(PropertyConversion)
+                .GetMethod(nameof(ParseEnumOrDefault), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(enumType);
+
+            Expression parsed = Expression.Call(parse, propExp);
+
+            return targetType == enumType ? parsed : Expression.Convert(parsed, targetType);
+        }
+
+        private static TEnum ParseEnumOrDefault<TEnum>(string? value) where TEnum : struct, Enum =>
+            Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : default;
+
+        /// <summary>The framework's implicit DateTime to DateTimeOffset conversion, including nullable.</summary>
+        private static Expression? BuildDateTimeToOffset(Expression propExp, Type srcType, Type targetType)
+        {
+            var sourceIsNullable = Nullable.GetUnderlyingType(srcType) == typeof(DateTime);
+            var targetIsNullable = Nullable.GetUnderlyingType(targetType) == typeof(DateTimeOffset);
+
+            var sourceIsDate = srcType == typeof(DateTime) || sourceIsNullable;
+            var targetIsOffset = targetType == typeof(DateTimeOffset) || targetIsNullable;
+
+            if (!sourceIsDate || !targetIsOffset) return null;
+
+            if (!sourceIsNullable)
+            {
+                Expression value = Expression.Convert(propExp, typeof(DateTimeOffset));
+                return targetIsNullable ? Expression.Convert(value, targetType) : value;
+            }
+
+            // A null source cannot become a non nullable offset, so that pair stays unmapped rather
+            // than inventing MinValue, which is the value this whole conversion exists to stop.
+            if (!targetIsNullable) return null;
+
+            var hasValue = Expression.Property(propExp, "HasValue");
+            var inner = Expression.Convert(
+                Expression.Convert(Expression.Property(propExp, "Value"), typeof(DateTimeOffset)), targetType);
+
+            return Expression.Condition(hasValue, inner, Expression.Default(targetType));
+        }
+
+        /// <summary>
+        /// Whether <paramref name="destProp"/> can be filled by flattening one of <paramref name="sourceProps"/>,
         /// for example <c>AddressCity</c> from <c>Address.City</c>.
         /// </summary>
         /// <remarks>
@@ -115,6 +327,66 @@ namespace Mapsicle
         /// a class and not a <c>string</c>, and the nested property's type must be assignable to the
         /// destination property's type.
         /// </remarks>
+        internal static bool TryFindFlattenedPath(
+            PropertyInfo destProp,
+            PropertyInfo[] sourceProps,
+            Func<Type, PropertyInfo[]> readableProperties,
+            out List<PropertyInfo> path)
+        {
+            path = new List<PropertyInfo>();
+            return Descend(destProp.Name, destProp.PropertyType, sourceProps, readableProperties, path, 0);
+        }
+
+        private static bool Descend(
+            string remainingName,
+            Type destType,
+            PropertyInfo[] candidates,
+            Func<Type, PropertyInfo[]> readableProperties,
+            List<PropertyInfo> path,
+            int depth)
+        {
+            if (depth >= MaxFlattenDepth) return false;
+
+            // Longest prefix first, so Address wins over A when both are properties and the name is
+            // AddressCity. Without this the answer depends on enumeration order.
+            foreach (var candidate in candidates
+                         .Where(p => remainingName.StartsWith(p.Name, StringComparison.OrdinalIgnoreCase))
+                         .OrderByDescending(p => p.Name.Length))
+            {
+                var remainder = remainingName.Substring(candidate.Name.Length);
+
+                if (remainder.Length == 0)
+                {
+                    // The whole name is consumed. Only useful below the first level, because at the
+                    // first level this is an ordinary member match rather than flattening.
+                    if (depth == 0) continue;
+                    if (!IsAssignableForFlattening(candidate.PropertyType, destType)) continue;
+
+                    path.Add(candidate);
+                    return true;
+                }
+
+                if (!CanDescendInto(candidate.PropertyType)) continue;
+
+                path.Add(candidate);
+                if (Descend(remainder, destType, readableProperties(candidate.PropertyType),
+                            readableProperties, path, depth + 1))
+                {
+                    return true;
+                }
+                path.RemoveAt(path.Count - 1);
+            }
+
+            return false;
+        }
+
+        private static bool CanDescendInto(Type type) =>
+            type.IsClass && type != typeof(string) && !typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
+        /// <summary>Whether the leaf of a flattened path can be assigned to the destination.</summary>
+        private static bool IsAssignableForFlattening(Type from, Type to) =>
+            to.IsAssignableFrom(from) || IsLosslessNumericWidening(from, to);
+
         internal static bool TryFindFlattenedSource(
             PropertyInfo destProp,
             PropertyInfo sourceProp,

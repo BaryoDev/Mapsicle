@@ -252,6 +252,10 @@ namespace Mapsicle
                 _lruMapToCache = null;
                 _lruMapCache = null;
             }
+
+            // Last, because the caches a registration writes into are the ones replaced above.
+            // Re-applying before that wrote into the caches this method was about to discard.
+            ReapplyGenerated();
         }
 
         #endregion
@@ -277,6 +281,7 @@ namespace Mapsicle
                 _writablePropertyCache.Clear();
                 _needsDepthTrackingCache.Clear();
                 ResetTypedCaches();
+                ReapplyGenerated();
                 System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
                 System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
             }
@@ -545,8 +550,25 @@ namespace Mapsicle
         /// </remarks>
         private static void TrimTypedCache()
         {
-            while (_typedCacheResetters.Count > _maxCacheSize && _typedCacheOrder.TryDequeue(out var oldest))
+            // A generated registration is never evicted. The order is first in, and module
+            // initializers run first, so registrations were always the oldest and went first: under
+            // the bounded cache a declared pair degraded to the engine lane permanently once enough
+            // other pairs had been mapped, because the rebuild path does not consult the registry.
+            // The untyped cache already treats registrations this way, since Set never enqueues into
+            // the access order. This makes the typed side agree.
+            var scanned = 0;
+            var capacity = _typedCacheOrder.Count;
+
+            while (_typedCacheResetters.Count > _maxCacheSize
+                   && scanned++ < capacity
+                   && _typedCacheOrder.TryDequeue(out var oldest))
             {
+                if (_generatedPairs.ContainsKey(oldest))
+                {
+                    _typedCacheOrder.Enqueue(oldest);
+                    continue;
+                }
+
                 if (_typedCacheResetters.TryRemove(oldest, out var reset))
                 {
                     reset();
@@ -562,9 +584,39 @@ namespace Mapsicle
 
             public static TypedMapperCacheEntry<TSource, TDest>? Entry => _entry;
 
-            public static void Initialize(Func<TSource, TDest> mapper, bool requiresDepthTracking)
+            /// <summary>Stores an entry, unconditionally. Only a registration may call this.</summary>
+            public static void Initialize(Func<TSource, TDest> mapper, bool requiresDepthTracking) =>
+                Store(new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking));
+
+            /// <summary>Stores an entry the engine compiled, and yields to anything already there.</summary>
+            /// <remarks>
+            /// An unconditional write here lost completed registrations. Thread A takes the cold
+            /// path, spends a slow Expression.Compile, and writes; thread B calls RegisterGenerated
+            /// and writes; A finishes last and its engine-built entry wins. Both calls returned
+            /// successfully and the registration was gone for the rest of the process, because the
+            /// cold path never runs again and nothing rechecks the registry. Measured at roughly two
+            /// thirds of three thousand interleavings, and it left the typed and untyped doors
+            /// answering differently for the same pair.
+            ///
+            /// A registration is a statement about the pair; an engine build is a cache fill. The
+            /// cache fill is the one that gives way.
+            /// </remarks>
+            public static void InitializeFromEngine(Func<TSource, TDest> mapper, bool requiresDepthTracking)
             {
-                _entry = new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking);
+                var candidate = new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking);
+                if (System.Threading.Interlocked.CompareExchange(ref _entry, candidate, null) != null) return;
+
+                Register();
+            }
+
+            private static void Store(TypedMapperCacheEntry<TSource, TDest> entry)
+            {
+                _entry = entry;
+                Register();
+            }
+
+            private static void Register()
+            {
 
                 var key = (typeof(TSource), typeof(TDest));
                 if (_typedCacheResetters.TryAdd(key, static () => _entry = null))
@@ -588,6 +640,135 @@ namespace Mapsicle
                 RequiresDepthTracking = requiresDepthTracking;
             }
         }
+
+        /// <summary>
+        /// Registers a mapper built at compile time, so the engine invokes it instead of compiling one.
+        /// </summary>
+        /// <remarks>
+        /// The seam the source generator writes through. The engine already separates how a mapper is
+        /// made from how it is used: the first map of a pair builds a delegate, a cache holds it, and
+        /// every later call just invokes it. So a generated mapper replaces the factory, not the
+        /// engine, and everything the engine does around it is unchanged.
+        ///
+        /// It fills every cache the entry points read, which is three rather than one. Registering
+        /// only the typed cache would have made a generated mapping apply to
+        /// <c>MapTo&lt;TSource, TDest&gt;()</c> and not to <c>MapTo&lt;TDest&gt;(object)</c>, which
+        /// is the call every example in the README uses, nor to nested members, nor to collections.
+        /// The compiled list loop is dropped for the pair rather than filled, so the next collection
+        /// map rebuilds a loop that calls the generated element mapper.
+        ///
+        /// Calling this for a pair that has already been mapped replaces what the engine compiled.
+        /// That is deliberate: a module initializer runs before user code, but a library loaded later
+        /// should still win for its own pairs rather than lose to whatever ran first.
+        /// </remarks>
+        /// <typeparam name="TSource">The source type.</typeparam>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <param name="mapper">The compile-time mapper for this pair.</param>
+        /// <param name="requiresDepthTracking">
+        /// Whether the source type can form a cycle. Pass what <c>HasNestedComplexTypes</c> would
+        /// answer for <typeparamref name="TSource"/>; the generator knows this statically.
+        /// </param>
+        public static void RegisterGenerated<TSource, TDest>(
+            Func<TSource, TDest> mapper, bool requiresDepthTracking)
+        {
+            if (mapper is null) throw new ArgumentNullException(nameof(mapper));
+
+            // Recorded as well as applied. A generated mapper is a registration, not something the
+            // engine compiled, so clearing the caches must not lose it: the module initializer that
+            // registered it has already run and will not run again, and the pair would quietly fall
+            // back to the expression builder for the rest of the process.
+            _generatedPairs[(typeof(TSource), typeof(TDest))] = () => ApplyGenerated(mapper, requiresDepthTracking);
+            ApplyGenerated(mapper, requiresDepthTracking);
+
+            // A loop compiled earlier inlined the expression tree for this pair. Dropping it makes
+            // the next collection map rebuild against the generated mapper rather than keep using
+            // the one this call just replaced.
+            foreach (var entry in _listLoopCache)
+            {
+                if (entry.Key.Item2 == typeof(TDest)) _listLoopCache.TryRemove(entry.Key, out _);
+            }
+
+            // A nested-member holder caches what it resolved last time and keeps it while the source
+            // type still matches and the generation still matches. Dropping the list loop alone left
+            // those holders untouched, so a parent mapped before this call kept invoking the
+            // delegate this call replaced: map a parent, register, map the parent again, and the
+            // nested member still came back from the expression builder. Bumping the generation is
+            // what makes them re-resolve.
+            System.Threading.Interlocked.Increment(ref _cacheGeneration);
+        }
+
+        private static void ApplyGenerated<TSource, TDest>(Func<TSource, TDest> mapper, bool requiresDepthTracking)
+        {
+            TypedMapperCache<TSource, TDest>.Initialize(mapper, requiresDepthTracking);
+
+            // The untyped door keys on the runtime type of the source, so a generated mapper for
+            // TSource answers for an instance of exactly TSource. A derived instance still resolves
+            // its own pair, generated or compiled.
+            var key = (typeof(TSource), typeof(TDest));
+            Func<object, TDest> untyped = source => mapper((TSource)source);
+
+            if (_useLruCache && _lruMapToCache != null)
+            {
+                // A replacing write, not GetOrAdd. Under the bounded cache a pair mapped before this
+                // registration already had a compiled delegate stored, and GetOrAdd keeps whichever
+                // arrived first, so the generated mapper never applied for the rest of the process.
+                _lruMapToCache.Set(key, untyped);
+            }
+            else
+            {
+                _mapToCache[key] = untyped;
+            }
+        }
+
+        /// <summary>
+        /// Forgets every generated registration, so a clear no longer puts them back.
+        /// </summary>
+        /// <remarks>
+        /// Internal because nothing in a running application should want it. A generator registers
+        /// from a module initializer and the registration is meant to last the process. Tests are
+        /// the exception: registrations outlive <c>ClearCache</c> by design now, so without this a
+        /// pair registered by one test would answer for the next one.
+        /// </remarks>
+        internal static void ResetGeneratedRegistrations()
+        {
+            _generatedPairs.Clear();
+            ClearCache();
+        }
+
+        /// <summary>
+        /// Re-applies every generated registration after the caches have been emptied.
+        /// </summary>
+        private static void ReapplyGenerated()
+        {
+            foreach (var apply in _generatedPairs.Values)
+            {
+                apply();
+            }
+        }
+
+        /// <summary>
+        /// The generated element mapper for a pair, or null when the pair was not generated.
+        /// </summary>
+        private static Func<object, TDest>? GeneratedElementMapper<TDest>(Type elementType)
+        {
+            if (!_generatedPairs.ContainsKey((elementType, typeof(TDest)))) return null;
+            return _mapToCache.TryGetValue((elementType, typeof(TDest)), out var cached)
+                ? (Func<object, TDest>)cached
+                : null;
+        }
+
+        /// <summary>
+        /// Pairs whose mapper came from a generator rather than from the expression builder.
+        /// </summary>
+        /// <remarks>
+        /// Both kinds live in the same delegate cache, because every entry point should invoke them
+        /// the same way. The one place the difference matters is the compiled list loop, which earns
+        /// its speed by inlining the expression tree for the element type. There is no expression to
+        /// inline for a generated pair, and inlining what the builder would have produced would
+        /// quietly ignore the generated mapper, so the loop stands aside and the element delegate is
+        /// invoked per item instead. That is the slower loop and the faster mapper.
+        /// </remarks>
+        private static readonly ConcurrentDictionary<(Type, Type), Action> _generatedPairs = new();
 
         /// <summary>
         /// High-performance strongly-typed mapping. Use this when source type is known at compile time.
@@ -627,8 +808,8 @@ namespace Mapsicle
             bool requiresDepthTracking = HasNestedComplexTypes(sourceType);
             var mapper = BuildTypedMapper<TSource, TDest>();
 
-            // Single atomic write of immutable entry
-            TypedMapperCache<TSource, TDest>.Initialize(mapper, requiresDepthTracking);
+            // The yielding write, because a registration may have landed while this was compiling.
+            TypedMapperCache<TSource, TDest>.InitializeFromEngine(mapper, requiresDepthTracking);
 
             // Execute with depth tracking if needed
             if (requiresDepthTracking)
@@ -808,13 +989,14 @@ namespace Mapsicle
                     else
                     {
                         // Try flattening
-                        var flattenedBinding = TryCreateTypedFlattenedBinding<TSource>(destProp, sourceProps, sourceParam);
+                        var flattenedBinding = TryBindFlattenedPath(destProp, sourceProps, sourceParam);
                         if (flattenedBinding != null) bindings.Add(flattenedBinding);
                     }
                 }
 
                 var init = Expression.MemberInit(Expression.New(destType), bindings);
-                return Expression.Lambda<Func<TSource, TDest>>(init, sourceParam).Compile();
+                var body = WithFilledCollections(init, sourceType, destType, sourceParam);
+                return Expression.Lambda<Func<TSource, TDest>>(body, sourceParam).Compile();
             }
 
             // Fallback to constructor-based mapping
@@ -1140,7 +1322,8 @@ namespace Mapsicle
                 var memberInit = TryBuildMemberInit(sourceType, destType, typedSource, sourceParam, isSourceVisible);
                 if (memberInit != null)
                 {
-                    return Expression.Lambda<Func<object, T>>(memberInit, sourceParam).Compile();
+                    var body = WithFilledCollections(memberInit, sourceType, destType, typedSource);
+                    return Expression.Lambda<Func<object, T>>(body, sourceParam).Compile();
                 }
 
                 var destProps = GetCachedWritableProperties(destType);
@@ -1306,6 +1489,34 @@ namespace Mapsicle
                         assignments.Add(Expression.Assign(destPropExp, value));
                     }
                 }
+            }
+
+            // A setterless collection cannot be assigned, so the in-place map fills it the same way
+            // the constructing maps do, or mapping onto an existing object would silently skip it.
+            foreach (var (dest, source) in FindFieldMembers(sourceType, destType))
+            {
+                if (excluded != null && excluded.Contains(dest.Name)) continue;
+
+                assignments.Add(Expression.Assign(
+                    Expression.MakeMemberAccess(typedDest, dest),
+                    Expression.MakeMemberAccess(typedSource, source)));
+            }
+
+            foreach (var (destProp, sourceProp, sourceItem, destItem) in FindFillableCollections(sourceType, destType))
+            {
+                if (excluded != null && excluded.Contains(destProp.Name)) continue;
+
+                var copy = typeof(PropertyConversion)
+                    .GetMethod(nameof(PropertyConversion.CopyInto), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)!
+                    .MakeGenericMethod(sourceItem, destItem);
+
+                // TypeAs for the same reason as the other call site: the declared type is all the
+                // eligibility test can see, and a hard cast on a value that is not an ICollection<T>
+                // throws from inside the compiled delegate.
+                assignments.Add(Expression.Call(
+                    copy,
+                    Expression.Property(typedSource, sourceProp),
+                    Expression.TypeAs(Expression.Property(typedDest, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
             }
 
             if (assignments.Count == 0)
@@ -1508,6 +1719,14 @@ namespace Mapsicle
         {
             var elementType = listType.GetGenericArguments()[0];
 
+            // A generated mapper is a delegate, not an expression, so there is nothing to inline and
+            // inlining what the builder would have produced would ignore it. Standing aside entirely
+            // was the first answer and it cost more than it saved: the fallback loop is generic over
+            // its cursor and checks the runtime type per element, which measured a hundred element
+            // collection at 5,338 ns against 4,311 for the same shape ungenerated. The loop is still
+            // built, and its body calls the generated delegate instead of inlining an expression.
+            var generated = GeneratedElementMapper<TDest>(elementType);
+
             // Depth is taken once for the whole collection rather than per element, which is what
             // the existing loop does and why this only needs to know whether to take it. Refusing
             // these outright was the first attempt and it excluded almost everything worth
@@ -1536,10 +1755,11 @@ namespace Mapsicle
             // the destination element is itself a list, and a member initialiser for a list maps
             // its properties rather than its contents, so every inner list came back empty and
             // nothing was raised.
-            if (destType.IsValueType
-                || destType == typeof(string)
-                || typeof(System.Collections.IEnumerable).IsAssignableFrom(destType)
-                || destType.GetConstructor(Type.EmptyTypes) is null)
+            if (generated is null
+                && (destType.IsValueType
+                    || destType == typeof(string)
+                    || typeof(System.Collections.IEnumerable).IsAssignableFrom(destType)
+                    || destType.GetConstructor(Type.EmptyTypes) is null))
             {
                 return new ListLoop(null, needsDepth);
             }
@@ -1547,7 +1767,7 @@ namespace Mapsicle
             // A destination the element can simply be assigned to is handed over as-is by the
             // conversion cascade, not rebuilt member by member. Constructing a new one here would
             // return a copy where the library returns the same reference.
-            if (destType.IsAssignableFrom(elementType))
+            if (generated is null && destType.IsAssignableFrom(elementType))
             {
                 return new ListLoop(null, needsDepth);
             }
@@ -1560,11 +1780,21 @@ namespace Mapsicle
             var item = Expression.Variable(elementType, "item");
             var done = Expression.Label("done");
 
-            var memberInit = TryBuildMemberInit(elementType, destType, item, Expression.Convert(item, typeof(object)), true);
-            if (memberInit is null) return new ListLoop(null, needsDepth);
-            if (!destType.IsAssignableFrom(memberInit.Type)) return new ListLoop(null, needsDepth);
+            Expression mapped;
+            if (generated != null)
+            {
+                mapped = Expression.Invoke(
+                    Expression.Constant(generated, typeof(Func<object, TDest>)),
+                    Expression.Convert(item, typeof(object)));
+            }
+            else
+            {
+                var memberInit = TryBuildMemberInit(elementType, destType, item, Expression.Convert(item, typeof(object)), true);
+                if (memberInit is null) return new ListLoop(null, needsDepth);
+                if (!destType.IsAssignableFrom(memberInit.Type)) return new ListLoop(null, needsDepth);
 
-            var mapped = Expression.Convert(memberInit, typeof(TDest));
+                mapped = Expression.Convert(memberInit, typeof(TDest));
+            }
 
             var fallback = Expression.Call(
                 typeof(Mapper).GetMethod(nameof(MapTo), new[] { typeof(object) })!.MakeGenericMethod(destType),
@@ -2040,6 +2270,154 @@ namespace Mapsicle
         /// is the mistake CONTRIBUTING describes: three copies of the conversion cascade drifted and
         /// 1.2.3 shipped a mapper that dropped nested objects only when built by MapperFactory.
         /// </remarks>
+        /// <summary>
+        /// Assignments involving a public field on either side, which the property paths never see.
+        /// </summary>
+        /// <remarks>
+        /// The resolution machinery is built on <c>PropertyInfo</c> throughout, so a field was
+        /// invisible: a type exposing public fields mapped to nothing at all, with no diagnostic.
+        /// AutoMapper and Mapperly both map them, and a caller mapping a struct or an interop type
+        /// hits this immediately.
+        ///
+        /// Done as a separate pass rather than by widening every cache and signature to a member
+        /// abstraction. That change would touch the conversion cascade, member resolution and all
+        /// four delegate builders at once, for a case that is a minority of real DTOs. This pass
+        /// only claims pairs the property paths did not, so it cannot disturb what already worked.
+        /// </remarks>
+        private static List<(MemberInfo Dest, MemberInfo Source)> FindFieldMembers(Type sourceType, Type destType)
+        {
+            const BindingFlags Public = BindingFlags.Public | BindingFlags.Instance;
+
+            var sourceMembers = sourceType.GetFields(Public).Cast<MemberInfo>()
+                .Concat(sourceType.GetProperties(Public).Where(p => p.CanRead && p.GetIndexParameters().Length == 0))
+                .ToList();
+
+            var found = new List<(MemberInfo, MemberInfo)>();
+
+            foreach (var destField in destType.GetFields(Public).Where(f => !f.IsInitOnly && !f.IsLiteral))
+            {
+                var match = sourceMembers.FirstOrDefault(
+                    m => string.Equals(m.Name, destField.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (match != null && TypeOf(match) == destField.FieldType) found.Add((destField, match));
+            }
+
+            // A destination property whose only source is a field. The property paths matched on
+            // source properties alone, so these were dropped.
+            foreach (var destProp in destType.GetProperties(Public).Where(p => p.CanWrite && p.GetIndexParameters().Length == 0))
+            {
+                if (sourceType.GetProperties(Public).Any(
+                        p => string.Equals(p.Name, destProp.Name, StringComparison.OrdinalIgnoreCase))) continue;
+
+                var field = sourceType.GetFields(Public).FirstOrDefault(
+                    f => string.Equals(f.Name, destProp.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (field != null && field.FieldType == destProp.PropertyType) found.Add((destProp, field));
+            }
+
+            return found;
+        }
+
+        private static Type TypeOf(MemberInfo member) =>
+            member is PropertyInfo p ? p.PropertyType : ((FieldInfo)member).FieldType;
+
+        /// <summary>
+        /// Destination collections with no setter, which a member initialiser cannot bind.
+        /// </summary>
+        private static List<(PropertyInfo Dest, PropertyInfo Source, Type SourceItem, Type DestItem)> FindFillableCollections(
+            Type sourceType, Type destType)
+        {
+            var found = new List<(PropertyInfo, PropertyInfo, Type, Type)>();
+            var readable = GetCachedReadableProperties(sourceType);
+
+            foreach (var destProp in destType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (destProp.CanWrite || destProp.GetIndexParameters().Length > 0) continue;
+
+                var destItem = ElementTypeOf(destProp.PropertyType);
+                if (destItem is null) continue;
+                if (!typeof(System.Collections.ICollection).IsAssignableFrom(destProp.PropertyType)
+                    && !destProp.PropertyType.IsGenericType) continue;
+
+                foreach (var sourceProp in readable)
+                {
+                    if (!string.Equals(sourceProp.Name, destProp.Name, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var sourceItem = ElementTypeOf(sourceProp.PropertyType);
+                    if (sourceItem is null) continue;
+
+                    found.Add((destProp, sourceProp, sourceItem, destItem));
+                    break;
+                }
+            }
+
+            return found;
+        }
+
+        private static Type? ElementTypeOf(Type type)
+        {
+            if (type == typeof(string)) return null;
+            if (type.IsArray) return type.GetElementType();
+
+            foreach (var i in type.GetInterfaces().Concat(new[] { type }))
+            {
+                if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return i.GetGenericArguments()[0];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Wraps a member initialiser so setterless collections are filled after construction.
+        /// </summary>
+        /// <remarks>
+        /// A member initialiser can only bind members it can assign, so a collection with no setter
+        /// was skipped entirely and came back empty. Filling it needs statements after the object
+        /// exists, which is a block rather than an initialiser, so the initialiser is assigned to a
+        /// variable and the copies follow it.
+        /// </remarks>
+        internal static Expression WithFilledCollections(
+            Expression memberInit, Type sourceType, Type destType, Expression typedSource)
+        {
+            var fillable = FindFillableCollections(sourceType, destType);
+            var fieldMembers = FindFieldMembers(sourceType, destType);
+            if (fillable.Count == 0 && fieldMembers.Count == 0) return memberInit;
+
+            var result = Expression.Variable(destType, "result");
+            var body = new List<Expression> { Expression.Assign(result, memberInit) };
+
+            foreach (var (dest, source) in fieldMembers)
+            {
+                body.Add(Expression.Assign(
+                    Expression.MakeMemberAccess(result, dest),
+                    Expression.MakeMemberAccess(typedSource, source)));
+            }
+
+            foreach (var (destProp, sourceProp, sourceItem, destItem) in fillable)
+            {
+                var copy = typeof(PropertyConversion)
+                    .GetMethod(nameof(PropertyConversion.CopyInto), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)!
+                    .MakeGenericMethod(sourceItem, destItem);
+
+                // TypeAs, not Convert. The eligibility test can only see the declared type, and a
+                // getter-only member declared as IEnumerable<T> can return anything at run time: an
+                // iterator from a computed getter is not an ICollection<T>, and the hard cast threw
+                // InvalidCastException from inside the compiled delegate. Section 6 of CLAUDE.md is
+                // explicit that a value of the wrong shape is dropped rather than thrown, and
+                // CopyInto already treats a null destination as nothing to do.
+                body.Add(Expression.Call(
+                    copy,
+                    Expression.Property(typedSource, sourceProp),
+                    Expression.TypeAs(Expression.Property(result, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
+            }
+
+            body.Add(result);
+            return Expression.Block(new[] { result }, body);
+        }
+
         private static MemberInitExpression? TryBuildMemberInit(
             Type sourceType, Type destType, Expression typedSource, Expression sourceAsObject, bool isSourceVisible)
         {
@@ -2061,7 +2439,7 @@ namespace Mapsicle
                 }
                 else
                 {
-                    var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceAsObject, isSourceVisible);
+                    var flattenedBinding = TryBindFlattenedPath(destProp, sourceProps, typedSource);
                     if (flattenedBinding != null) bindings.Add(flattenedBinding);
                 }
             }
@@ -2207,6 +2585,67 @@ namespace Mapsicle
 
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Builds a null safe read along a flattened path, or null when the path does not resolve.
+        /// </summary>
+        /// <remarks>
+        /// One implementation for all three delegate builders. There were three, differing only in
+        /// how they reached the source, which is exactly the drift CONTRIBUTING describes: the typed
+        /// door, the untyped door and the instance mapper each had their own flattening, so a fix
+        /// applied to one left the other two behind.
+        ///
+        /// A null anywhere along the chain yields the destination default rather than throwing, so
+        /// Customer.Address.City reads as null when Customer is null, when Address is null, and when
+        /// neither is.
+        /// </remarks>
+        internal static MemberBinding? TryBindFlattenedPath(
+            PropertyInfo destProp, PropertyInfo[] sourceProps, Expression source)
+        {
+            if (!PropertyConversion.TryFindFlattenedPath(
+                    destProp, sourceProps, GetCachedReadableProperties, out var path))
+            {
+                return null;
+            }
+
+            Expression access = source;
+            Expression? guard = null;
+
+            // Every step but the last can be null, and each one needs testing before the next is
+            // read. Built inside out so the guards nest in the order they must be evaluated.
+            for (var i = 0; i < path.Count; i++)
+            {
+                access = Expression.Property(access, path[i]);
+
+                if (i == path.Count - 1) break;
+                if (!access.Type.IsValueType || Nullable.GetUnderlyingType(access.Type) != null)
+                {
+                    var isNull = Expression.Equal(access, Expression.Constant(null, access.Type));
+                    guard = guard is null ? isNull : Expression.OrElse(guard, isNull);
+                }
+            }
+
+            Expression value;
+            try
+            {
+                value = access.Type == destProp.PropertyType
+                    ? access
+                    : Expression.Convert(access, destProp.PropertyType);
+            }
+            catch (InvalidOperationException)
+            {
+                // The names lined up and the types do not. Leaving the member unmapped is what the
+                // engine does everywhere else for a pair it cannot convert.
+                return null;
+            }
+
+            if (guard != null)
+            {
+                value = Expression.Condition(guard, Expression.Default(destProp.PropertyType), value);
+            }
+
+            return Expression.Bind(destProp, value);
         }
 
         /// <summary>

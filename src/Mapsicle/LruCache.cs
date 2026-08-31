@@ -49,6 +49,36 @@ namespace Mapsicle
         /// <summary>
         /// Lock-free read with fallback to factory.
         /// </summary>
+        /// <summary>Stores a value, replacing any entry already under this key.</summary>
+        /// <remarks>
+        /// <c>GetOrAdd</c> keeps the entry that got there first, which is right for a cache of
+        /// compiled delegates and wrong for a registration that must supersede one. Under
+        /// <c>UseLruCache</c>, a pair mapped before <c>RegisterGenerated</c> kept its compiled
+        /// delegate and the generated mapper never applied, for the rest of the process.
+        /// </remarks>
+        public void Set(TKey key, TValue value)
+        {
+            var entry = new Lazy<TValue>(() => value, LazyThreadSafetyMode.ExecutionAndPublication);
+
+            // TryAdd decides new against replace, rather than a TryGetValue followed by a write.
+            // With the two-step version a GetOrAdd landing between the look and the write made both
+            // paths count an add, and nothing ever corrects the count: measured at 117,389 against
+            // 100,000 real entries over paired threads. TryEvict loops while the count exceeds
+            // capacity, so a drifted count trims real entries until the cache holds capacity minus
+            // the drift, which is the failure the Lazy wrapper was added to end.
+            if (_cache.TryAdd(key, entry))
+            {
+                Interlocked.Increment(ref _approximateCount);
+                MarkRecentlyUsed(key);
+                TryEvict();
+                return;
+            }
+
+            // Already present. Replace it without touching the count.
+            _cache[key] = entry;
+            MarkRecentlyUsed(key);
+        }
+
         public TValue GetOrAdd(TKey key, Func<TKey, TValue> factory)
         {
             // OPTIMIZATION: Lock-free read path (hot path)

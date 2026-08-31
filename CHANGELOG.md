@@ -5,6 +5,108 @@ All notable changes to Mapsicle are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+Two releases are planned and their shapes are settled rather than open, so they are written down
+here. 2.2.0 is in progress; 3.0.0 is not started.
+
+The split is by whether the change is additive. The source generator adds a package and one method
+and changes no existing signature, which is a minor release under semantic versioning and under the
+API stability rule in CONTRIBUTING. Reshaping the extension points into a data model does change
+public surface, so it waits for a major. Bundling them would have made the generator wait on the
+rework for no reason, and the generator is the time-sensitive half.
+
+### 2.2.0: the source generator, measured against hand written code
+
+`Mapsicle.SourceGen` emits a mapper at build time for any pair declared with
+`[assembly: MapsicleGenerate(typeof(Order), typeof(OrderDto))]`. It is opt in per pair, the call site
+does not change, and everything undeclared keeps mapping through the engine exactly as before.
+
+**The result, and it is not the one this entry originally predicted.** This section used to say a
+runtime mapper structurally loses to a source generator on throughput. On a nine type aggregate with
+three levels of nesting, two collections, a widening, an enum into a string, an enum into a different
+enum and two flattened paths, measured on an Apple M1 under .NET 8 Release against the same
+projection written out by hand:
+
+```
+whole graph, Order into OrderDto        mean   vs hand written  allocated
+hand written                          288.1 ns          1.00     1.41 KB
+Mapsicle, pair declared               288.4 ns          1.00     1.41 KB
+Mapsicle, declared, untyped call      309.7 ns          1.07     1.41 KB
+Mapperly 4.1.1                        321.5 ns          1.12     1.50 KB
+Mapsicle, nothing declared            523.0 ns          1.77     1.41 KB
+AutoMapper 15.1.3                     728.8 ns          2.45     1.48 KB
+```
+
+**What the gap actually was.** Not the mapping. On a five member copy, hand written is 9.54 ns, the
+typed overload is 12.32 and the untyped one is 27.96, running the identical delegate over the
+identical object. The engine was spending most of a call deciding which delegate to invoke: a
+`GetType`, a tuple key, a dictionary probe, a second probe for depth tracking, a cast and an invoke.
+A fast lane already existed and cost the caller both type names at every call site. The generator's
+contribution is letting the one argument call site reach it.
+
+**Why the collection loop is written the way it is.** The emitted helper keeps the concrete type and
+indexes it. Widening the parameter to an interface makes `foreach` box `List<T>`'s struct enumerator
+and dispatch through it, which costs 38.5 ns and 120 bytes on four collections and is the entire gap
+between the nearest competitor and hand written code.
+
+**A cache pre-loader, not an engine swap.** The engine already separates how a mapper is made from
+how it is used, so the generator replaces the factory and nothing else, registering through one
+additive seam:
+
+```csharp
+Mapper.RegisterGenerated<TSource, TDest>(mapper, requiresDepthTracking);
+```
+
+No existing signature changes. Anyone who never installs the generator package sees no difference.
+
+**What it emits.** Numeric widening, enum into a string, enum into a different enum matched by name,
+`DateTime` into `DateTimeOffset`, nullable lifting, nested objects, `List<T>` and array collections,
+and flattened paths four levels deep.
+
+**What it refuses, and why each is a refusal rather than a gap.** A cyclic graph, because generated
+code has no depth ceiling and the engine has one, so following one aborts the process where the
+engine returns. A destination member with a non-public setter, a public field, or a getter-only
+collection, because the engine fills all three and generated code cannot, so emitting the pair would
+silently return less than the engine does. Anything into a string that is not an enum, because
+invariant formatting belongs to `PropertyConversion`. A refused pair reports `MSG001`, the build
+carries on, and the call site does not change.
+
+**Both lanes are proven to agree.** The generator is a second implementation of the conversion rules,
+which section 3 of CLAUDE.md forbids and section 3a licenses at a price: a conformance suite runs one
+table of cases through the engine and the generated code and compares member by member, plus a
+registry check that fails if a declared pair was not actually generated. That check is the one worth
+having. Widening, nesting, collections and flattening all had passing tests before any of them was
+emitted, because a refused pair falls back to the engine and the comparison then runs the engine
+against itself.
+
+**Also fixed in this release, all found by building the samples repository or by review.** Three
+level flattening returned an empty string where AutoMapper and Mapperly both filled it. An enum
+mapped into a different enum type returned the zero member. An overridden destination property was
+emitted twice, breaking the consumer's build with CS1912. A struct source emitted a receiver the body
+could not accept, CS1503. The enum alias ordering disagreed with the runtime rule. A nested member
+kept a stale delegate after a later registration, and under the bounded cache a registration after a
+first map never applied at all.
+
+**Gated.** CI checks that generated code allocates no more than hand written, which is how the
+collection regression shows up and is deterministic where a shared runner's clock is not. The 1.00
+plus or minus 0.05 band runs under `--band` on an idle machine.
+
+
+### Planned for 3.0.0: extension points become configuration, not code
+
+Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
+delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
+the identical model when emitting. An extension added once then appears in both lanes and the
+conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
+runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
+`DynamicObject` without a core pull request.
+
+This is a major because it reshapes public surface that consumers have written against, unlike the
+generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
+additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
+change a major version exists to signal.
+
 ## 2.1.0
 
 Two defects in `Mapsicle.Fluent`, one of them a control that did not hold, and a round of
@@ -87,80 +189,6 @@ Measured on an idle 4-core Ampere VM, medians of repeated runs.
   previous loop and its previous cost (#48).
 - `Mapsicle.Fluent` maps a collection element by element rather than through the compiled loop, so a
   hundred complex objects cost about 1.22x AutoMapper. A single one is at parity.
-
-## Unreleased
-
-The next release is 3.0.0, and its shape is settled rather than open, so it is written down here.
-Everything below is planned and none of it is implemented.
-
-### Planned for 3.0.0: the source generator option
-
-Mapperly cannot be beaten at being Mapperly. A runtime mapper structurally loses to a source
-generator on throughput, cold start, NativeAOT and compile-time diagnostics, and the platform is
-moving toward AOT, so that headwind grows. 3.0.0 does not fight that race and does not overhaul the
-engine. It absorbs the source generator as an opt-in lane behind the existing API, and spends the
-real investment on the lane no generator can enter.
-
-**Conceded to a generator, then absorbed as an option.** Generated code is hand-written code, which
-is the throughput ceiling. Mapsicle pays `Expression.Compile` on the first map of each pair and
-generated code pays nothing. Runtime IL generation is not permitted under AOT. Unmapped members can
-be build diagnostics rather than a runtime surprise.
-
-**Where a generator cannot follow, which is where the investment goes.** A
-`Dictionary<string, object>` into a type gives a generator nothing to generate against. Neither do
-collections whose item types are only known at runtime, or types arriving from plugins, reflection
-or configuration. Nor does mapping with no declaration at all: no partial class, no `CreateMap`,
-ever.
-
-**A cache pre-loader, not an engine swap.** The engine already separates how a mapper is made from
-how it is used: the first map of a pair builds a delegate, the cache holds it, every later call just
-invokes it. The expression tree is only the factory. So the generator replaces nothing. It emits the
-same delegate as plain C# at build time and registers it into the caches the engine already reads,
-through a `[ModuleInitializer]` calling one new, purely additive seam:
-
-```csharp
-Mapper.RegisterGenerated<TSource, TDest>(mapper, requiresDepthTracking);
-```
-
-No existing signature changes, so the API stability rule holds and anyone who never installs the
-generator package sees no difference. A pair generated at build time runs static code with no
-compile step and no cold start. Everything else runs the engine exactly as it does today, so the
-dynamic lane is the fallback rather than a casualty.
-
-**Two doors for discovery.** 3.0.0 ships the explicit one:
-`[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]`, which is the simplest thing that
-proves the seam and the conformance harness end to end. 3.1 adds usage scanning, where the generator
-walks call sites for `.MapTo<T>()` and generates for every pair whose source type is statically known
-there, so pairs that can be fast become fast with no annotation and unresolvable call sites fall to
-the runtime. Later, `[RequiresDynamicCode]` on the runtime fallback so the AOT analyzer warns only
-when a dynamic path is genuinely reachable, and the comparison table can stop saying "partial" and
-say something measured instead.
-
-It ships as `Mapsicle.SourceGen`, a Roslyn analyzer package that contributes nothing at runtime, so
-the core keeps its zero-dependency claim and the gate that enforces it.
-
-**The one non-negotiable.** The conversion cascade would then exist in two forms, the runtime
-expression builder and the generator's C# emitter. This project has already shipped the failure mode
-where copies of that logic drift, twice: it is why `PropertyConversion` exists, and 2.0.0 found two
-more entry points that had quietly stopped agreeing with it. So the conformance suite is built
-before the generator emits its first mapping, not after: one table of conversion cases run through
-both the runtime mapper and the generated mapper, asserting identical output on every row. That is
-what makes "the option changes performance, never behaviour" true rather than hoped.
-
-**Extension points become configuration, not code.** Custom converters, hooks, ignores, naming
-conventions and `[MapFrom]` each modelled as data the delegate builder reads, so the runtime engine
-consumes it when compiling and the generator consumes the identical model when emitting. An
-extension added once then appears in both lanes and the conformance suite proves they agree. The
-highest-value new surface is a pluggable resolver for runtime-shaped inputs, so a third party can
-teach Mapsicle a `JsonElement`, an `IDataRecord` or a `DynamicObject` without a core pull request.
-
-**Why this is a window rather than a wall.** AutoMapper would need to invert its configuration model
-into static declarations to generate at all, which changes the API every consumer has written
-against. Mapperly has no runtime engine, so a dynamic lane means writing one from scratch and then
-shipping reflection inside a library whose identity is the absence of it, with no seam in its API to
-hide a fallback behind. Mapsicle adds a package and rewrites nothing. None of that physically stops
-either of them, so the advantage compounds only if 3.0.0 ships while the AutoMapper licence change
-is still moving people.
 
 ## [2.0.0] - 2026-08-29
 

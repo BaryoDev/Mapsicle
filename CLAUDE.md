@@ -51,6 +51,85 @@ mapper that dropped nested objects only when built by `MapperFactory`.
 If you are adding a conversion rule and find yourself editing more than one file, stop. Add it to
 `PropertyConversion` and let the call sites ask.
 
+There is exactly one permitted exception, `src/Mapsicle.SourceGen`, and section 3a states the price
+of it. Nothing else earns a second copy.
+
+## 3a. The generator is the only permitted second implementation, and it is on parole
+
+The generator emits C# for a declared pair. It cannot call `PropertyConversion`, because that runs at
+runtime and the generator runs in the compiler, so every rule it supports is that rule written a
+second time. That is the thing section 3 exists to forbid, and it is allowed here only because the
+alternative is worse and only while the following hold.
+
+**Two lanes, proven to agree, not assumed to.** `tests/Mapsicle.SourceGen.Tests/LaneConformanceTests`
+maps the same source through both and compares member by member. The oracle is
+`MapperFactory.Create()`, which keeps its own caches and never consults a generated registration, so
+it is always the runtime lane. Every rule the generator learns gets a row there in the same pull
+request.
+
+**A conformance suite can be decorative, and this one was.** A pair the generator refuses falls back
+to the engine, which is the lane the comparison already uses, so both sides agree and every test
+passes. Making the name matching case sensitive, which stopped it matching anything, left all
+nineteen tests green. `EveryDeclaredPairWasActuallyGenerated` is what closes that hole by reading the
+registry. Do not delete it, and do not add a lane comparison without an equivalent.
+
+**Refuse the pair, never the member.** If any member needs something the emitter cannot produce, the
+whole pair is refused with `MSG001` and keeps mapping through the engine. Emitting a partial mapper
+would return less than the engine does for the same call, silently. Two shapes are refusals on
+purpose rather than gaps: a destination member with a non-public setter, which reflection can write
+and generated code cannot, and a member whose conversion has no emitted rule yet.
+
+**A refusal is a diagnostic, not a failure.** The build carries on and the call site does not change.
+That property is what makes the attribute safe to add speculatively, and it must survive every
+widening.
+
+**The target.** Generated code for a declared pair is measured against the same projection written by
+hand, and the ratio must sit inside **1.00x plus or minus 0.05**. Not "close to", not "comparable to".
+If a widening lands outside that band, it is not finished. The band is against hand written code, not
+against Mapperly and not against the previous release.
+
+The band is known to be reachable, because it was reached before any emitter code was written. A
+prototype of the emitted output for a nine type graph with three levels of nesting, two collections,
+a widening, an enum to string, an enum to enum and two flattened paths measured 0.98 against the same
+projection written by hand, allocation identical, with every null guard the emitter actually needs.
+
+**How the collection loop is emitted is the whole ballgame.** Keep the concrete type in the helper
+signature and index it:
+
+```csharp
+static List<TDest> MapThem(List<TSource>? source)      // not IReadOnlyCollection<TSource>
+{
+    if (source is null) return new List<TDest>();
+    var target = new List<TDest>(source.Count);         // pre-sized
+    for (var i = 0; i < source.Count; i++) target.Add(MapOne(source[i]));
+    return target;
+}
+```
+
+Widening the parameter to an interface makes `foreach` call `IEnumerable<T>.GetEnumerator()`, which
+boxes `List<T>`'s struct enumerator on the heap and dispatches every `MoveNext` and `Current` through
+an interface. Measured in isolation on four collections of five items total, that costs 38.5 ns and
+120 bytes against the indexed form. It is the entire reason Mapperly measures 1.08 to 1.11 against
+hand written rather than 1.00, and it is the one mistake this emitter must not copy.
+
+**Both halves are gated, by different instruments.**
+
+```bash
+dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --band   # the band, on an idle machine
+```
+
+Allocation is checked exactly and runs in CI: generated code may not allocate a byte more than the
+same projection written by hand. That is the gate that catches the interface loop, because the
+mistake shows up in bytes before nanoseconds and bytes are deterministic where a shared runner's
+clock is not. Reintroducing the loop above fails it with the cause named.
+
+The band itself is only checked under `--band`, on a machine that is not doing anything else. The
+`claims` job runs on `ubuntu-latest`, where this repository has already measured a 99.9 percent
+interval of plus or minus 43 percent of the mean. A five percent bound on a forty percent instrument
+fails for reasons that have nothing to do with the emitter, and a gate that fails at random teaches
+everyone to rerun until it goes green. CI bounds the ratio at 1.15 instead, which an unreliable clock
+can still prove. Run `--band` before and after changing what the emitter produces.
+
 ## 4. Verification
 
 ```bash

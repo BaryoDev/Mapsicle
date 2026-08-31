@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Roslyn loads analyzers into the compiler, which runs on netstandard2.0. This is the
+         analyzer assembly, not something that ships to the consumer's runtime. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>Mapsicle.SourceGen</PackageId>
+    <Title>Mapsicle.SourceGen</Title>
+    <Description>Compile-time mappers for Mapsicle. Emits a mapper for each pair declared with [assembly: MapsicleGenerate], registered into the engine at startup. Nothing ships to your runtime.</Description>
+    <PackageTags>mapper;mapping;source-generator;roslyn;aot;automapper-alternative</PackageTags>
+
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsRoslynComponent>true</IsRoslynComponent>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <!-- Analyzers ship under analyzers/dotnet/cs, not lib. Packing the assembly into lib would put
+       a netstandard2.0 dependency into the consumer's runtime graph, which is the opposite of
+       what this package is for. -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+</Project>

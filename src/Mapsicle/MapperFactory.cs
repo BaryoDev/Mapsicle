@@ -294,12 +294,13 @@ namespace Mapsicle
                     }
                     else
                     {
-                        var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceParam, isSourceVisible);
+                        var flattenedBinding = Mapper.TryBindFlattenedPath(destProp, sourceProps, typedSource);
                         if (flattenedBinding != null) bindings.Add(flattenedBinding);
                     }
                 }
                 var init = Expression.MemberInit(Expression.New(destType), bindings);
-                return Expression.Lambda<Func<object, T>>(init, sourceParam).Compile();
+                var body = Mapper.WithFilledCollections(init, sourceType, destType, typedSource);
+                return Expression.Lambda<Func<object, T>>(body, sourceParam).Compile();
             }
 
             // Constructor / Record Path

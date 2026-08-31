@@ -50,6 +50,12 @@ public class Program
         {
             return RunClaimGate();
         }
+        else if (args.Length > 0 && args[0] == "--band")
+        {
+            // The band exactly as CLAUDE.md states it. Only meaningful on an idle machine: run it
+            // before changing what the emitter produces, and again afterwards.
+            return RunBandGate(strictBand: true);
+        }
         else if (args.Length > 0 && args[0] == "--core")
         {
             // The single suite behind the README's headline table. It uses the same job as the
@@ -91,20 +97,27 @@ public class Program
             BenchmarkRunner.Run<CacheBenchmarks>(config);
         }
 
-        if (ClaimFailures.Count > 0)
-        {
-            Console.WriteLine();
-            Console.WriteLine("=================================================");
-            Console.WriteLine("  CLAIM CHECK FAILED");
-            foreach (var failure in ClaimFailures)
-            {
-                Console.WriteLine($"  - {failure}");
-            }
-            Console.WriteLine("=================================================");
-            return 1;
-        }
+        return ReportClaimFailures();
+    }
 
-        return 0;
+    /// <summary>Prints every claim that failed, not just the first, and returns the exit code.</summary>
+    /// <remarks>
+    /// Every gate records into the same list rather than returning early. A run that reports one
+    /// failure while hiding another sends someone to fix half the problem and rerun.
+    /// </remarks>
+    private static int ReportClaimFailures()
+    {
+        if (ClaimFailures.Count == 0) return 0;
+
+        Console.WriteLine();
+        Console.WriteLine("=================================================");
+        Console.WriteLine("  CLAIM CHECK FAILED");
+        foreach (var failure in ClaimFailures)
+        {
+            Console.WriteLine($"  - {failure}");
+        }
+        Console.WriteLine("=================================================");
+        return 1;
     }
 
 
@@ -122,6 +135,104 @@ public class Program
     /// separate processes per benchmark, and outlier removal. Reading its Summary gives the same
     /// numbers the README publishes, from the same source, so the two cannot drift.
     /// </remarks>
+    /// <summary>
+    /// Checks generated code against the same projection written by hand.
+    /// </summary>
+    /// <remarks>
+    /// Two gates, not one, because the two things being checked have different instruments.
+    ///
+    /// Allocation is checked exactly, and it is the one that matters most. CLAUDE.md section 3a says
+    /// the collection helper must keep the concrete type and index it, because widening the
+    /// parameter to an interface makes foreach box the struct enumerator. That mistake shows up in
+    /// bytes before it shows up in nanoseconds: measured on four collections it is 120 bytes and
+    /// 38.5 ns, and the bytes are deterministic where the nanoseconds are not. If the emitter ever
+    /// regresses to the interface loop, this is what says so, on any machine, on the first run.
+    ///
+    /// Time is checked loosely, and the looseness is deliberate rather than a compromise. The band
+    /// in CLAUDE.md is 1.00 plus or minus 0.05, and it is real: measured on a quiet machine the
+    /// generated aggregate is 288.4 ns against 288.1 hand written. It is also unenforceable here.
+    /// This job runs on ubuntu-latest, where the gate directly above records a 99.9 percent interval
+    /// of plus or minus 43 percent of the mean. A five percent bound on a forty percent instrument
+    /// fails for reasons that have nothing to do with the emitter, and a gate that fails at random
+    /// teaches everyone to rerun until it goes green, which is worse than not having it.
+    ///
+    /// So the band is checked where it can be, with --band on a machine that is not doing anything
+    /// else, and CI checks the thing an unreliable clock can still prove: that generated code did
+    /// not become materially slower than hand written.
+    /// </remarks>
+    private static void RunGeneratedBandGate(bool strictBand)
+    {
+        var summary = BenchmarkRunner.Run<GeneratedVersusHandwritten>(
+            DefaultConfig.Instance
+                .WithOptions(ConfigOptions.DisableOptimizationsValidator)
+                .AddJob(Job.Default.WithWarmupCount(10).WithIterationCount(30)));
+
+        BenchmarkDotNet.Reports.BenchmarkReport? Report(string method)
+        {
+            foreach (var report in summary.Reports)
+            {
+                if (report.BenchmarkCase.Descriptor.WorkloadMethod.Name == method) return report;
+            }
+
+            return null;
+        }
+
+        var hand = Report(nameof(GeneratedVersusHandwritten.Handwritten));
+        var generated = Report(nameof(GeneratedVersusHandwritten.Generated));
+
+        if (hand?.ResultStatistics is null || generated?.ResultStatistics is null)
+        {
+            ClaimFailures.Add("Could not read both rows of the generated versus hand written comparison.");
+            return;
+        }
+
+        var handBytes = hand.GcStats.GetBytesAllocatedPerOperation(hand.BenchmarkCase);
+        var generatedBytes = generated.GcStats.GetBytesAllocatedPerOperation(generated.BenchmarkCase);
+
+        Console.WriteLine();
+        Console.WriteLine($"  hand written: {hand.ResultStatistics.Mean:F1} ns, {handBytes} B");
+        Console.WriteLine($"  generated:    {generated.ResultStatistics.Mean:F1} ns, {generatedBytes} B");
+
+        if (generatedBytes > handBytes)
+        {
+            ClaimFailures.Add(
+                $"Generated code allocates {generatedBytes} B where the same projection written by hand "
+              + $"allocates {handBytes} B. The usual cause is a collection helper taking an interface "
+              + "instead of the concrete type, which boxes the enumerator. See CLAUDE.md section 3a.");
+        }
+
+        var ratio = generated.ResultStatistics.Mean / hand.ResultStatistics.Mean;
+        Console.WriteLine($"  ratio: {ratio:F2}x");
+
+        if (strictBand)
+        {
+            if (ratio < 0.95 || ratio > 1.05)
+            {
+                ClaimFailures.Add(
+                    $"Generated code is {ratio:F2}x hand written, outside the 1.00 plus or minus 0.05 band "
+                  + "CLAUDE.md section 3a requires. Run this on an idle machine before believing it.");
+            }
+
+            return;
+        }
+
+        if (ratio > 1.15)
+        {
+            ClaimFailures.Add(
+                $"Generated code is {ratio:F2}x hand written. The band is 1.00 plus or minus 0.05 and this "
+              + "loose bound exists only because a shared runner cannot resolve five percent, so passing "
+              + "1.15 here means something real broke. Re-measure with --band on an idle machine.");
+        }
+    }
+
+    /// <summary>Runs the generated comparison on its own, reporting through the same list.</summary>
+    private static int RunBandGate(bool strictBand)
+    {
+        Console.WriteLine("Measuring generated code against the same projection written by hand.\n");
+        RunGeneratedBandGate(strictBand);
+        return ReportClaimFailures();
+    }
+
     private static int RunClaimGate()
     {
         Console.WriteLine("Measuring the performance claim with BenchmarkDotNet.\n");
@@ -223,18 +334,11 @@ public class Program
             }
         }
 
-        if (ClaimFailures.Count > 0)
-        {
-            Console.WriteLine();
-            Console.WriteLine("CLAIM CHECK FAILED");
-            foreach (var failure in ClaimFailures)
-            {
-                Console.WriteLine($"  - {failure}");
-            }
-            return 1;
-        }
+        // The generated lane joins the same gate. Its band is checked loosely here and exactly
+        // under --band, for the reason set out on RunGeneratedBandGate.
+        RunGeneratedBandGate(strictBand: false);
 
-        return 0;
+        return ReportClaimFailures();
     }
 
     static void RunSmokeTests()
@@ -1290,3 +1394,30 @@ public class CacheBenchmarks
 }
 
 #endregion
+
+/// <summary>Generated code against the same projection written by hand.</summary>
+/// <remarks>
+/// Both rows map the identical object into the identical destination. The only difference is who
+/// wrote the code, which is the whole question.
+/// </remarks>
+[MemoryDiagnoser]
+public class GeneratedVersusHandwritten
+{
+    private AgOrder _order = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _order = AgHandwritten.Build();
+        _ = AgHandwritten.Map(_order);
+        _ = _order.MapTo<AgOrderDto>();
+
+        AgHandwritten.AssertLanesAgree(_order);
+    }
+
+    [Benchmark(Baseline = true)]
+    public AgOrderDto Handwritten() => AgHandwritten.Map(_order);
+
+    [Benchmark]
+    public AgOrderDto? Generated() => _order.MapTo<AgOrderDto>();
+}
