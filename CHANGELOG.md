@@ -89,6 +89,25 @@ still moving people. That is the reason it is a minor release rather than waitin
   expression tree for the element type, and there is no expression to inline for a generated mapper,
   so inlining what the builder would have produced would have ignored it silently. The element
   delegate is invoked per item for those pairs instead: the slower loop and the faster mapper.
+- `[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]` and the `Mapsicle.SourceGen` analyzer
+  that reads it. It packs under `analyzers/dotnet/cs` and contributes nothing at runtime, so the core
+  keeps its zero-dependency gate. The attribute ships in the core, because the assembly declaring the
+  pairs has to reference it.
+- It refuses far more than it accepts. Only identical-typed public property pairs are emitted; every
+  widening, enum, nullable and nested conversion the engine performs is a rule that would have to be
+  restated in the emitter and proven identical first. A refused pair reports `MSG001` and maps
+  through the engine.
+- Generated registrations survive `ClearCache`. They did not at first, which was a flaw rather than a
+  behaviour: a module initializer runs once, so anything calling `ClearCache` would have lost every
+  generated mapper for the rest of the process and quietly fallen back to the expression builder.
+- The two-lane conformance suite. One table of cases run through the runtime engine and the generated
+  code, asserting identical output member by member, with `MapperFactory.Create()` as the oracle
+  because an instance mapper keeps its own caches and never sees a registration.
+
+  It also asserts every declared pair was actually generated, which is not decoration: a refused pair
+  falls back to the runtime engine, which is the lane the comparison uses, so the two sides agree and
+  every test passes. Making the generator's name matching case sensitive, so it matched nothing,
+  left all nineteen tests green until that assertion existed.
 
 ### Planned for 3.0.0: extension points become configuration, not code
 
