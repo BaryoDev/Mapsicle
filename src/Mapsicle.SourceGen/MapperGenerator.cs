@@ -139,6 +139,20 @@ namespace Mapsicle.SourceGen
                 return "no destination member could be matched to a readable source member";
             }
 
+            // Every member the engine would map has to be a member this can emit, or the generated
+            // mapper silently returns less than the engine would and the declaration makes the
+            // mapping worse. Accepting a pair because *some* member matched produced exactly that:
+            // an Order with a widening id, an enum to string, a nested reference and a collection
+            // matched on one nullable DateTime, so the generated mapper filled that and left the
+            // other five at their defaults. It returned an almost empty object and raised nothing.
+            var unmapped = Unmappable(source, destination).FirstOrDefault();
+            if (unmapped != null)
+            {
+                return $"'{unmapped}' is a member the engine maps and this generator cannot emit, "
+                     + "either because the conversion is not supported yet or because its setter is "
+                     + "not public; dropping it would return less than the engine does";
+            }
+
             // A member marked [Obsolete(error: true)] cannot be touched by generated code. The
             // compiler reports CS0619 as an error, and #pragma warning disable does not suppress
             // errors, so emitting the assignment breaks the consumer's build inside a file they did
@@ -154,6 +168,46 @@ namespace Mapsicle.SourceGen
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Destination members the engine would map that this generator cannot emit.
+        /// </summary>
+        /// <remarks>
+        /// The engine matches on name and then converts: widening, enum to string, nullable, nested
+        /// references and collections. This emitter only assigns identical types. A member the
+        /// engine would fill and this would not is the difference between the two lanes, and the
+        /// pair has to be refused rather than generated short.
+        /// </remarks>
+        private static IEnumerable<string> Unmappable(INamedTypeSymbol source, INamedTypeSymbol destination)
+        {
+            var readable = Properties(source)
+                .Where(p => p.GetMethod is { DeclaredAccessibility: Accessibility.Public })
+                .ToList();
+
+            foreach (var destProp in Properties(destination))
+            {
+                // Any setter, not just a public one. Reflection writes a private setter and
+                // generated code cannot, so a member with one is a member the engine fills and this
+                // would silently leave at its default.
+                if (destProp.SetMethod is null) continue;
+                if (destProp.IsIndexer) continue;
+
+                var match = readable.FirstOrDefault(
+                    p => string.Equals(p.Name, destProp.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (match is null) continue;
+
+                if (destProp.SetMethod.DeclaredAccessibility != Accessibility.Public)
+                {
+                    yield return destProp.Name;
+                    continue;
+                }
+
+                if (SymbolEqualityComparer.Default.Equals(match.Type, destProp.Type)) continue;
+
+                yield return destProp.Name;
+            }
         }
 
         /// <summary>The member's name when it is obsolete as an error, otherwise null.</summary>
