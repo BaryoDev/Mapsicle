@@ -63,5 +63,74 @@ namespace Mapsicle.Docs.Tests
             // which is exactly the state a careless fix would leave behind.
             Assert.Matches(@"!\[[^\]]*\]\(https://", Readme());
         }
+        /// <summary>Every package that ships is listed in the README, and installable from it.</summary>
+        /// <remarks>
+        /// 2.2.0 shipped Mapsicle.SourceGen, the whole point of the release, and it appeared in
+        /// neither the package table nor the install list. Someone reading the README top to bottom
+        /// would not have learned the package existed. Mapsicle.DependencyInjection had been in the
+        /// table without an install line for longer than that.
+        ///
+        /// Read from the projects rather than from a list kept by hand, because a list kept by hand
+        /// is what was already wrong.
+        ///
+        /// The name checked is <c>PackageId</c> where the project declares one, because that is what
+        /// a reader types after <c>dotnet add package</c>. A first version used the directory name,
+        /// which is the same string today and would quietly check the wrong one the day a project is
+        /// renamed or its id set apart from its folder.
+        ///
+        /// The count assertion is not decoration. A test that walks a directory and finds nothing
+        /// passes: break the search and this reports success while checking no packages at all,
+        /// which is the shape of decorative gate this repository has now found four times.
+        /// </remarks>
+        [Fact]
+        public void EveryPackableProjectIsInTheReadme()
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "Mapsicle.sln")))
+            {
+                root = root.Parent;
+            }
+
+            Assert.NotNull(root);
+
+            var readme = Readme();
+            var missing = new System.Collections.Generic.List<string>();
+            var checkedPackages = 0;
+
+            var source = new DirectoryInfo(Path.Combine(root!.FullName, "src"));
+            Assert.True(source.Exists, $"no src directory found from {AppContext.BaseDirectory}");
+
+            foreach (var csproj in source.GetFiles("*.csproj", SearchOption.AllDirectories))
+            {
+                var text = File.ReadAllText(csproj.FullName);
+
+                if (Regex.IsMatch(text, @"<IsPackable>\s*false\s*</IsPackable>", RegexOptions.IgnoreCase)) continue;
+
+                var declared = Regex.Match(text, @"<PackageId>\s*([^<\s]+)\s*</PackageId>");
+                var package = declared.Success
+                    ? declared.Groups[1].Value
+                    : Path.GetFileNameWithoutExtension(csproj.Name);
+
+                checkedPackages++;
+
+                if (!readme.Contains($"| **{package}**", StringComparison.Ordinal))
+                {
+                    missing.Add($"{package} is not in the package table");
+                }
+
+                if (!Regex.IsMatch(readme, @"^dotnet add package " + Regex.Escape(package) + @"\s*$", RegexOptions.Multiline))
+                {
+                    missing.Add($"{package} has no install line");
+                }
+            }
+
+            Assert.True(checkedPackages >= 10,
+                $"only {checkedPackages} packages were discovered under src, so this check is not "
+                + "looking at what it thinks it is looking at");
+
+            Assert.True(missing.Count == 0,
+                "these packages ship and the README does not tell anyone:\n  " + string.Join("\n  ", missing));
+        }
+
     }
 }
