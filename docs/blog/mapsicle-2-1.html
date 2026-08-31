@@ -1,3 +1,6 @@
+<!-- A fragment, not a page. This is the body of a published article, kept here so its
+     claims can be diffed against the README and the benchmarks. It is pasted into a host
+     that supplies its own doctype, head and styles, so it deliberately has none. -->
 <h1>Mapsicle 2.1: an MPL-2.0 object mapper, and honest numbers against AutoMapper</h1>
 
 <p>AutoMapper is the default object mapper in .NET and has been for over a decade. Since version 15 it ships under the Reciprocal Public License 1.5, or a commercial agreement from Lucky Penny Software. You can read that in the package: <code>LICENSE.md</code> inside <code>AutoMapper.15.1.3.nupkg</code> says so directly.</p>
@@ -97,7 +100,7 @@ array collection PasswordHash='SECRET-HASH'  Ignore honoured: False</code></pre>
 
 <h2>What is next</h2>
 
-<p>3.0 absorbs a source generator as an opt in lane behind the same API. Not to beat Mapperly, which cannot be beaten at being Mapperly, but so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads.</p>
+<p>2.2 absorbs a source generator as an opt in lane behind the same API, so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads. This paragraph originally said the aim was not to beat Mapperly, which cannot be beaten at being Mapperly. That turned out to be wrong: measured against the same projection written by hand, a declared pair is 1.00x and Mapperly is 1.12x.</p>
 
 <h2>A note on the numbers</h2>
 

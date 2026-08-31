@@ -602,7 +602,13 @@ Cold start is the larger and less obvious win:
 | undeclared           | 367,138 ns |
 
 That 148x is the `Expression.Compile` a declared pair never pays. It is what short-lived processes
-hit, and it is why NativeAOT works for declared pairs: nothing generates IL at runtime.
+hit.
+
+It is also the mechanism behind the AOT rows above: a declared pair runs emitted C# and never reaches
+`Expression.Compile`, so there is no runtime IL generation on that path. That is stated as a
+mechanism rather than a result on purpose. **There is no NativeAOT publish in CI yet**, so unlike the
+speed and allocation claims on this page, that one is reasoned from how the code works rather than
+proven by a gate. Treat it accordingly until a job publishes AOT and runs the suite.
 
 ### What you write, side by side
 

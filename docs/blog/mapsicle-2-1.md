@@ -153,7 +153,7 @@ reports what has been compiled.
 
 ## What is next
 
-3.0 absorbs a source generator as an opt in lane behind the same API. Not to beat Mapperly, which
+2.2 absorbs a source generator as an opt in lane behind the same API, so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads. This paragraph originally said the aim was not to beat Mapperly, which cannot be beaten at being Mapperly. That turned out to be wrong: measured against the same projection written by hand, a declared pair is 1.00x and Mapperly is 1.12x.
 cannot be beaten at being Mapperly, but so that pairs known at compile time stop paying for the
 apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is
 made from how it is used, so the generator emits the same delegate as plain C# at build time and
