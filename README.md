@@ -21,6 +21,7 @@
 | Package                      | Purpose                           | Dependencies      |
 | :--------------------------- | :-------------------------------- | :---------------- |
 | **Mapsicle**                 | Zero-config mapping               | None              |
+| **Mapsicle.SourceGen**       | Compile-time mappers for declared pairs | None at runtime |
 | **Mapsicle.Fluent**          | Fluent configuration + Profiles   | Mapsicle          |
 | **Mapsicle.EntityFramework** | EF Core `ProjectTo<T>()`          | Mapsicle.Fluent   |
 | **Mapsicle.Validation**      | FluentValidation integration      | Mapsicle.Fluent   |
@@ -802,6 +803,12 @@ dotnet add package Mapsicle.Audit
 
 # DataAnnotations validation (optional)
 dotnet add package Mapsicle.DataAnnotations
+
+# Dependency injection: AddMapsicle(), no configuration (optional)
+dotnet add package Mapsicle.DependencyInjection
+
+# Compile-time mappers for pairs you declare (optional, analyzer only)
+dotnet add package Mapsicle.SourceGen
 ```
 
 ---

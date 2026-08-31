@@ -63,5 +63,50 @@ namespace Mapsicle.Docs.Tests
             // which is exactly the state a careless fix would leave behind.
             Assert.Matches(@"!\[[^\]]*\]\(https://", Readme());
         }
+        /// <summary>Every package that ships is listed in the README, and installable from it.</summary>
+        /// <remarks>
+        /// 2.2.0 shipped Mapsicle.SourceGen, the whole point of the release, and it appeared in
+        /// neither the package table nor the install list. Someone reading the README top to bottom
+        /// would not have learned the package existed. Mapsicle.DependencyInjection had been in the
+        /// table without an install line for longer than that.
+        ///
+        /// Read from the projects rather than from a list kept by hand, because a list kept by hand
+        /// is what was already wrong.
+        /// </remarks>
+        [Fact]
+        public void EveryPackableProjectIsInTheReadme()
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "Mapsicle.sln")))
+            {
+                root = root.Parent;
+            }
+
+            Assert.NotNull(root);
+
+            var readme = Readme();
+            var missing = new System.Collections.Generic.List<string>();
+
+            foreach (var project in new DirectoryInfo(Path.Combine(root!.FullName, "src")).GetDirectories())
+            {
+                var csproj = Path.Combine(project.FullName, project.Name + ".csproj");
+                if (!File.Exists(csproj)) continue;
+                if (File.ReadAllText(csproj).Contains("<IsPackable>false</IsPackable>", StringComparison.Ordinal)) continue;
+
+                if (!readme.Contains($"| **{project.Name}**", StringComparison.Ordinal))
+                {
+                    missing.Add($"{project.Name} is not in the package table");
+                }
+
+                if (!Regex.IsMatch(readme, @"^dotnet add package " + Regex.Escape(project.Name) + @"\s*$", RegexOptions.Multiline))
+                {
+                    missing.Add($"{project.Name} has no install line");
+                }
+            }
+
+            Assert.True(missing.Count == 0,
+                "these packages ship and the README does not tell anyone:\n  " + string.Join("\n  ", missing));
+        }
+
     }
 }
