@@ -16,6 +16,7 @@ class Mapsicle.Mapper
     public static System.Int32 MaxDepth { get;set; }
     public static System.Void AssertMappingValid<TSource,TDest>()
     public static System.Void ClearCache()
+    public static System.Void RegisterGenerated<TSource,TDest>(System.Func<TSource,TDest> mapper, System.Boolean requiresDepthTracking)
     public static T MapTo<T>(System.Collections.Generic.IDictionary<System.String,System.Object> source) where T : new()
     public static T MapTo<T>(System.Object source)
     public static TDest MapTo<TSource,TDest>(TSource source)

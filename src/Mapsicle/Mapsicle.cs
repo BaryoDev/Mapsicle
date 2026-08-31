@@ -234,6 +234,7 @@ namespace Mapsicle
             _mapCache.Clear();
             _excludingMapCache.Clear();
             _listLoopCache.Clear();
+            _generatedPairs.Clear();
             _propertyCache.Clear();
             _readablePropertyCache.Clear();
             _writablePropertyCache.Clear();
@@ -270,6 +271,7 @@ namespace Mapsicle
                 _mapCache.Clear();
                 _excludingMapCache.Clear();
                 _listLoopCache.Clear();
+                _generatedPairs.Clear();
                 _lruMapToCache?.Clear();
                 _lruMapCache?.Clear();
                 _propertyCache.Clear();
@@ -588,6 +590,78 @@ namespace Mapsicle
                 RequiresDepthTracking = requiresDepthTracking;
             }
         }
+
+        /// <summary>
+        /// Registers a mapper built at compile time, so the engine invokes it instead of compiling one.
+        /// </summary>
+        /// <remarks>
+        /// The seam the source generator writes through. The engine already separates how a mapper is
+        /// made from how it is used: the first map of a pair builds a delegate, a cache holds it, and
+        /// every later call just invokes it. So a generated mapper replaces the factory, not the
+        /// engine, and everything the engine does around it is unchanged.
+        ///
+        /// It fills every cache the entry points read, which is three rather than one. Registering
+        /// only the typed cache would have made a generated mapping apply to
+        /// <c>MapTo&lt;TSource, TDest&gt;()</c> and not to <c>MapTo&lt;TDest&gt;(object)</c>, which
+        /// is the call every example in the README uses, nor to nested members, nor to collections.
+        /// The compiled list loop is dropped for the pair rather than filled, so the next collection
+        /// map rebuilds a loop that calls the generated element mapper.
+        ///
+        /// Calling this for a pair that has already been mapped replaces what the engine compiled.
+        /// That is deliberate: a module initializer runs before user code, but a library loaded later
+        /// should still win for its own pairs rather than lose to whatever ran first.
+        /// </remarks>
+        /// <typeparam name="TSource">The source type.</typeparam>
+        /// <typeparam name="TDest">The destination type.</typeparam>
+        /// <param name="mapper">The compile-time mapper for this pair.</param>
+        /// <param name="requiresDepthTracking">
+        /// Whether the source type can form a cycle. Pass what <c>HasNestedComplexTypes</c> would
+        /// answer for <typeparamref name="TSource"/>; the generator knows this statically.
+        /// </param>
+        public static void RegisterGenerated<TSource, TDest>(
+            Func<TSource, TDest> mapper, bool requiresDepthTracking)
+        {
+            if (mapper is null) throw new ArgumentNullException(nameof(mapper));
+
+            TypedMapperCache<TSource, TDest>.Initialize(mapper, requiresDepthTracking);
+            _generatedPairs[(typeof(TSource), typeof(TDest))] = true;
+
+            // The untyped door keys on the runtime type of the source, so a generated mapper for
+            // TSource answers for an instance of exactly TSource. A derived instance still resolves
+            // its own pair, generated or compiled.
+            var key = (typeof(TSource), typeof(TDest));
+            Func<object, TDest> untyped = source => mapper((TSource)source);
+
+            if (_useLruCache && _lruMapToCache != null)
+            {
+                _lruMapToCache.GetOrAdd(key, _ => untyped);
+            }
+            else
+            {
+                _mapToCache[key] = untyped;
+            }
+
+            // A loop compiled earlier inlined the expression tree for this pair. Dropping it makes
+            // the next collection map rebuild against the generated mapper rather than keep using
+            // the one this call just replaced.
+            foreach (var entry in _listLoopCache)
+            {
+                if (entry.Key.Item2 == typeof(TDest)) _listLoopCache.TryRemove(entry.Key, out _);
+            }
+        }
+
+        /// <summary>
+        /// Pairs whose mapper came from a generator rather than from the expression builder.
+        /// </summary>
+        /// <remarks>
+        /// Both kinds live in the same delegate cache, because every entry point should invoke them
+        /// the same way. The one place the difference matters is the compiled list loop, which earns
+        /// its speed by inlining the expression tree for the element type. There is no expression to
+        /// inline for a generated pair, and inlining what the builder would have produced would
+        /// quietly ignore the generated mapper, so the loop stands aside and the element delegate is
+        /// invoked per item instead. That is the slower loop and the faster mapper.
+        /// </remarks>
+        private static readonly ConcurrentDictionary<(Type, Type), bool> _generatedPairs = new();
 
         /// <summary>
         /// High-performance strongly-typed mapping. Use this when source type is known at compile time.
@@ -1507,6 +1581,13 @@ namespace Mapsicle
         private static ListLoop BuildCompiledListLoop<TDest>(Type listType)
         {
             var elementType = listType.GetGenericArguments()[0];
+
+            // A generated mapper for this pair is not an expression, so there is nothing to inline
+            // and inlining what the builder would have produced would ignore it.
+            if (_generatedPairs.ContainsKey((elementType, typeof(TDest))))
+            {
+                return new ListLoop(null, NeedsDepthTracking(elementType));
+            }
 
             // Depth is taken once for the whole collection rather than per element, which is what
             // the existing loop does and why this only needs to know whether to take it. Refusing
