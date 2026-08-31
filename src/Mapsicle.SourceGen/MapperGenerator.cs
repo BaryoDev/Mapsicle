@@ -137,7 +137,13 @@ namespace Mapsicle.SourceGen
             if (refusal != null) return null;
 
             var context = new PlanContext($"P{index}_");
+
+            // The declared pair is on the stack for the whole walk. Nothing opened it before, so a
+            // member whose type re-entered the declared source type was not recognised as a cycle.
+            var rootKey = Key(source, destination, HelperKind.Object);
+            context.Open(rootKey);
             var assignments = PlanMembers(source, destination, context, out refusal);
+            context.Close(rootKey);
 
             if (assignments is null) return null;
 
@@ -370,10 +376,11 @@ namespace Mapsicle.SourceGen
                     return $"({expression}.HasValue ? (global::System.DateTimeOffset?)(global::System.DateTimeOffset){expression}.Value : null)";
                 }
 
-                if (fromNullable != null)
-                {
-                    return $"({expression}.HasValue ? (global::System.DateTimeOffset){expression}.Value : default(global::System.DateTimeOffset))";
-                }
+                // A nullable DateTime into a non-nullable DateTimeOffset is declined by the cascade
+                // on purpose, so the engine leaves the member at its default. Emitting the
+                // conversion here made the generated lane fill a member the engine does not, which
+                // is a rule learned without a row in the conformance table.
+                if (fromNullable != null) return null;
 
                 if (toNullable != null) return $"(global::System.DateTimeOffset?)(global::System.DateTimeOffset){expression}";
 
@@ -445,6 +452,14 @@ namespace Mapsicle.SourceGen
             var destElement = list.TypeArguments[0];
             var key = Key(sourceElement, destElement, HelperKind.List) + (sourceIsArray ? "[]" : "");
 
+            // The same cycle check the object helper does. Without it a type holding a list of
+            // itself escaped the refusal completely, because the re-entry never passed through an
+            // object helper: Node with a List of Node emitted a list helper calling an object helper
+            // calling the same list helper, with no counter anywhere. Cyclic data took the process
+            // down with a stack overflow where the engine returned, and an acyclic chain deeper than
+            // the engine's ceiling made the two lanes disagree.
+            if (context.IsCyclic(key)) return null;
+
             if (context.TryGetHelper(key, out var existing))
             {
                 return $"{existing.Name}({expression})";
@@ -480,8 +495,13 @@ namespace Mapsicle.SourceGen
                 helper = context.Begin(key, HelperKind.Enum, Full(fromEnum), Full(toEnum));
                 context.End(key);
 
+                // Ordered by value, because the engine matches against Enum.GetNames and that is
+                // sorted by value, not by declaration. With two destination names differing only by
+                // case the two lanes picked different members: BRAVO = 2 declared first won here
+                // while Bravo = 1 won at runtime.
                 var destNames = toEnum.GetMembers().OfType<IFieldSymbol>()
                     .Where(f => f.HasConstantValue)
+                    .OrderBy(f => System.Convert.ToInt64(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture))
                     .Select(f => f.Name)
                     .ToList();
 
@@ -603,9 +623,22 @@ namespace Mapsicle.SourceGen
         private static bool CanDescendInto(ITypeSymbol type) =>
             type.TypeKind == TypeKind.Class && !IsString(type) && !IsEnumerable(type);
 
+        /// <summary>Whether the leaf of a flattened path can be assigned to the destination.</summary>
+        /// <remarks>
+        /// This has to be at least as generous as the engine's version, which is
+        /// <c>to.IsAssignableFrom(from)</c> plus lossless widening. It was narrower: it missed the
+        /// nullable lift, so <c>int</c> into <c>int?</c> found no path here while the engine found
+        /// one, and a missing path is a silent skip rather than a refusal. The member came back null
+        /// while the engine filled it, with no diagnostic.
+        ///
+        /// Anything the engine's search finds and this one does not lands in that same hole, because
+        /// no path is indistinguishable from "the engine would not map it either". Widen this before
+        /// assuming a flattening difference is harmless.
+        /// </remarks>
         private static bool IsAssignableForFlattening(ITypeSymbol from, ITypeSymbol to) =>
             SymbolEqualityComparer.Default.Equals(from, to)
             || IsReferenceAssignable(from, to)
+            || SymbolEqualityComparer.Default.Equals(Underlying(to), from)
             || Widening(Underlying(from) ?? from, Underlying(to) ?? to);
 
         // ---- symbols ----------------------------------------------------------------------------
@@ -667,10 +700,21 @@ namespace Mapsicle.SourceGen
             }
         }
 
-        /// <summary>Whether the engine would fill this getter-only member in place.</summary>
+        /// <summary>Whether the engine might fill this getter-only member in place.</summary>
+        /// <remarks>
+        /// Might, not would. The engine's own test is that the declared type is generic and has an
+        /// element type, and it then attempts the fill against whatever the getter returns. Matching
+        /// that exactly is what keeps the two lanes together: requiring <c>ICollection&lt;T&gt;</c>
+        /// among the declared interfaces was narrower, so a member declared <c>IEnumerable&lt;T&gt;</c>
+        /// and backed by a <c>List&lt;T&gt;</c> did not trigger the refusal, the pair generated, and
+        /// the generated mapper left it empty while the engine filled it.
+        ///
+        /// Erring wide is free here. A refusal costs speed and never correctness.
+        /// </remarks>
         private static bool IsFillableCollection(ITypeSymbol type) =>
             type is INamedTypeSymbol { IsGenericType: true } named
-            && named.AllInterfaces.Any(i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_ICollection_T);
+            && (named.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T
+                || named.AllInterfaces.Any(i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T));
 
         /// <summary>Every public instance property, most derived declaration only.</summary>
         /// <remarks>
@@ -890,6 +934,13 @@ namespace Mapsicle.SourceGen
             }
 
             internal void End(string key) => _open.Remove(key);
+
+            /// <summary>Marks a pair as being planned without giving it a helper of its own.</summary>
+            /// <remarks>The declared pair is emitted as the root method, so it has no helper, but it
+            /// still has to be on the stack or a member that re-enters it is not seen as a cycle.</remarks>
+            internal void Open(string key) => _open.Add(key);
+
+            internal void Close(string key) => _open.Remove(key);
 
             internal void Abandon(string key)
             {

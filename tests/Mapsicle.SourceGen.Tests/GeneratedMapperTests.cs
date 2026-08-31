@@ -60,6 +60,7 @@ namespace Mapsicle.SourceGen.Tests
     /// Every test asserts through a public entry point rather than the registration, because the
     /// point of the seam is that a generated pair is reached by every door.
     /// </remarks>
+    [Collection("SourceGenRegistry")]
     public class GeneratedMapperTests
     {
         private static GenUser Sample() => new()

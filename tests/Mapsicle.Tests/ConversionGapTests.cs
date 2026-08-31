@@ -264,5 +264,49 @@ namespace Mapsicle.Tests
             Assert.Null(dto!.Maybe);
         }
 
+        // ---- a getter-only collection the engine cannot fill -------------------------------------
+
+        public class CgComputedSource { public List<int> Tags { get; set; } = new() { 1, 2 }; }
+
+        public class CgComputedDest
+        {
+            public IEnumerable<int> Tags => Compute();
+
+            private static IEnumerable<int> Compute() { yield return 9; }
+        }
+
+        public class CgBackedDest
+        {
+            private readonly List<int> _tags = new();
+
+            public IEnumerable<int> Tags => _tags;
+        }
+
+        [Fact]
+        public void AGetterOnlyCollectionThatCannotBeFilledIsSkippedRatherThanThrown()
+        {
+            // The eligibility test can only see the declared type, and a member declared
+            // IEnumerable<T> can return anything. A computed getter returns an iterator, which is
+            // not an ICollection<T>, and the hard cast threw InvalidCastException from inside the
+            // compiled delegate. Section 6 says a value of the wrong shape is dropped, never thrown.
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgComputedSource()).MapTo<CgComputedDest>();
+
+            Assert.NotNull(dto);
+            Assert.Equal(new[] { 9 }, dto!.Tags);
+        }
+
+        [Fact]
+        public void AGetterOnlyCollectionThatCanBeFilledStillIs()
+        {
+            // The positive control. Making the cast safe must not turn the working case into a skip.
+            Mapper.ClearCache();
+
+            var dto = ((object)new CgComputedSource()).MapTo<CgBackedDest>();
+
+            Assert.Equal(new[] { 1, 2 }, dto!.Tags);
+        }
+
     }
 }

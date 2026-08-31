@@ -19,6 +19,8 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfNest), typeof(Mapsicle.SourceGen.Tests.ConfNestDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfList), typeof(Mapsicle.SourceGen.Tests.ConfListDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfFlatten), typeof(Mapsicle.SourceGen.Tests.ConfFlattenDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfLift), typeof(Mapsicle.SourceGen.Tests.ConfLiftDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCaseEnum), typeof(Mapsicle.SourceGen.Tests.ConfCaseEnumDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -100,6 +102,20 @@ namespace Mapsicle.SourceGen.Tests
     public class ConfFlatten { public ConfInner2? Inner { get; set; } }
     public class ConfFlattenDto { public string InnerCity { get; set; } = ""; public string InnerDeepIso { get; set; } = ""; }
 
+    // A flattened leaf needing the nullable lift. The emitter's leaf test was narrower than the
+    // engine's, so it found no path, and a missing path is a silent skip rather than a refusal: the
+    // member came back null while the engine filled it.
+    public class ConfLiftInner { public int Count { get; set; } }
+    public class ConfLift { public ConfLiftInner Inner { get; set; } = new(); }
+    public class ConfLiftDto { public int? InnerCount { get; set; } }
+
+    // Two destination names differing only by case. The engine matches against Enum.GetNames, which
+    // is ordered by value; the emitter took declaration order and picked the other member.
+    public enum ConfCaseFrom { None = 0, Bravo = 9 }
+    public enum ConfCaseTo { None = 0, BRAVO = 2, Bravo = 1 }
+    public class ConfCaseEnum { public ConfCaseFrom Value { get; set; } }
+    public class ConfCaseEnumDto { public ConfCaseTo Value { get; set; } }
+
     /// <summary>
     /// One table of cases, run through the runtime lane and the generated lane, asserting they agree.
     /// </summary>
@@ -117,6 +133,7 @@ namespace Mapsicle.SourceGen.Tests
     /// The refusal cases matter as much as the agreements. A shape the generator declines has to keep
     /// working through the engine, or "opt in per pair" is not true.
     /// </remarks>
+    [Collection("SourceGenRegistry")]
     public class LaneConformanceTests
     {
         /// <summary>Maps the same source both ways and asserts the results match member by member.</summary>
@@ -328,6 +345,16 @@ namespace Mapsicle.SourceGen.Tests
                 new ConfFlatten { Inner = new ConfInner2 { City = "Cebu", Deep = null } },
                 d => d.InnerCity, d => d.InnerDeepIso);
 
+        [Fact]
+        public void AFlattenedLeafNeedingTheNullableLiftAgrees() =>
+            LanesAgree<ConfLift, ConfLiftDto>(
+                new ConfLift { Inner = new ConfLiftInner { Count = 42 } }, d => d.InnerCount);
+
+        [Fact]
+        public void ADestinationEnumWithCaseDifferingNamesAgrees() =>
+            LanesAgree<ConfCaseEnum, ConfCaseEnumDto>(
+                new ConfCaseEnum { Value = ConfCaseFrom.Bravo }, d => d.Value);
+
         // ---- refusals ---------------------------------------------------------------------------
 
         public class ConfInner { public string City { get; set; } = ""; }
@@ -392,8 +419,9 @@ namespace Mapsicle.SourceGen.Tests
 
             var covered = new[]
             {
-                nameof(ConfCasing), nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumText),
-                nameof(ConfFlat), nameof(ConfFlatten), nameof(ConfKinds), nameof(ConfList),
+                nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfCrossEnum), nameof(ConfDerived),
+                nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten), nameof(ConfKinds),
+                nameof(ConfLift), nameof(ConfList),
                 nameof(ConfNest), nameof(ConfNullable), nameof(ConfPartial), nameof(ConfStamp),
                 nameof(ConfWiden),
             };

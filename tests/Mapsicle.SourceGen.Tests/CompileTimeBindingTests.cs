@@ -20,7 +20,7 @@ namespace Mapsicle.SourceGen.Tests
     /// That difference is worth knowing for its own sake: for a declared pair at a call site where
     /// the extension is in scope, a later RegisterGenerated no longer overrides anything.
     /// </remarks>
-    [Collection("SourceGenBinding")]
+    [Collection("SourceGenRegistry")]
     public class CompileTimeBindingTests : IDisposable
     {
         private const string EngineMarker = "FROM-THE-REGISTRY";

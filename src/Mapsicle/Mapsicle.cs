@@ -1463,10 +1463,13 @@ namespace Mapsicle
                     .GetMethod(nameof(PropertyConversion.CopyInto), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)!
                     .MakeGenericMethod(sourceItem, destItem);
 
+                // TypeAs for the same reason as the other call site: the declared type is all the
+                // eligibility test can see, and a hard cast on a value that is not an ICollection<T>
+                // throws from inside the compiled delegate.
                 assignments.Add(Expression.Call(
                     copy,
                     Expression.Property(typedSource, sourceProp),
-                    Expression.Convert(Expression.Property(typedDest, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
+                    Expression.TypeAs(Expression.Property(typedDest, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
             }
 
             if (assignments.Count == 0)
@@ -2352,10 +2355,16 @@ namespace Mapsicle
                     .GetMethod(nameof(PropertyConversion.CopyInto), BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)!
                     .MakeGenericMethod(sourceItem, destItem);
 
+                // TypeAs, not Convert. The eligibility test can only see the declared type, and a
+                // getter-only member declared as IEnumerable<T> can return anything at run time: an
+                // iterator from a computed getter is not an ICollection<T>, and the hard cast threw
+                // InvalidCastException from inside the compiled delegate. Section 6 of CLAUDE.md is
+                // explicit that a value of the wrong shape is dropped rather than thrown, and
+                // CopyInto already treats a null destination as nothing to do.
                 body.Add(Expression.Call(
                     copy,
                     Expression.Property(typedSource, sourceProp),
-                    Expression.Convert(Expression.Property(result, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
+                    Expression.TypeAs(Expression.Property(result, destProp), typeof(ICollection<>).MakeGenericType(destItem))));
             }
 
             body.Add(result);

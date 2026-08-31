@@ -26,6 +26,8 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StPublicField), typeof(Mapsicle.SourceGen.Tests.StPublicFieldDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StGetterOnly), typeof(Mapsicle.SourceGen.Tests.StGetterOnlyDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StStructSource), typeof(Mapsicle.SourceGen.Tests.StStructDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StSelfList), typeof(Mapsicle.SourceGen.Tests.StSelfListDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StNullableStamp), typeof(Mapsicle.SourceGen.Tests.StNullableStampDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -83,6 +85,18 @@ namespace Mapsicle.SourceGen.Tests
     // file compiling.
     public struct StStructSource { public int Id { get; set; } public string Name { get; set; } }
     public class StStructDto { public int Id { get; set; } public string Name { get; set; } = ""; }
+
+    // A cycle whose only re-entry is the root type through a collection. The object helper checked
+    // for cycles and the list helper did not, and the declared pair was never on the stack at all,
+    // so this escaped the refusal completely: the emitted list helper called the object helper which
+    // called the same list helper, with no counter. Cyclic data took the process down.
+    public class StSelfList { public int Id { get; set; } public List<StSelfList> Kids { get; set; } = new(); }
+    public class StSelfListDto { public int Id { get; set; } public List<StSelfListDto> Kids { get; set; } = new(); }
+
+    // A nullable DateTime into a non-nullable DateTimeOffset. The cascade declines this on purpose,
+    // so the engine leaves the member at its default and the emitter must too.
+    public class StNullableStamp { public DateTime? When { get; set; } }
+    public class StNullableStampDto { public DateTimeOffset When { get; set; } }
 
     public class StEnumToString { public StColour Colour { get; set; } }
     public class StEnumToStringDto { public string Colour { get; set; } = ""; }
@@ -161,6 +175,7 @@ namespace Mapsicle.SourceGen.Tests
     /// class of failure, and the conformance table did not contain one, because every pair in it had
     /// identical member types.
     /// </remarks>
+    [Collection("SourceGenRegistry")]
     public class GeneratorStressTests
     {
         /// <summary>Maps both ways and asserts every read agrees.</summary>
@@ -325,6 +340,10 @@ namespace Mapsicle.SourceGen.Tests
             // Silent data loss if this regresses: the generated mapper would fill Id and leave Note
             // at its initialiser while the engine filled both, with no diagnostic.
             var registry = Registry();
+
+            // The positive control. Without it this test passes with the analyzer removed: the
+            // registry is empty, DoesNotContain holds, and the engine fills the field either way.
+            Assert.Contains(registry, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
             Assert.DoesNotContain(registry, k => k.Contains(nameof(StPublicField), StringComparison.Ordinal));
 
             var dto = ((object)new StPublicField { Id = 3 }).MapTo<StPublicFieldDto>();
@@ -335,6 +354,8 @@ namespace Mapsicle.SourceGen.Tests
         public void AGetterOnlyCollectionRefusesThePairAndTheEngineStillFillsIt()
         {
             var registry = Registry();
+
+            Assert.Contains(registry, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
             Assert.DoesNotContain(registry, k => k.Contains(nameof(StGetterOnly), StringComparison.Ordinal));
 
             var dto = ((object)new StGetterOnly()).MapTo<StGetterOnlyDto>();
@@ -371,6 +392,30 @@ namespace Mapsicle.SourceGen.Tests
         }
 
         [Fact]
+        public void ASelfReferenceThroughACollectionIsRefusedAndCyclicDataStillTerminates()
+        {
+            var keys = Registry();
+            Assert.Contains(keys, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
+            Assert.DoesNotContain(keys, k => k.Contains(nameof(StSelfList) + ",", StringComparison.Ordinal));
+
+            var root = new StSelfList { Id = 1 };
+            root.Kids.Add(root);
+
+            var dto = ((object)root).MapTo<StSelfListDto>();
+
+            Assert.NotNull(dto);
+            Assert.Equal(1, dto!.Id);
+        }
+
+        [Fact]
+        public void ANullableDateTimeIntoANonNullableOffsetAgreesWithTheEngine() =>
+            // The cascade declines this combination, so both lanes must leave the member alone. The
+            // emitter used to convert it, filling a member the engine does not.
+            AgreesWithTheEngine<StNullableStamp, StNullableStampDto>(
+                new StNullableStamp { When = new DateTime(2026, 8, 31, 10, 0, 0, DateTimeKind.Utc) },
+                d => d.When);
+
+        [Fact]
         public void ACyclicGraphIsRefusedAndStillTerminatesThroughTheEngine()
         {
             // The refusal that matters most, because getting it wrong does not return a wrong value,
@@ -386,6 +431,7 @@ namespace Mapsicle.SourceGen.Tests
                 .Select(k => k.ToString() ?? "")
                 .ToList();
 
+            Assert.Contains(keys, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
             Assert.DoesNotContain(keys, k => k.Contains(nameof(StCycle) + ",", StringComparison.Ordinal));
 
             var owner = new StCycleOwner { Name = "root" };
