@@ -112,12 +112,32 @@ public class GeneratedVsRuntime
             c => c.CreateMap<SgUser, SgUserDto>(),
             Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateMapper();
 
-        // Both lanes must produce the same thing or the timings are meaningless.
+        // Both lanes must produce the same thing or the timings are meaningless. Every member, not
+        // a sample of two: a generated mapper that drops FirstName is faster than one that does not,
+        // and checking Id and Email would have reported that as a win.
         var generated = ((object)_one).MapTo<SgUserDto>();
         var interpreted = _runtime.MapTo<SgUserDto>(_one);
-        if (generated.Id != interpreted.Id || generated.Email != interpreted.Email)
-            throw new Exception("the lanes disagree, so these numbers would be comparing different work");
-        Console.WriteLine("lane agreement check ok");
+
+        var disagreements = new List<string>();
+        void Compare(string name, object? a, object? b)
+        {
+            if (!Equals(a, b)) disagreements.Add($"{name}: generated={a ?? "null"} engine={b ?? "null"}");
+        }
+
+        Compare(nameof(SgUserDto.Id), generated!.Id, interpreted!.Id);
+        Compare(nameof(SgUserDto.FirstName), generated.FirstName, interpreted.FirstName);
+        Compare(nameof(SgUserDto.LastName), generated.LastName, interpreted.LastName);
+        Compare(nameof(SgUserDto.Email), generated.Email, interpreted.Email);
+        Compare(nameof(SgUserDto.IsActive), generated.IsActive, interpreted.IsActive);
+
+        if (disagreements.Count > 0)
+        {
+            throw new Exception(
+                "the lanes disagree, so these numbers would be comparing different work:\n  "
+                + string.Join("\n  ", disagreements));
+        }
+
+        Console.WriteLine($"lane agreement check ok, {5} members compared");
     }
 
     // ---- where the time goes ---------------------------------------------------------------

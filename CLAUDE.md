@@ -51,10 +51,10 @@ mapper that dropped nested objects only when built by `MapperFactory`.
 If you are adding a conversion rule and find yourself editing more than one file, stop. Add it to
 `PropertyConversion` and let the call sites ask.
 
-There is exactly one sanctioned exception, `src/Mapsicle.SourceGen`, and section 3a states the price
+There is exactly one permitted exception, `src/Mapsicle.SourceGen`, and section 3a states the price
 of it. Nothing else earns a second copy.
 
-## 3a. The generator is the one second implementation, and it is on parole
+## 3a. The generator is the only permitted second implementation, and it is on parole
 
 The generator emits C# for a declared pair. It cannot call `PropertyConversion`, because that runs at
 runtime and the generator runs in the compiler, so every rule it supports is that rule written a

@@ -49,6 +49,30 @@ namespace Mapsicle
         /// <summary>
         /// Lock-free read with fallback to factory.
         /// </summary>
+        /// <summary>Stores a value, replacing any entry already under this key.</summary>
+        /// <remarks>
+        /// <c>GetOrAdd</c> keeps the entry that got there first, which is right for a cache of
+        /// compiled delegates and wrong for a registration that must supersede one. Under
+        /// <c>UseLruCache</c>, a pair mapped before <c>RegisterGenerated</c> kept its compiled
+        /// delegate and the generated mapper never applied, for the rest of the process.
+        /// </remarks>
+        public void Set(TKey key, TValue value)
+        {
+            var entry = new Lazy<TValue>(() => value, LazyThreadSafetyMode.ExecutionAndPublication);
+
+            if (_cache.TryGetValue(key, out _))
+            {
+                _cache[key] = entry;
+                MarkRecentlyUsed(key);
+                return;
+            }
+
+            _cache[key] = entry;
+            Interlocked.Increment(ref _approximateCount);
+            MarkRecentlyUsed(key);
+            TryEvict();
+        }
+
         public TValue GetOrAdd(TKey key, Func<TKey, TValue> factory)
         {
             // OPTIMIZATION: Lock-free read path (hot path)

@@ -201,6 +201,20 @@ namespace Mapsicle.SourceGen
             var readable = ReadableProperties(source);
             var assignments = new List<Assignment>();
 
+            // The engine copies public fields on both sides. This emitter only walks properties, so a
+            // pair with one would be generated short and return less than the engine for the same
+            // call, silently. Refuse it instead. Verified: an ExtrasSrc with a public Note field
+            // mapped to "from field" through the engine and to the empty string through generated
+            // code, with no diagnostic.
+            var runtimeOnly = RuntimeOnlyMember(source, destination);
+            if (runtimeOnly != null)
+            {
+                refusal = $"'{runtimeOnly}' is a member the engine maps and this generator does not walk "
+                        + "(a public field, or a collection with no setter that the engine fills in place); "
+                        + "generating the pair would silently return less than the engine does";
+                return null;
+            }
+
             foreach (var destProp in Properties(destination))
             {
                 if (destProp.IsIndexer) continue;
@@ -600,6 +614,63 @@ namespace Mapsicle.SourceGen
             Properties(type)
                 .Where(p => !p.IsIndexer && p.GetMethod is { DeclaredAccessibility: Accessibility.Public })
                 .ToList();
+
+        /// <summary>A member the engine fills that this emitter never looks at, or null.</summary>
+        /// <remarks>
+        /// Two kinds. A public field, because the engine copies fields and this walks properties. And
+        /// a destination collection property with no setter, because the engine fills those in place
+        /// through <c>CopyInto</c> and generated code cannot assign them at all.
+        ///
+        /// Both were reproduced before this existed: the field arrived empty and the collection
+        /// arrived with zero items, in both cases while the engine filled them, and in both cases
+        /// with no diagnostic to say so. That is the exact failure the whole refuse-the-pair rule is
+        /// for, so it is a refusal rather than a silent skip.
+        /// </remarks>
+        private static string? RuntimeOnlyMember(INamedTypeSymbol source, INamedTypeSymbol destination)
+        {
+            var sourceNames = new HashSet<string>(
+                Members(source).Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var member in Members(destination))
+            {
+                if (!sourceNames.Contains(member.Name)) continue;
+
+                if (member is IFieldSymbol { IsConst: false, IsStatic: false }) return member.Name;
+
+                if (member is IPropertySymbol { IsIndexer: false, SetMethod: null } getterOnly
+                    && IsFillableCollection(getterOnly.Type))
+                {
+                    return member.Name;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Every public instance member of either kind, most derived declaration only.</summary>
+        private static IEnumerable<ISymbol> Members(ITypeSymbol type)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            for (var current = type; current is not null; current = current.BaseType)
+            {
+                if (current.SpecialType == SpecialType.System_Object) yield break;
+
+                foreach (var member in current.GetMembers())
+                {
+                    if (member.IsStatic) continue;
+                    if (member.DeclaredAccessibility != Accessibility.Public) continue;
+                    if (member is not (IPropertySymbol or IFieldSymbol)) continue;
+                    if (!seen.Add(member.Name)) continue;
+                    yield return member;
+                }
+            }
+        }
+
+        /// <summary>Whether the engine would fill this getter-only member in place.</summary>
+        private static bool IsFillableCollection(ITypeSymbol type) =>
+            type is INamedTypeSymbol { IsGenericType: true } named
+            && named.AllInterfaces.Any(i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_ICollection_T);
 
         /// <summary>Every public instance property, most derived declaration only.</summary>
         /// <remarks>
@@ -1077,9 +1148,14 @@ namespace Mapsicle.SourceGen
             {
                 var src = group.Key;
                 sb.AppendLine($"{indent}    /// <summary>Maps a <see cref=\"{Escape(src)}\"/> into <typeparamref name=\"TDest\"/>.</summary>");
-                sb.AppendLine($"{indent}    public static TDest? MapTo<TDest>(this {src}? source)");
+                // A struct receiver is not nullable here. Emitting "this S? source" and then handing
+                // it to a body that takes S is CS1503 in the consumer's build, inside a file they
+                // did not write. A struct cannot be null, so the guard goes with the question mark.
+                var isValueType = group.First().Source.IsValueType;
+
+                sb.AppendLine($"{indent}    public static TDest? MapTo<TDest>(this {src}{(isValueType ? "" : "?")} source)");
                 sb.AppendLine($"{indent}    {{");
-                sb.AppendLine($"{indent}        if (source is null) return default;");
+                if (!isValueType) sb.AppendLine($"{indent}        if (source is null) return default;");
                 sb.AppendLine();
 
                 foreach (var plan in group)

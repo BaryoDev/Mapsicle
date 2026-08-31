@@ -25,7 +25,22 @@ namespace Mapsicle.SourceGen.Tests
     {
         private const string EngineMarker = "FROM-THE-REGISTRY";
 
-        public void Dispose() => Mapper.ResetGeneratedRegistrations();
+        /// <summary>Clears what this class registered, then puts the declared pairs back.</summary>
+        /// <remarks>
+        /// Clearing alone was not safe. <c>ResetGeneratedRegistrations</c> empties the registry, and
+        /// the module initializer that filled it has already run and will not run again, so every
+        /// test that reads the registry afterwards saw nothing. Whether that mattered depended on
+        /// which class xUnit happened to run first, which is the worst kind of green.
+        ///
+        /// The generated registration method lives in this assembly, so it can simply be called
+        /// again. Anything this class registered at run time is gone; anything declared with the
+        /// attribute is back.
+        /// </remarks>
+        public void Dispose()
+        {
+            Mapper.ResetGeneratedRegistrations();
+            global::Mapsicle.Generated.MapsicleGeneratedMappers.Register();
+        }
 
         private static GenUser Sample() => new() { Id = 7, FirstName = "Ada", LastName = "Lovelace", IsActive = true };
 
@@ -64,6 +79,7 @@ namespace Mapsicle.SourceGen.Tests
             // was declared with. Anything else has to reach the engine or the generator would have
             // broken every other mapping from that type.
             Mapper.ResetGeneratedRegistrations();
+            global::Mapsicle.Generated.MapsicleGeneratedMappers.Register();
 
             var dto = Sample().MapTo<GenUserPartial>();
 

@@ -23,6 +23,9 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StCycle), typeof(Mapsicle.SourceGen.Tests.StCycleDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StOverride), typeof(Mapsicle.SourceGen.Tests.StOverrideDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StAliasSource), typeof(Mapsicle.SourceGen.Tests.StAliasDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StPublicField), typeof(Mapsicle.SourceGen.Tests.StPublicFieldDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StGetterOnly), typeof(Mapsicle.SourceGen.Tests.StGetterOnlyDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StStructSource), typeof(Mapsicle.SourceGen.Tests.StStructDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -63,6 +66,23 @@ namespace Mapsicle.SourceGen.Tests
     public enum StAliasTo { None = 0, Second = 5 }
     public class StAliasSource { public StAliasFrom Colour { get; set; } }
     public class StAliasDto { public StAliasTo Colour { get; set; } }
+
+    // The engine copies public fields. This emitter walks properties, so the pair is refused rather
+    // than generated without the field. It came back as the empty string while the engine filled it,
+    // and nothing said so.
+    public class StPublicField { public int Id { get; set; } public string Note = "from field"; }
+    public class StPublicFieldDto { public int Id { get; set; } public string Note = ""; }
+
+    // The engine fills a getter-only collection in place. Generated code cannot assign it at all, so
+    // the pair is refused. It came back empty while the engine filled it.
+    public class StGetterOnly { public int Id { get; set; } public List<int> Tags { get; set; } = new() { 7, 8 }; }
+    public class StGetterOnlyDto { public int Id { get; set; } public List<int> Tags { get; } = new(); }
+
+    // A struct source. The extension used to take StStructSource? and hand it to a body taking
+    // StStructSource, which is CS1503 in the consumer's build. There is no assertion beyond this
+    // file compiling.
+    public struct StStructSource { public int Id { get; set; } public string Name { get; set; } }
+    public class StStructDto { public int Id { get; set; } public string Name { get; set; } = ""; }
 
     public class StEnumToString { public StColour Colour { get; set; } }
     public class StEnumToStringDto { public string Colour { get; set; } = ""; }
@@ -300,6 +320,57 @@ namespace Mapsicle.SourceGen.Tests
                 new StAliasSource { Colour = StAliasFrom.First }, d => d.Colour);
 
         [Fact]
+        public void APublicFieldRefusesThePairAndTheEngineStillCopiesIt()
+        {
+            // Silent data loss if this regresses: the generated mapper would fill Id and leave Note
+            // at its initialiser while the engine filled both, with no diagnostic.
+            var registry = Registry();
+            Assert.DoesNotContain(registry, k => k.Contains(nameof(StPublicField), StringComparison.Ordinal));
+
+            var dto = ((object)new StPublicField { Id = 3 }).MapTo<StPublicFieldDto>();
+            Assert.Equal("from field", dto!.Note);
+        }
+
+        [Fact]
+        public void AGetterOnlyCollectionRefusesThePairAndTheEngineStillFillsIt()
+        {
+            var registry = Registry();
+            Assert.DoesNotContain(registry, k => k.Contains(nameof(StGetterOnly), StringComparison.Ordinal));
+
+            var dto = ((object)new StGetterOnly()).MapTo<StGetterOnlyDto>();
+            Assert.Equal(2, dto!.Tags.Count);
+        }
+
+        [Fact]
+        public void AStructSourceGenerates()
+        {
+            // AgreesWithTheEngine constrains TSource to a class, which is why a struct source had no
+            // coverage and the emitted extension took StStructSource? into a body taking
+            // StStructSource. That is CS1503, so most of this test is the file compiling at all.
+            var source = new StStructSource { Id = 5, Name = "struct" };
+
+            var generated = source.MapTo<StStructDto>();
+
+            using var engine = MapperFactory.Create();
+            var reference = engine.MapTo<StStructDto>(source);
+
+            Assert.Equal(reference!.Id, generated!.Id);
+            Assert.Equal(reference.Name, generated.Name);
+        }
+
+        private static List<string> Registry()
+        {
+            var registry = typeof(Mapper)
+                .GetField("_generatedPairs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                !.GetValue(null)!;
+
+            return ((System.Collections.IEnumerable)registry.GetType().GetProperty("Keys")!.GetValue(registry)!)
+                .Cast<object>()
+                .Select(k => k.ToString() ?? "")
+                .ToList();
+        }
+
+        [Fact]
         public void ACyclicGraphIsRefusedAndStillTerminatesThroughTheEngine()
         {
             // The refusal that matters most, because getting it wrong does not return a wrong value,
@@ -351,7 +422,7 @@ namespace Mapsicle.SourceGen.Tests
                 nameof(StWidening), nameof(StEnumToString), nameof(StNested),
                 nameof(StCollection), nameof(StNullableToValue), nameof(StValueToNullable),
                 nameof(StDeepInherit), nameof(StManyMembers), nameof(StFlattenSource),
-                nameof(StOverride), nameof(StAliasSource),
+                nameof(StOverride), nameof(StAliasSource), nameof(StStructSource),
             };
 
             var missing = expected

@@ -111,6 +111,33 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
+        public void RegisteringAfterMappingStillWinsUnderTheBoundedCache()
+        {
+            // The bounded cache stores through GetOrAdd, which keeps whichever entry arrived first.
+            // That is right for compiled delegates and wrong for a registration that must supersede
+            // one: with UseLruCache on, a pair mapped before the registration kept its compiled
+            // delegate and the generated mapper never applied again.
+            var previous = Mapper.UseLruCache;
+            try
+            {
+                Mapper.ResetGeneratedRegistrations();
+                Mapper.UseLruCache = true;
+                Mapper.ClearCache();
+
+                Assert.Equal("convention-would-copy-this", ((object)Sample()).MapTo<RgDest>()!.Name);
+
+                RegisterMarker();
+
+                Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
+            }
+            finally
+            {
+                Mapper.UseLruCache = previous;
+                Mapper.ClearCache();
+            }
+        }
+
+        [Fact]
         public void RegisteringAfterThePairHasAlreadyMappedStillWins()
         {
             // A module initializer runs before user code, but a plugin loaded later should still win

@@ -662,7 +662,10 @@ namespace Mapsicle
 
             if (_useLruCache && _lruMapToCache != null)
             {
-                _lruMapToCache.GetOrAdd(key, _ => untyped);
+                // A replacing write, not GetOrAdd. Under the bounded cache a pair mapped before this
+                // registration already had a compiled delegate stored, and GetOrAdd keeps whichever
+                // arrived first, so the generated mapper never applied for the rest of the process.
+                _lruMapToCache.Set(key, untyped);
             }
             else
             {
