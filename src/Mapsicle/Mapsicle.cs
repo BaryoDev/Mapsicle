@@ -689,6 +689,17 @@ namespace Mapsicle
         }
 
         /// <summary>
+        /// The generated element mapper for a pair, or null when the pair was not generated.
+        /// </summary>
+        private static Func<object, TDest>? GeneratedElementMapper<TDest>(Type elementType)
+        {
+            if (!_generatedPairs.ContainsKey((elementType, typeof(TDest)))) return null;
+            return _mapToCache.TryGetValue((elementType, typeof(TDest)), out var cached)
+                ? (Func<object, TDest>)cached
+                : null;
+        }
+
+        /// <summary>
         /// Pairs whose mapper came from a generator rather than from the expression builder.
         /// </summary>
         /// <remarks>
@@ -1620,12 +1631,13 @@ namespace Mapsicle
         {
             var elementType = listType.GetGenericArguments()[0];
 
-            // A generated mapper for this pair is not an expression, so there is nothing to inline
-            // and inlining what the builder would have produced would ignore it.
-            if (_generatedPairs.ContainsKey((elementType, typeof(TDest))))
-            {
-                return new ListLoop(null, NeedsDepthTracking(elementType));
-            }
+            // A generated mapper is a delegate, not an expression, so there is nothing to inline and
+            // inlining what the builder would have produced would ignore it. Standing aside entirely
+            // was the first answer and it cost more than it saved: the fallback loop is generic over
+            // its cursor and checks the runtime type per element, which measured a hundred element
+            // collection at 5,338 ns against 4,311 for the same shape ungenerated. The loop is still
+            // built, and its body calls the generated delegate instead of inlining an expression.
+            var generated = GeneratedElementMapper<TDest>(elementType);
 
             // Depth is taken once for the whole collection rather than per element, which is what
             // the existing loop does and why this only needs to know whether to take it. Refusing
@@ -1655,10 +1667,11 @@ namespace Mapsicle
             // the destination element is itself a list, and a member initialiser for a list maps
             // its properties rather than its contents, so every inner list came back empty and
             // nothing was raised.
-            if (destType.IsValueType
-                || destType == typeof(string)
-                || typeof(System.Collections.IEnumerable).IsAssignableFrom(destType)
-                || destType.GetConstructor(Type.EmptyTypes) is null)
+            if (generated is null
+                && (destType.IsValueType
+                    || destType == typeof(string)
+                    || typeof(System.Collections.IEnumerable).IsAssignableFrom(destType)
+                    || destType.GetConstructor(Type.EmptyTypes) is null))
             {
                 return new ListLoop(null, needsDepth);
             }
@@ -1666,7 +1679,7 @@ namespace Mapsicle
             // A destination the element can simply be assigned to is handed over as-is by the
             // conversion cascade, not rebuilt member by member. Constructing a new one here would
             // return a copy where the library returns the same reference.
-            if (destType.IsAssignableFrom(elementType))
+            if (generated is null && destType.IsAssignableFrom(elementType))
             {
                 return new ListLoop(null, needsDepth);
             }
@@ -1679,11 +1692,21 @@ namespace Mapsicle
             var item = Expression.Variable(elementType, "item");
             var done = Expression.Label("done");
 
-            var memberInit = TryBuildMemberInit(elementType, destType, item, Expression.Convert(item, typeof(object)), true);
-            if (memberInit is null) return new ListLoop(null, needsDepth);
-            if (!destType.IsAssignableFrom(memberInit.Type)) return new ListLoop(null, needsDepth);
+            Expression mapped;
+            if (generated != null)
+            {
+                mapped = Expression.Invoke(
+                    Expression.Constant(generated, typeof(Func<object, TDest>)),
+                    Expression.Convert(item, typeof(object)));
+            }
+            else
+            {
+                var memberInit = TryBuildMemberInit(elementType, destType, item, Expression.Convert(item, typeof(object)), true);
+                if (memberInit is null) return new ListLoop(null, needsDepth);
+                if (!destType.IsAssignableFrom(memberInit.Type)) return new ListLoop(null, needsDepth);
 
-            var mapped = Expression.Convert(memberInit, typeof(TDest));
+                mapped = Expression.Convert(memberInit, typeof(TDest));
+            }
 
             var fallback = Expression.Call(
                 typeof(Mapper).GetMethod(nameof(MapTo), new[] { typeof(object) })!.MakeGenericMethod(destType),
