@@ -112,6 +112,24 @@ an interface. Measured in isolation on four collections of five items total, tha
 120 bytes against the indexed form. It is the entire reason Mapperly measures 1.08 to 1.11 against
 hand written rather than 1.00, and it is the one mistake this emitter must not copy.
 
+**Both halves are gated, by different instruments.**
+
+```bash
+dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --band   # the band, on an idle machine
+```
+
+Allocation is checked exactly and runs in CI: generated code may not allocate a byte more than the
+same projection written by hand. That is the gate that catches the interface loop, because the
+mistake shows up in bytes before nanoseconds and bytes are deterministic where a shared runner's
+clock is not. Reintroducing the loop above fails it with the cause named.
+
+The band itself is only checked under `--band`, on a machine that is not doing anything else. The
+`claims` job runs on `ubuntu-latest`, where this repository has already measured a 99.9 percent
+interval of plus or minus 43 percent of the mean. A five percent bound on a forty percent instrument
+fails for reasons that have nothing to do with the emitter, and a gate that fails at random teaches
+everyone to rerun until it goes green. CI bounds the ratio at 1.15 instead, which an unreliable clock
+can still prove. Run `--band` before and after changing what the emitter produces.
+
 ## 4. Verification
 
 ```bash
