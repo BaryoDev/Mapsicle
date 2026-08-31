@@ -9,6 +9,8 @@ using Xunit;
 // registered from a module initializer before any test runs.
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.GenUser), typeof(Mapsicle.SourceGen.Tests.GenUserDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.GenOrder), typeof(Mapsicle.SourceGen.Tests.GenOrderDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.GenKeywords), typeof(Mapsicle.SourceGen.Tests.GenKeywordsDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.GenObsolete), typeof(Mapsicle.SourceGen.Tests.GenObsoleteDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -30,6 +32,21 @@ namespace Mapsicle.SourceGen.Tests
 
     public class GenOrder { public int Number { get; set; } public decimal Total { get; set; } }
     public class GenOrderDto { public int Number { get; set; } public decimal Total { get; set; } }
+
+    // Members named after C# keywords. Emitting the bare name produces source that does not compile,
+    // which breaks the consumer's build inside a file they did not write.
+    public class GenKeywords { public int @class { get; set; } public string @event { get; set; } = ""; }
+    public class GenKeywordsDto { public int @class { get; set; } public string @event { get; set; } = ""; }
+
+    // A member obsolete as an error. Generated code cannot reference it and pragma cannot suppress
+    // an error, so the pair has to be refused and left to the engine.
+    public class GenObsolete
+    {
+        public int Fine { get; set; }
+        [Obsolete("gone", true)] public int Gone { get; set; }
+    }
+
+    public class GenObsoleteDto { public int Fine { get; set; } public int Gone { get; set; } }
 
     /// <summary>
     /// The generator's output, exercised the way a consumer would reach it.
@@ -136,5 +153,26 @@ namespace Mapsicle.SourceGen.Tests
         }
 
         public class GenUserPartialDto { public int Id { get; set; } public string FirstName { get; set; } = ""; }
+
+        [Fact]
+        public void MembersNamedAfterKeywordsAreEscaped()
+        {
+            // If this file compiles at all, the generator escaped them. The assertion is here so the
+            // reason the type exists is written down rather than implied by the build passing.
+            var dto = new GenKeywords { @class = 3, @event = "e" }.MapTo<GenKeywordsDto>();
+
+            Assert.Equal(3, dto!.@class);
+            Assert.Equal("e", dto.@event);
+        }
+
+        [Fact]
+        public void APairTouchingAnObsoleteAsErrorMemberIsRefusedAndStillMaps()
+        {
+            // Refused, because generated code referencing it would not compile and the warning
+            // cannot be suppressed. The engine maps it by reflection, which does not care.
+            var dto = ((object)new GenObsolete { Fine = 1 }).MapTo<GenObsoleteDto>();
+
+            Assert.Equal(1, dto!.Fine);
+        }
     }
 }
