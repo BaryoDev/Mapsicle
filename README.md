@@ -85,13 +85,14 @@ is real and it is measured below, but it is a supporting argument rather than th
 | Feature              | Mapsicle         | AutoMapper   | Mapperly     |
 | :------------------- | :--------------- | :----------- | :----------- |
 | **License**          | **MPL 2.0**   | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
-| **Architecture**     | Runtime + Caching | Runtime + Expressions | Source Generator |
-| **Setup Required**   | **None**         | Profiles, DI | Partial class |
+| **Architecture**     | Runtime + Caching, with an opt-in source generator | Runtime + Expressions | Source Generator |
+| **Setup Required**   | **None**, or one line per pair to bind it at compile time | Profiles, DI | Partial class |
 | **Dependencies**     | **0** (core)     | 8            | 0 (compile-time) |
 | **Deployed size**    | **45.5 KB**      | 1,117.4 KB   | 0 at runtime |
-| **Compile-time Safety** | Partial       | No           | **Full**     |
-| **AOT Compatible**   | Partial          | No           | **Yes**      |
-| **Circular Refs**    | **Handled by default** | Opt in via `PreserveReferences()` or `MaxDepth(...)` | Opt in via `UseReferenceHandling` |
+| **Warm map, measured** | **1.00x hand written** when the pair is declared, 1.77x when it is not | 2.45x | 1.12x |
+| **Compile-time Safety** | Partial. A pair it cannot emit warns and falls back | No | **Full. It will not compile** |
+| **AOT Compatible**   | Declared pairs yes, undeclared no | No | **Yes, with no fallback to get wrong** |
+| **Circular Refs**    | Stops at a depth ceiling and returns. Safe, but the output holds copies where the input had one | **Preserves the reference by default** (measured on 15.1.3 with a plain `CreateMap`), so the cycle survives intact | Follows it. Default settings overflow the stack and abort the process |
 | **Memory Bounded**   | **LRU Option**   | No           | N/A          |
 | **Cache Statistics** | **Yes**          | No           | N/A          |
 | **Integrated Validation** | **Yes**     | No           | No           |
@@ -195,17 +196,26 @@ loops side by side.
 
 ### When to Use Each
 
-| Scenario | Recommendation |
-|----------|----------------|
-| **Maximum performance, AOT required** | **Mapperly** |
-| **Compile-time safety is critical** | **Mapperly** |
-| **Quick prototyping, zero setup** | **Mapsicle** (static API) |
-| **Need integrated validation** | **Mapsicle** |
-| **Existing AutoMapper codebase** | **AutoMapper** (if licensed) or migrate |
-| **Budget-conscious / OSS project** | **Mapsicle** or **Mapperly** |
-| **Complex mapping configurations** | **AutoMapper** or **Mapsicle** (fluent) |
-| **ASP.NET Core Minimal APIs** | **Mapsicle** (AspNetCore package) |
-| **Need audit trail of changes** | **Mapsicle** (Audit package) |
+| Scenario | Recommendation | Why |
+|----------|----------------|-----|
+| **Fastest warm mapping** | **Mapsicle**, pair declared | 1.00x hand written against Mapperly's 1.12x, and it allocates less |
+| **The compiler must prove every pair maps** | **Mapperly** | A pair it cannot generate does not compile. Mapsicle warns and falls back, which is safer at run time and weaker as a guarantee |
+| **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs are AOT clean, but an undeclared one compiles an expression tree at run time. Mapperly has no such path to leave open by accident |
+| **AOT, and you will declare every pair** | **Mapsicle** or **Mapperly** | Both work. Check the build for `MSG001` if you pick Mapsicle |
+| **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives. Mapsicle stops at a ceiling and returns something usable. Mapperly's default settings abort the process |
+| **Quick prototyping, zero setup** | **Mapsicle** | No configuration of any kind, and you can add the generator later without touching a call site |
+| **A large graph you do not want to declare** | **Mapsicle** | An undeclared pair still maps, at 1.77x hand written and still 1.4x faster than AutoMapper |
+| **Need integrated validation** | **Mapsicle** | `Mapsicle.Validation`, no equivalent in either |
+| **Existing AutoMapper codebase** | **AutoMapper** (if licensed) or migrate | |
+| **Budget-conscious or OSS project** | **Mapsicle** or **Mapperly** | MPL-2.0 and MIT respectively |
+| **Complex mapping configurations** | **AutoMapper** or **Mapsicle** (fluent) | |
+| **ASP.NET Core Minimal APIs** | **Mapsicle** (AspNetCore package) | |
+| **Need audit trail of changes** | **Mapsicle** (Audit package) | |
+
+Two of those rows go to Mapperly on purpose. Its guarantee is stronger than Mapsicle's precisely
+because it has no fallback: if it cannot emit a mapper you find out at compile time, every time.
+Mapsicle trades that for a mapper that always works, and the cost of the trade is that a `MSG001` you
+did not read is a pair running 1.77x instead of 1.00x.
 
 ### Code Comparison
 
