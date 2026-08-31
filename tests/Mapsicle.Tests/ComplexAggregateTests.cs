@@ -15,10 +15,16 @@ namespace Mapsicle.Tests
     /// collection, a polymorphic list, an enum widening to a string, a dictionary, a nullable, a
     /// self referencing category and a cycle from the order back to itself through its customer.
     ///
-    /// It came from running the same aggregate through Mapsicle, AutoMapper and Mapperly. Mapperly
-    /// died on the cycle with a stack overflow, exit code 139, and AutoMapper materialised more than
-    /// fifty levels before the measurement gave up. Mapsicle stopped at its depth ceiling and
-    /// returned a usable object, which is the behaviour this file exists to keep.
+    /// It came from running the same aggregate through Mapsicle, AutoMapper and Mapperly. On the
+    /// cycle the three do three different things, measured on .NET 8 Release with a destination that
+    /// exposes the back reference: Mapperly follows it until the stack overflows and the process
+    /// aborts; AutoMapper preserves the reference, so the mapped object is its own
+    /// Customer.Orders[0] and the cycle survives intact; Mapsicle expands it to a depth ceiling,
+    /// fifteen levels, and stops.
+    ///
+    /// Mapsicle terminates and returns something usable, which is what this file keeps. It is worth
+    /// being straight that AutoMapper's answer is the better one: the output has the same shape as
+    /// the input, where Mapsicle's holds fifteen distinct copies of one object.
     ///
     /// Three level flattening is asserted here now. It was not when this file was written: the
     /// assertion recorded the empty string and cited issue #56, and inverting it is what closing
