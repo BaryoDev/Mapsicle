@@ -11,6 +11,13 @@
 
 **Mapsicle** is a high-performance, modular object mapping ecosystem for .NET. Choose only what you need:
 
+> **See it working:** [github.com/arnelirobles/mapsicle_samples](https://github.com/arnelirobles/mapsicle_samples)
+> maps one e-commerce order aggregate through Mapsicle, AutoMapper and Mapperly side by side, in a
+> CRUD API over SQLite, with an endpoint that reports where the three disagree. Declare a pair and
+> Mapsicle matches hand written code on that graph: 288.4 ns against 288.1, allocating the same
+> 1.41 KB.
+
+
 | Package                      | Purpose                           | Dependencies      |
 | :--------------------------- | :-------------------------------- | :---------------- |
 | **Mapsicle**                 | Zero-config mapping               | None              |
@@ -166,13 +173,25 @@ ecosystem is a separate opt-in package.
 
 ### Performance Characteristics
 
+Measured rather than described. One order aggregate, nine types, three levels of nesting, two
+collections, mapped on an Apple M1 under .NET 8 Release, against the same projection written out by
+hand. Reproduce it from
+[github.com/arnelirobles/mapsicle_samples](https://github.com/arnelirobles/mapsicle_samples).
+
 | Aspect | Mapsicle | AutoMapper | Mapperly |
 |--------|----------|------------|----------|
-| **First map overhead** | Medium | Medium-High | **None** |
-| **Subsequent maps** | Fast | Fast | **Fastest** |
-| **Memory footprint** | Low-Medium | Medium | **Lowest** |
-| **Startup time impact** | Low | Medium | **None** |
-| **AOT compatible** | Partial | No | **Yes** |
+| **Warm map, pair declared** | **288.4 ns (1.00x hand written)** | n/a | 321.5 ns (1.12x) |
+| **Warm map, nothing declared** | 523.0 ns (1.77x) | 728.8 ns (2.45x) | n/a, it always generates |
+| **Allocated per map** | **1.41 KB, equal to hand written** | 1.48 KB | 1.50 KB |
+| **First map of a pair** | 2,480 ns declared, 367,138 ns not | high, it compiles too | **none, it is already code** |
+| **Startup time impact** | none for declared pairs | medium | **none** |
+| **AOT compatible** | declared pairs yes, undeclared no | no | **yes** |
+
+Mapperly's 1.12 is one habit rather than anything structural: its collection helpers take
+`IReadOnlyCollection<T>` where the member is a `List<T>`, so every `foreach` boxes the struct
+enumerator. That is also why it is the only row above the hand written allocation. The section on
+[compile-time mapping](#compile-time-mapping-and-how-it-compares-to-mapperly) shows both emitted
+loops side by side.
 
 ### When to Use Each
 
@@ -459,63 +478,111 @@ dotnet run -c Release -- --edge    # Edge cases only
 and everything you do not declare keeps mapping through the runtime engine exactly as before.
 
 ```csharp
-[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]
+[assembly: MapsicleGenerate(typeof(Order), typeof(OrderDto))]
 
 // unchanged at the call site, now bound at compile time
-var dto = user.MapTo<UserDto>();
+var dto = order.MapTo<OrderDto>();
 ```
 
 That is the whole setup. One line per pair, anywhere in the assembly.
 
-### What you write, side by side
+A working repository that maps one e-commerce order aggregate through Mapsicle, AutoMapper and
+Mapperly side by side, with a CRUD API over SQLite and the benchmarks below:
+**[github.com/arnelirobles/mapsicle_samples](https://github.com/arnelirobles/mapsicle_samples)**
 
-Mapperly needs a partial class, an attribute, and a declared method per mapping:
+### How to actually get the fast path
 
-```csharp
-[Mapper]
-public partial class UserMapper
-{
-    public partial UserDto Map(User source);
-    public partial List<UserDto> MapList(List<User> source);
-}
+Five things, and the build tells you when you have missed one.
 
-// and the call site changes, because you call the class you declared
-var mapper = new UserMapper();
-var dto = mapper.Map(user);
-var dtos = mapper.MapList(users);
-```
-
-Mapsicle needs a declaration and no call-site change:
+**1. Declare the pairs that are hot.** One line each, anywhere in the assembly. You do not need to
+declare everything: an undeclared pair still maps, it just pays the engine.
 
 ```csharp
-[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]
-
-var dto = user.MapTo<UserDto>();
-var dtos = users.MapTo<UserDto>();
+[assembly: MapsicleGenerate(typeof(Order), typeof(OrderDto))]
 ```
 
-The difference that matters is not the line count. It is that Mapperly's method **is** the mapping,
-so a pair it cannot generate does not exist, and code calling it does not compile. Mapsicle's
-declaration is a request: a pair the generator refuses reports `MSG001` and still maps through the
-engine, and a type you never declared still maps with no declaration at all.
+**2. Declare it in the assembly that calls it.** The generated extension is `internal` to the
+assembly holding the attribute, so declaring `Order` into `OrderDto` in your domain project does not
+bind a call site in your API project. Put the attribute in both.
 
-### What it buys
+This one fails silently and only costs you part of the win. The module initializer registers the
+generated delegate process-wide, so a call site in another assembly still runs generated code; it
+just reaches it through the dictionary lookup instead of the compiler. That is 309.7 ns against
+288.4, not the 523.0 an undeclared pair pays.
 
-Measured on an idle 4-core Ampere VM. Read the ordering rather than the decimals: rows move run to
-run, including hand-written code, which ranged 23.2 to 36.1 ns across three runs.
+**3. Call it on a typed variable, not `object`.** The binding is the compiler choosing a more specific
+extension, so it needs to see the type.
 
-| route, single object | median |
-| :------------------- | -----: |
-| generated delegate, invoked directly | 23.3 ns |
-| **`MapTo` on a declared pair**       | **32.5 ns** |
-| Mapperly                             | 32.9 ns |
-| hand written                         | 35.8 ns |
-| `MapTo<TDest>(object)`, undeclared   | 88.1 ns |
+```csharp
+var dto = order.MapTo<OrderDto>();              // 288 ns, bound at compile time
+var dto = ((object)order).MapTo<OrderDto>();    // 310 ns, back to a dictionary lookup
+```
 
-A declared pair is level with Mapperly and with hand-written code, through the call you already
-write. The 56 ns it removes is the lookup: an undeclared pair costs a `GetType`, a tuple key, a
-dictionary probe, a delegate cast and an invoke before any mapping happens, because the pair is only
-known at runtime.
+Mapping a **collection** of a declared pair is the exception worth knowing. `orders.MapTo<OrderDto>()`
+on a `List<Order>` binds to the collection overload, not to the per element extension, so it does not
+get the compile-time binding. It does still run the generated mapper: the compiled list loop stands
+aside for a declared pair and invokes the generated delegate per item, because inlining what the
+expression builder would have produced would quietly ignore the generated mapper. That is the slower
+loop and the faster mapper. Declaring the pair is still worth it; it just wins less on collections
+than on single objects.
+
+**4. Type collection members as `List<T>` or `T[]`.** The emitted loop indexes the source, which is
+where most of the margin over Mapperly comes from. A member declared `IEnumerable<T>` cannot be
+indexed, so the pair is refused and stays on the engine.
+
+**5. Read the build output for `MSG001`.** That warning is the generator telling you a pair you asked
+for fell back:
+
+```
+warning MSG001: Cannot generate a mapper from 'Shop.WithEnumerable' to 'Shop.WithEnumerableDto':
+'Items' converts System.Collections.Generic.IEnumerable<Shop.Item> into
+System.Collections.Generic.List<Shop.ItemDto>, which the engine performs and this generator
+has no emitted rule for. The pair still maps through the runtime engine.
+```
+
+Nothing is broken when you see it. It is the difference between 1.00x and 1.77x on that pair, and it
+names the member responsible.
+
+**To check it worked**, turn on the emitted files and read them:
+
+```xml
+<PropertyGroup>
+  <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+  <CompilerGeneratedFilesOutputPath>generated</CompilerGeneratedFilesOutputPath>
+</PropertyGroup>
+
+<!-- Required. The files land inside the project directory, so the SDK globs them back in as
+     ordinary source and every generated type ends up defined twice. -->
+<ItemGroup>
+  <Compile Remove="generated/**" />
+</ItemGroup>
+```
+
+A declared pair appears as a `MapTo` extension in your source type's namespace. If it is not there,
+the pair was refused and `MSG001` says why.
+
+### The numbers
+
+`Order` into `OrderDto`: nine types, three levels of nesting, two collections, a widening, an enum
+into a string, an enum into a different enum, a `DateTime` into a `DateTimeOffset` and two flattened
+paths. Measured on an Apple M1, .NET 8, Release, against the same projection written out by hand,
+which is the only baseline worth having.
+
+| whole graph | mean | vs hand written | allocated |
+| :---------- | ---: | --------------: | --------: |
+| hand written | 288.1 ns | 1.00 | 1.41 KB |
+| **Mapsicle, declared pair** | **288.4 ns** | **1.00** | **1.41 KB (1.00)** |
+| Mapsicle, declared, reached through an untyped call | 309.7 ns | 1.07 | 1.41 KB (1.00) |
+| Mapperly 4.1.1 | 321.5 ns | 1.12 | 1.50 KB (1.07) |
+| Mapsicle, undeclared, through the engine | 523.0 ns | 1.77 | 1.41 KB (1.00) |
+| AutoMapper 15.1.3 | 728.8 ns | 2.45 | 1.48 KB (1.06) |
+
+Generated code is level with hand written: 0.3 ns apart on a 288 ns call, standard deviations near
+3 ns, and the same 1.41 KB. Declaring the pair is what moves it from 1.77 to 1.00.
+
+The third row is the same generated method reached a different way. `((object)order).MapTo<OrderDto>()`
+pays a `GetType`, a dictionary probe for the delegate, a second probe to decide on depth tracking and
+a cast before it runs. That 21 ns is what the compile-time binding removes.
 
 Cold start is the larger and less obvious win:
 
@@ -527,21 +594,118 @@ Cold start is the larger and less obvious win:
 That 148x is the `Expression.Compile` a declared pair never pays. It is what short-lived processes
 hit, and it is why NativeAOT works for declared pairs: nothing generates IL at runtime.
 
-### What it does not do
+### What you write, side by side
 
-**Registering a generated mapper does not make steady-state mapping faster on its own.** The engine
-compiles an expression tree that does the same work, and reaching either of them through
-`MapTo<TDest>(object)` costs more than the mapping. The speedup above comes from the compile-time
-bound extension, and only at call sites where it is in scope.
+Mapperly needs a partial class, an attribute, and a declared method per mapping, and the call site
+becomes the class you declared:
 
-**The generator refuses far more than it accepts.** Only identical-typed public properties are
-emitted today. Every widening, enum, nullable and nested conversion the engine performs is a rule
-that would have to be restated in the emitter and proven identical to the runtime one first, and the
-conformance suite is what lets that list grow safely. A refused pair reports `MSG001` and maps
-through the engine, so nothing breaks; it just does not get faster.
+```csharp
+[Mapper]
+public partial class OrderMapper
+{
+    public partial OrderDto Map(Order source);
+}
 
-**A declared pair's mapping is inline**, so a later `RegisterGenerated` for that pair no longer
-overrides it at call sites where the extension is in scope.
+var mapper = new OrderMapper();
+var dto = mapper.Map(order);
+```
+
+Mapsicle needs a declaration and no call-site change:
+
+```csharp
+[assembly: MapsicleGenerate(typeof(Order), typeof(OrderDto))]
+
+var dto = order.MapTo<OrderDto>();
+var dtos = orders.MapTo<OrderDto>();
+```
+
+The difference that matters is not the line count. Mapperly's method **is** the mapping, so a pair it
+cannot generate does not exist and code calling it does not compile. Mapsicle's declaration is a
+request: a refused pair reports `MSG001` and still maps through the engine, and a type you never
+declared still maps with no declaration at all.
+
+|  | setup | a pair you forget | a member it cannot emit |
+| :--- | :--- | :--- | :--- |
+| **Mapsicle** | none, or one line to bind it | nothing to forget | `MSG001` warning, engine handles it, build continues |
+| **Mapperly** | a partial method per mapping | `RMG020` warning | compile error |
+| **AutoMapper** | a `CreateMap` per pair in the graph | member is silently empty at run time | silently empty |
+
+### What comes out, side by side
+
+Both emit a method per type with direct calls, and they are nearly identical. The divergence is the
+collection loop, and it is the whole of the 12 percent above.
+
+Mapperly widens the parameter to an interface:
+
+```csharp
+private List<OrderLineDto> MapToListOfOrderLineDto(
+    IReadOnlyCollection<OrderLine> source)      // widened from List<T>
+{
+    var target = new List<OrderLineDto>(source.Count);
+    foreach (var item in source)                // boxes List<T>'s struct enumerator
+        target.Add(MapToOrderLineDto(item));
+    return target;
+}
+```
+
+Mapsicle keeps the concrete type and indexes it:
+
+```csharp
+internal static List<OrderLineDto> P0_List4(List<OrderLine>? source)
+{
+    if (source is null) return new List<OrderLineDto>();
+
+    var target = new List<OrderLineDto>(source.Count);
+    for (var i = 0; i < source.Count; i++)
+    {
+        var item = source[i];
+        target.Add(P0_Object5(item)!);
+    }
+    return target;
+}
+```
+
+`foreach` over `IReadOnlyCollection<T>` calls `IEnumerable<T>.GetEnumerator()`, which boxes
+`List<T>`'s struct enumerator on the heap and then dispatches every `MoveNext` and `Current` through
+an interface. Measured in isolation on four collections holding five items, that costs **38.5 ns and
+120 bytes** against the indexed form. The whole-graph gap between Mapperly and hand written is 33.4 ns
+and about 90 bytes. It is the same thing, and it is the only column where Mapperly sits above the
+baseline.
+
+None of that is a criticism of Mapperly, which is an excellent library and was 12 percent from the
+speed limit before anyone went looking for the reason.
+
+### Where the two behave differently
+
+|  | Mapsicle | Mapperly 4.1.1 |
+| :--- | :--- | :--- |
+| enum into a different enum | matched by **name** | matched by **value**, and will return a number the destination declares no member for |
+| a reference cycle | engine stops at a depth ceiling and returns | follows it until the stack ends, aborting the process |
+| a pair it cannot handle | maps through the engine | does not exist |
+| a source member nothing maps | silent | `RMG020` |
+
+### What the generator emits
+
+Numeric widening, enum into a string, enum into a different enum by name, `DateTime` into
+`DateTimeOffset`, nullable lifting, nested objects, `List<T>` and array collections, and flattened
+paths up to four levels deep.
+
+Three things are refused on purpose, and each is a refusal rather than a gap:
+
+- **A cyclic graph.** Generated code has no depth ceiling and the engine has one, so emitting a mapper
+  that follows a cycle would produce a lane that aborts the process where the other returns.
+- **A destination member with a non-public setter.** Reflection can write one and generated code
+  cannot, so emitting the pair would silently return less than the engine does.
+- **Anything into a string that is not an enum.** The engine formats through
+  `CultureInfo.InvariantCulture`, and re-deriving that in the emitter is how two implementations of
+  one rule start disagreeing.
+
+A refusal reports `MSG001`, the build carries on, and the call site does not change.
+
+Two things to know before using it on your own code. The generated extension is **internal to the
+assembly that declares the pair**, so declaring it in one project does nothing for another. And if
+you turn on `EmitCompilerGeneratedFiles`, exclude the output folder from compilation: it lands inside
+the project directory, the SDK globs it back in, and every generated type is defined twice.
 
 ### Why both lanes are proven to agree
 
@@ -550,10 +714,25 @@ The generator is a second implementation of the conversion rules, which is the o
 conformance suite: one table of cases run through the runtime engine and the generated code,
 asserting identical output member by member.
 
-It also asserts every declared pair was actually generated, which is the assertion the suite is
-worth having for. A refused pair falls back to the runtime engine, which is the lane the comparison
-uses, so both sides agree and every test passes. Making the generator's name matching case sensitive,
-so it matched nothing, left the entire suite green until that check existed.
+It also asserts every declared pair was actually generated, which is the assertion the suite is worth
+having for. A refused pair falls back to the runtime engine, which is the lane the comparison uses,
+so both sides agree and every test passes. Making the generator's name matching case sensitive, so it
+matched nothing, left the entire suite green until that check existed. The same trap caught widening,
+nesting, collections and flattening: all four had passing tests before any of them was emitted.
+
+The band is gated too, by two instruments:
+
+```bash
+dotnet run -c Release --project tests/Mapsicle.Benchmarks -- --band
+```
+
+CI checks allocation exactly, because generated code allocating more than hand written is how the
+collection regression shows up and bytes are deterministic where a shared runner's clock is not.
+Reintroducing the interface loop above fails it with the cause named. The 1.00 plus or minus 0.05
+band is checked under `--band` on an idle machine, because the `claims` job runs on `ubuntu-latest`
+where this repository has measured a 99.9 percent interval of plus or minus 43 percent of the mean,
+and a five percent bound on a forty percent instrument fails for reasons that have nothing to do with
+the emitter.
 
 ---
 
