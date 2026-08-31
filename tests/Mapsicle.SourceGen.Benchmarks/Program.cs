@@ -148,6 +148,12 @@ public class GeneratedVsRuntime
     [Benchmark(Description = "route: untyped door, dictionary lookup")]
     public SgUserDto RouteUntypedDoor() => ((object)_one).MapTo<SgUserDto>();
 
+    // No cast, so the compiler picks the most specific extension in scope. If the generator emitted
+    // one for SgUser it binds here; if it did not, this is the object overload and the timing will
+    // say so rather than the code review.
+    [Benchmark(Description = "route: MapTo with no cast (binds to generated?)")]
+    public SgUserDto RouteNoCast() => _one.MapTo<SgUserDto>();
+
     [Benchmark(Baseline = true, Description = "single, generated")]
     public SgUserDto SingleGenerated() => ((object)_one).MapTo<SgUserDto>();
 
