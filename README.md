@@ -453,6 +453,110 @@ dotnet run -c Release -- --edge    # Edge cases only
 
 ---
 
+## Compile-time mapping, and how it compares to Mapperly
+
+`Mapsicle.SourceGen` generates a mapper at build time for pairs you declare. It is opt in per pair,
+and everything you do not declare keeps mapping through the runtime engine exactly as before.
+
+```csharp
+[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]
+
+// unchanged at the call site, now bound at compile time
+var dto = user.MapTo<UserDto>();
+```
+
+That is the whole setup. One line per pair, anywhere in the assembly.
+
+### What you write, side by side
+
+Mapperly needs a partial class, an attribute, and a declared method per mapping:
+
+```csharp
+[Mapper]
+public partial class UserMapper
+{
+    public partial UserDto Map(User source);
+    public partial List<UserDto> MapList(List<User> source);
+}
+
+// and the call site changes, because you call the class you declared
+var mapper = new UserMapper();
+var dto = mapper.Map(user);
+var dtos = mapper.MapList(users);
+```
+
+Mapsicle needs a declaration and no call-site change:
+
+```csharp
+[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]
+
+var dto = user.MapTo<UserDto>();
+var dtos = users.MapTo<UserDto>();
+```
+
+The difference that matters is not the line count. It is that Mapperly's method **is** the mapping,
+so a pair it cannot generate does not exist, and code calling it does not compile. Mapsicle's
+declaration is a request: a pair the generator refuses reports `MSG001` and still maps through the
+engine, and a type you never declared still maps with no declaration at all.
+
+### What it buys
+
+Measured on an idle 4-core Ampere VM. Read the ordering rather than the decimals: rows move run to
+run, including hand-written code, which ranged 23.2 to 36.1 ns across three runs.
+
+| route, single object | median |
+| :------------------- | -----: |
+| generated delegate, invoked directly | 23.3 ns |
+| **`MapTo` on a declared pair**       | **32.5 ns** |
+| Mapperly                             | 32.9 ns |
+| hand written                         | 35.8 ns |
+| `MapTo<TDest>(object)`, undeclared   | 88.1 ns |
+
+A declared pair is level with Mapperly and with hand-written code, through the call you already
+write. The 56 ns it removes is the lookup: an undeclared pair costs a `GetType`, a tuple key, a
+dictionary probe, a delegate cast and an invoke before any mapping happens, because the pair is only
+known at runtime.
+
+Cold start is the larger and less obvious win:
+
+| first map of a pair | |
+| :------------------ | -----: |
+| declared             | 2,480 ns |
+| undeclared           | 367,138 ns |
+
+That 148x is the `Expression.Compile` a declared pair never pays. It is what short-lived processes
+hit, and it is why NativeAOT works for declared pairs: nothing generates IL at runtime.
+
+### What it does not do
+
+**Registering a generated mapper does not make steady-state mapping faster on its own.** The engine
+compiles an expression tree that does the same work, and reaching either of them through
+`MapTo<TDest>(object)` costs more than the mapping. The speedup above comes from the compile-time
+bound extension, and only at call sites where it is in scope.
+
+**The generator refuses far more than it accepts.** Only identical-typed public properties are
+emitted today. Every widening, enum, nullable and nested conversion the engine performs is a rule
+that would have to be restated in the emitter and proven identical to the runtime one first, and the
+conformance suite is what lets that list grow safely. A refused pair reports `MSG001` and maps
+through the engine, so nothing breaks; it just does not get faster.
+
+**A declared pair's mapping is inline**, so a later `RegisterGenerated` for that pair no longer
+overrides it at call sites where the extension is in scope.
+
+### Why both lanes are proven to agree
+
+The generator is a second implementation of the conversion rules, which is the one thing
+[CONTRIBUTING.md](CONTRIBUTING.md) says must exist once. That exception is paid for with a
+conformance suite: one table of cases run through the runtime engine and the generated code,
+asserting identical output member by member.
+
+It also asserts every declared pair was actually generated, which is the assertion the suite is
+worth having for. A refused pair falls back to the runtime engine, which is the lane the comparison
+uses, so both sides agree and every test passes. Making the generator's name matching case sensitive,
+so it matched nothing, left the entire suite green until that check existed.
+
+---
+
 ## Installation
 
 ```bash

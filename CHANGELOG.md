@@ -85,10 +85,29 @@ still moving people. That is the reason it is a minor release rather than waitin
   the typed cache would have applied a generated mapping to `MapTo<TSource, TDest>()` and not to
   `MapTo<TDest>(object)`, which is the call every README example uses, nor to nested members, nor to
   collections.
-- The compiled list loop stands aside for a generated pair. It earns its speed by inlining the
-  expression tree for the element type, and there is no expression to inline for a generated mapper,
-  so inlining what the builder would have produced would have ignored it silently. The element
-  delegate is invoked per item for those pairs instead: the slower loop and the faster mapper.
+- The compiled list loop invokes the generated delegate rather than inlining an expression for a
+  generated pair. Standing aside entirely was the first answer and it cost more than it saved: a
+  hundred element collection measured 5,338 ns against 4,311 for the same shape ungenerated, so
+  declaring a pair made its collections slower, which is the opposite of what declaring it is for.
+- **A `MapTo` extension per declared source type, which is where the throughput comes from.**
+  Registering a generated mapper removes the compile, not the route to it, and the route is most of
+  the cost: measured on an idle arm64 machine, the generated code runs in 23.3 ns while
+  `MapTo<TDest>(object)` takes 88.1, because reaching it costs a `GetType`, a tuple key, a dictionary
+  probe, a delegate cast and an invoke.
+
+  An extension whose receiver is the declared source type is more specific than the one taking
+  `object`, so the compiler binds to it and the pair is resolved at compile time. A declared pair
+  through the ordinary call site is 32.5 ns, against 32.9 for Mapperly and 35.8 for hand-written
+  code, with nothing at the call site changing.
+
+  It is emitted into the source type's own namespace. The global namespace does not reliably win:
+  C# searches enclosing namespaces innermost-outward and stops at the first with an applicable
+  candidate, so a call site under a `Mapsicle.*` namespace finds `Mapper.MapTo(object)` and never
+  looks further out. That version bound only in a benchmark whose types sat in the global namespace,
+  and an improved timing was the only evidence either way.
+
+  One consequence worth knowing: for a declared pair at a call site where the extension is in scope,
+  the mapping is inline, so a later `RegisterGenerated` no longer overrides it.
 - `[assembly: MapsicleGenerate(typeof(User), typeof(UserDto))]` and the `Mapsicle.SourceGen` analyzer
   that reads it. It packs under `analyzers/dotnet/cs` and contributes nothing at runtime, so the core
   keeps its zero-dependency gate. The attribute ships in the core, because the assembly declaring the
@@ -108,6 +127,32 @@ still moving people. That is the reason it is a minor release rather than waitin
   falls back to the runtime engine, which is the lane the comparison uses, so the two sides agree and
   every test passes. Making the generator's name matching case sensitive, so it matched nothing,
   left all nineteen tests green until that assertion existed.
+
+#### What it costs and what it does not
+
+Measured on an idle 4-core Ampere VM, and read the ordering rather than the decimals: individual
+rows move run to run, including hand-written code, which ranged 23.2 to 36.1 ns across three runs.
+
+| | |
+| :-- | --: |
+| first map of a pair, generated | 2,480 ns |
+| first map of a pair, engine | 367,138 ns |
+
+That 148x is the `Expression.Compile` the generator removes, and it is the clearest win. AOT support
+is the other one: nothing generates IL at runtime for a declared pair.
+
+| route, single object | median |
+| :-- | --: |
+| generated delegate, invoked directly | 23.3 ns |
+| `MapTo` on a declared pair | 32.5 ns |
+| Mapperly | 32.9 ns |
+| hand written | 35.8 ns |
+| `MapTo<TDest>(object)`, undeclared | 88.1 ns |
+
+Registering a generated delegate on its own does not make steady-state mapping faster. The engine
+compiles an expression tree that does the same work, and going through `MapTo<TDest>(object)` to
+reach either of them costs more than the mapping does. The compile-time bound extension is what
+closes that, and only at call sites where it is in scope.
 
 ### Planned for 3.0.0: extension points become configuration, not code
 
