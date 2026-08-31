@@ -18,6 +18,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The Roslyn version pins the lowest compiler the generator supports. 4.8 covers the .NET 8
+         SDK onward, which matches the lowest TFM the packages target. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageVersion Include="AutoMapper" Version="15.1.3" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.13.12" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />

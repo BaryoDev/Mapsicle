@@ -21,8 +21,18 @@ namespace Mapsicle.Tests
     /// collections. These are the tests that pin that down.
     /// </remarks>
     [Collection("StaticMapperTests")]
-    public class RegisterGeneratedTests
+    public class RegisterGeneratedTests : IDisposable
     {
+        /// <summary>
+        /// Forgets what this file registered, because registrations now outlive a cache clear.
+        /// </summary>
+        /// <remarks>
+        /// That is the point of the design, and it makes these tests the only ones in the suite that
+        /// can leak into others: three tests elsewhere assert an empty cache after ClearCache and
+        /// saw this file's pairs still in it.
+        /// </remarks>
+        public void Dispose() => Mapper.ResetGeneratedRegistrations();
+
         public class RgSource { public int Id { get; set; } public string Name { get; set; } = ""; }
         public class RgDest { public int Id { get; set; } public string Name { get; set; } = ""; }
 
@@ -40,7 +50,7 @@ namespace Mapsicle.Tests
         [Fact]
         public void TheTypedDoorUsesIt()
         {
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
             RegisterMarker();
 
             Assert.Equal(Marker, Sample().MapTo<RgSource, RgDest>()!.Name);
@@ -51,7 +61,7 @@ namespace Mapsicle.Tests
         {
             // The call every README example uses. Registering only the typed cache would leave this
             // silently compiling its own mapper and returning the convention answer.
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
             RegisterMarker();
 
             Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
@@ -60,7 +70,7 @@ namespace Mapsicle.Tests
         [Fact]
         public void ACollectionUsesIt()
         {
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
             RegisterMarker();
 
             var mapped = ((IEnumerable)new List<RgSource> { Sample(), Sample() }).MapTo<RgDest>();
@@ -72,7 +82,7 @@ namespace Mapsicle.Tests
         [Fact]
         public void ANestedMemberUsesIt()
         {
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
             RegisterMarker();
 
             var dto = ((object)new RgHolder { Item = Sample() }).MapTo<RgHolderDest>();
@@ -85,7 +95,7 @@ namespace Mapsicle.Tests
         {
             // A module initializer runs before user code, but a plugin loaded later should still win
             // for its own pairs rather than lose to whatever the engine compiled first.
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
 
             Assert.Equal("convention-would-copy-this", ((object)Sample()).MapTo<RgDest>()!.Name);
 
@@ -99,7 +109,7 @@ namespace Mapsicle.Tests
         {
             // The list loop inlines the expression tree for a pair. A loop compiled before
             // registration would keep using the mapper this call replaced.
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
             var source = new List<RgSource> { Sample() };
 
             Assert.Equal("convention-would-copy-this", ((IEnumerable)source).MapTo<RgDest>()[0].Name);
@@ -110,18 +120,44 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void ClearCacheDiscardsIt()
+        public void ClearCacheKeepsIt()
         {
-            // Registration is a cache fill, so clearing the cache drops it. A generator re-registers
-            // from its module initializer, which has already run, so this is the documented
-            // consequence rather than an accident.
-            Mapper.ClearCache();
+            // This asserted the opposite first, recording that a clear dropped the registration.
+            // That was a design flaw rather than a behaviour worth keeping: the module initializer
+            // that registered the pair has already run and will not run again, so anything calling
+            // ClearCache would lose every generated mapper for the rest of the process and quietly
+            // fall back to the expression builder. A generated mapper is a registration, not
+            // something the engine compiled, so a clear empties the caches and puts it back.
+            Mapper.ResetGeneratedRegistrations();
             RegisterMarker();
             Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
 
             Mapper.ClearCache();
 
-            Assert.Equal("convention-would-copy-this", ((object)Sample()).MapTo<RgDest>()!.Name);
+            Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
+        }
+
+        [Fact]
+        public void ChangingTheCacheModeKeepsItToo()
+        {
+            // Toggling UseLruCache reinitialises the caches, which is the other door into the same
+            // problem.
+            var previous = Mapper.UseLruCache;
+            try
+            {
+                Mapper.ResetGeneratedRegistrations();
+                RegisterMarker();
+                Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
+
+                Mapper.UseLruCache = !previous;
+
+                Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
+            }
+            finally
+            {
+                Mapper.UseLruCache = previous;
+                Mapper.ResetGeneratedRegistrations();
+            }
         }
 
         [Fact]
@@ -129,7 +165,7 @@ namespace Mapsicle.Tests
         {
             // The untyped door keys on the runtime type. A generated mapper for the base must not
             // be applied to a derived instance, which has its own members.
-            Mapper.ClearCache();
+            Mapper.ResetGeneratedRegistrations();
             RegisterMarker();
 
             var derived = new RgDerived { Id = 3, Name = "n", Extra = "e" };
@@ -156,14 +192,14 @@ namespace Mapsicle.Tests
             Mapper.UseLruCache = true;
             try
             {
-                Mapper.ClearCache();
+                Mapper.ResetGeneratedRegistrations();
                 RegisterMarker();
                 Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
             }
             finally
             {
                 Mapper.UseLruCache = previous;
-                Mapper.ClearCache();
+                Mapper.ResetGeneratedRegistrations();
             }
         }
     }

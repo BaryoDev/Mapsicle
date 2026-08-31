@@ -234,7 +234,6 @@ namespace Mapsicle
             _mapCache.Clear();
             _excludingMapCache.Clear();
             _listLoopCache.Clear();
-            _generatedPairs.Clear();
             _propertyCache.Clear();
             _readablePropertyCache.Clear();
             _writablePropertyCache.Clear();
@@ -253,6 +252,10 @@ namespace Mapsicle
                 _lruMapToCache = null;
                 _lruMapCache = null;
             }
+
+            // Last, because the caches a registration writes into are the ones replaced above.
+            // Re-applying before that wrote into the caches this method was about to discard.
+            ReapplyGenerated();
         }
 
         #endregion
@@ -271,7 +274,6 @@ namespace Mapsicle
                 _mapCache.Clear();
                 _excludingMapCache.Clear();
                 _listLoopCache.Clear();
-                _generatedPairs.Clear();
                 _lruMapToCache?.Clear();
                 _lruMapCache?.Clear();
                 _propertyCache.Clear();
@@ -279,6 +281,7 @@ namespace Mapsicle
                 _writablePropertyCache.Clear();
                 _needsDepthTrackingCache.Clear();
                 ResetTypedCaches();
+                ReapplyGenerated();
                 System.Threading.Interlocked.Exchange(ref _cacheHits, 0);
                 System.Threading.Interlocked.Exchange(ref _cacheMisses, 0);
             }
@@ -623,8 +626,25 @@ namespace Mapsicle
         {
             if (mapper is null) throw new ArgumentNullException(nameof(mapper));
 
+            // Recorded as well as applied. A generated mapper is a registration, not something the
+            // engine compiled, so clearing the caches must not lose it: the module initializer that
+            // registered it has already run and will not run again, and the pair would quietly fall
+            // back to the expression builder for the rest of the process.
+            _generatedPairs[(typeof(TSource), typeof(TDest))] = () => ApplyGenerated(mapper, requiresDepthTracking);
+            ApplyGenerated(mapper, requiresDepthTracking);
+
+            // A loop compiled earlier inlined the expression tree for this pair. Dropping it makes
+            // the next collection map rebuild against the generated mapper rather than keep using
+            // the one this call just replaced.
+            foreach (var entry in _listLoopCache)
+            {
+                if (entry.Key.Item2 == typeof(TDest)) _listLoopCache.TryRemove(entry.Key, out _);
+            }
+        }
+
+        private static void ApplyGenerated<TSource, TDest>(Func<TSource, TDest> mapper, bool requiresDepthTracking)
+        {
             TypedMapperCache<TSource, TDest>.Initialize(mapper, requiresDepthTracking);
-            _generatedPairs[(typeof(TSource), typeof(TDest))] = true;
 
             // The untyped door keys on the runtime type of the source, so a generated mapper for
             // TSource answers for an instance of exactly TSource. A derived instance still resolves
@@ -640,13 +660,31 @@ namespace Mapsicle
             {
                 _mapToCache[key] = untyped;
             }
+        }
 
-            // A loop compiled earlier inlined the expression tree for this pair. Dropping it makes
-            // the next collection map rebuild against the generated mapper rather than keep using
-            // the one this call just replaced.
-            foreach (var entry in _listLoopCache)
+        /// <summary>
+        /// Forgets every generated registration, so a clear no longer puts them back.
+        /// </summary>
+        /// <remarks>
+        /// Internal because nothing in a running application should want it. A generator registers
+        /// from a module initializer and the registration is meant to last the process. Tests are
+        /// the exception: registrations outlive <c>ClearCache</c> by design now, so without this a
+        /// pair registered by one test would answer for the next one.
+        /// </remarks>
+        internal static void ResetGeneratedRegistrations()
+        {
+            _generatedPairs.Clear();
+            ClearCache();
+        }
+
+        /// <summary>
+        /// Re-applies every generated registration after the caches have been emptied.
+        /// </summary>
+        private static void ReapplyGenerated()
+        {
+            foreach (var apply in _generatedPairs.Values)
             {
-                if (entry.Key.Item2 == typeof(TDest)) _listLoopCache.TryRemove(entry.Key, out _);
+                apply();
             }
         }
 
@@ -661,7 +699,7 @@ namespace Mapsicle
         /// quietly ignore the generated mapper, so the loop stands aside and the element delegate is
         /// invoked per item instead. That is the slower loop and the faster mapper.
         /// </remarks>
-        private static readonly ConcurrentDictionary<(Type, Type), bool> _generatedPairs = new();
+        private static readonly ConcurrentDictionary<(Type, Type), Action> _generatedPairs = new();
 
         /// <summary>
         /// High-performance strongly-typed mapping. Use this when source type is known at compile time.

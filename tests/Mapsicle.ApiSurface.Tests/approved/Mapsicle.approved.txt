@@ -29,6 +29,10 @@ class Mapsicle.MapperOptions
     public System.Action<System.String> Logger { get;set; }
     public System.Int32 MaxCacheSize { get;set; }
     public System.Int32 MaxDepth { get;set; }
+class Mapsicle.MapsicleGenerateAttribute
+    .ctor(System.Type sourceType, System.Type destinationType)
+    public System.Type DestinationType { get; }
+    public System.Type SourceType { get; }
 interface Mapsicle.IMapperInstance
     public abstract Mapsicle.MapperCacheInfo CacheInfo()
     public abstract System.Collections.Generic.List<T> MapTo<T>(System.Collections.IEnumerable source)
