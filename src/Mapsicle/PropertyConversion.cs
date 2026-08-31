@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -115,6 +116,92 @@ namespace Mapsicle
         /// a class and not a <c>string</c>, and the nested property's type must be assignable to the
         /// destination property's type.
         /// </remarks>
+        /// <summary>
+        /// How many levels a flattened name may descend before the search gives up.
+        /// </summary>
+        /// <remarks>
+        /// A ceiling rather than a preference. A type holding itself, like a category with a parent
+        /// category, gives the search an infinite supply of candidate paths, and this runs while the
+        /// delegate is being built rather than while it runs, so a runaway hangs the compile instead
+        /// of overflowing a stack. Four covers the shapes people actually write: an aggregate root,
+        /// an entity it owns, something that entity owns, and a field on it.
+        /// </remarks>
+        internal const int MaxFlattenDepth = 4;
+
+        /// <summary>
+        /// Resolves a flattened destination name into the chain of source properties that produces it.
+        /// </summary>
+        /// <remarks>
+        /// <c>CustomerAddressCity</c> becomes Customer, then Address, then City. The search takes the
+        /// longest prefix that matches a readable property and recurses on the remainder, so a name
+        /// spelling more than one real path resolves to the one whose first step is longest, and the
+        /// result does not depend on the order properties are enumerated in.
+        ///
+        /// This replaced a single level lookup that could form <c>CustomerAddress</c> and never
+        /// descended into <c>Address</c>, so a three level name silently left its member at the
+        /// default. Both delegate builders call this, because there were two copies of the old one
+        /// and copies of this logic are what CONTRIBUTING exists to prevent.
+        /// </remarks>
+        internal static bool TryFindFlattenedPath(
+            PropertyInfo destProp,
+            PropertyInfo[] sourceProps,
+            Func<Type, PropertyInfo[]> readableProperties,
+            out List<PropertyInfo> path)
+        {
+            path = new List<PropertyInfo>();
+            return Descend(destProp.Name, destProp.PropertyType, sourceProps, readableProperties, path, 0);
+        }
+
+        private static bool Descend(
+            string remainingName,
+            Type destType,
+            PropertyInfo[] candidates,
+            Func<Type, PropertyInfo[]> readableProperties,
+            List<PropertyInfo> path,
+            int depth)
+        {
+            if (depth >= MaxFlattenDepth) return false;
+
+            // Longest prefix first, so Address wins over A when both are properties and the name is
+            // AddressCity. Without this the answer depends on enumeration order.
+            foreach (var candidate in candidates
+                         .Where(p => remainingName.StartsWith(p.Name, StringComparison.OrdinalIgnoreCase))
+                         .OrderByDescending(p => p.Name.Length))
+            {
+                var remainder = remainingName.Substring(candidate.Name.Length);
+
+                if (remainder.Length == 0)
+                {
+                    // The whole name is consumed. Only useful below the first level, because at the
+                    // first level this is an ordinary member match rather than flattening.
+                    if (depth == 0) continue;
+                    if (!IsAssignableForFlattening(candidate.PropertyType, destType)) continue;
+
+                    path.Add(candidate);
+                    return true;
+                }
+
+                if (!CanDescendInto(candidate.PropertyType)) continue;
+
+                path.Add(candidate);
+                if (Descend(remainder, destType, readableProperties(candidate.PropertyType),
+                            readableProperties, path, depth + 1))
+                {
+                    return true;
+                }
+                path.RemoveAt(path.Count - 1);
+            }
+
+            return false;
+        }
+
+        private static bool CanDescendInto(Type type) =>
+            type.IsClass && type != typeof(string) && !typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
+        /// <summary>Whether the leaf of a flattened path can be assigned to the destination.</summary>
+        private static bool IsAssignableForFlattening(Type from, Type to) =>
+            to.IsAssignableFrom(from) || IsLosslessNumericWidening(from, to);
+
         internal static bool TryFindFlattenedSource(
             PropertyInfo destProp,
             PropertyInfo sourceProp,

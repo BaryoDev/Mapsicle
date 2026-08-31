@@ -294,7 +294,7 @@ namespace Mapsicle
                     }
                     else
                     {
-                        var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceParam, isSourceVisible);
+                        var flattenedBinding = Mapper.TryBindFlattenedPath(destProp, sourceProps, typedSource);
                         if (flattenedBinding != null) bindings.Add(flattenedBinding);
                     }
                 }

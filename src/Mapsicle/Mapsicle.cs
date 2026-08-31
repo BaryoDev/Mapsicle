@@ -931,7 +931,7 @@ namespace Mapsicle
                     else
                     {
                         // Try flattening
-                        var flattenedBinding = TryCreateTypedFlattenedBinding<TSource>(destProp, sourceProps, sourceParam);
+                        var flattenedBinding = TryBindFlattenedPath(destProp, sourceProps, sourceParam);
                         if (flattenedBinding != null) bindings.Add(flattenedBinding);
                     }
                 }
@@ -2203,7 +2203,7 @@ namespace Mapsicle
                 }
                 else
                 {
-                    var flattenedBinding = TryCreateFlattenedBinding(destProp, sourceProps, typedSource, sourceAsObject, isSourceVisible);
+                    var flattenedBinding = TryBindFlattenedPath(destProp, sourceProps, typedSource);
                     if (flattenedBinding != null) bindings.Add(flattenedBinding);
                 }
             }
@@ -2349,6 +2349,67 @@ namespace Mapsicle
 
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Builds a null safe read along a flattened path, or null when the path does not resolve.
+        /// </summary>
+        /// <remarks>
+        /// One implementation for all three delegate builders. There were three, differing only in
+        /// how they reached the source, which is exactly the drift CONTRIBUTING describes: the typed
+        /// door, the untyped door and the instance mapper each had their own flattening, so a fix
+        /// applied to one left the other two behind.
+        ///
+        /// A null anywhere along the chain yields the destination default rather than throwing, so
+        /// Customer.Address.City reads as null when Customer is null, when Address is null, and when
+        /// neither is.
+        /// </remarks>
+        internal static MemberBinding? TryBindFlattenedPath(
+            PropertyInfo destProp, PropertyInfo[] sourceProps, Expression source)
+        {
+            if (!PropertyConversion.TryFindFlattenedPath(
+                    destProp, sourceProps, GetCachedReadableProperties, out var path))
+            {
+                return null;
+            }
+
+            Expression access = source;
+            Expression? guard = null;
+
+            // Every step but the last can be null, and each one needs testing before the next is
+            // read. Built inside out so the guards nest in the order they must be evaluated.
+            for (var i = 0; i < path.Count; i++)
+            {
+                access = Expression.Property(access, path[i]);
+
+                if (i == path.Count - 1) break;
+                if (!access.Type.IsValueType || Nullable.GetUnderlyingType(access.Type) != null)
+                {
+                    var isNull = Expression.Equal(access, Expression.Constant(null, access.Type));
+                    guard = guard is null ? isNull : Expression.OrElse(guard, isNull);
+                }
+            }
+
+            Expression value;
+            try
+            {
+                value = access.Type == destProp.PropertyType
+                    ? access
+                    : Expression.Convert(access, destProp.PropertyType);
+            }
+            catch (InvalidOperationException)
+            {
+                // The names lined up and the types do not. Leaving the member unmapped is what the
+                // engine does everywhere else for a pair it cannot convert.
+                return null;
+            }
+
+            if (guard != null)
+            {
+                value = Expression.Condition(guard, Expression.Default(destProp.PropertyType), value);
+            }
+
+            return Expression.Bind(destProp, value);
         }
 
         /// <summary>

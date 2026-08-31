@@ -20,8 +20,9 @@ namespace Mapsicle.Tests
     /// fifty levels before the measurement gave up. Mapsicle stopped at its depth ceiling and
     /// returned a usable object, which is the behaviour this file exists to keep.
     ///
-    /// The one thing it does not assert is three level flattening, because that does not work. See
-    /// issue #56; the case is here and marked so it is not mistaken for coverage.
+    /// Three level flattening is asserted here now. It was not when this file was written: the
+    /// assertion recorded the empty string and cited issue #56, and inverting it is what closing
+    /// that issue looked like.
     /// </remarks>
     [Collection("StaticMapperTests")]
     public class ComplexAggregateTests
@@ -261,16 +262,16 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void ThreeLevelFlatteningDoesNotResolveYet()
+        public void ThreeLevelFlatteningResolves()
         {
-            // Recorded, not endorsed. AutoMapper and Mapperly both fill this from
-            // Customer.Address.City and Mapsicle leaves it empty, because flattening descends one
-            // level. Issue #56. Inverting this assertion is what closing that issue looks like.
+            // This asserted the empty string and cited issue #56, because flattening descended one
+            // level and left the member at its initialiser while AutoMapper and Mapperly both
+            // filled it. Inverting it is what closing #56 looked like.
             Mapper.ClearCache();
 
             var dto = ((object)Build()).MapTo<CxOrderDto>();
 
-            Assert.Equal("", dto!.CustomerAddressCity);
+            Assert.Equal("Cebu", dto!.CustomerAddressCity);
         }
 
         [Fact]
