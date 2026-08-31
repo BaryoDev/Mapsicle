@@ -53,9 +53,14 @@ Coming from AutoMapper? [docs/migrating-from-automapper.md](docs/migrating-from-
 
 ### When Mapsicle is the right choice, and when it is not
 
-Speed is the weakest argument for this library, so it is not the one to lead with. Against a source
-generator Mapsicle loses on speed and always will. What it offers is mappings that do not have to
-be known when you compile.
+This section used to open by saying Mapsicle loses to a source generator on speed and always will.
+That stopped being true in 2.2.0: declare a pair and it is measured at 1.00x hand written code on a
+nine type aggregate, against Mapperly's 1.08 to 1.12, and it allocates less. Undeclared pairs are a
+different story and are still 1.77x.
+
+So the honest framing is that speed depends entirely on whether you declared the pair, and the
+argument that does not depend on anything is the licence and the mappings that cannot be known when
+you compile.
 
 **Reach for Mapsicle when:**
 
@@ -72,9 +77,10 @@ be known when you compile.
 
 | Situation | Choose |
 | :-------- | :----- |
-| Every mapping is known at compile time and you will declare them | **Mapperly.** 2.5x to 3x faster and indistinguishable from hand-written code. |
-| Collection throughput at around a hundred elements is what your workload is bounded by | **Mapperly**, by about 12 percent over Mapsicle on x64. Mapsicle is ahead of AutoMapper on both architectures. |
-| You need AOT with no runtime code generation | **Mapperly.** Mapsicle compiles expression trees at first use. |
+| The compiler must prove every pair maps | **Mapperly.** A pair it cannot generate does not compile. Mapsicle warns with `MSG001` and falls back, which is safer at run time and weaker as a guarantee. |
+| A rename must never silently unmap a member | **Mapperly.** Its `[MapProperty]` uses `nameof`, so a rename is a compile error. Mapsicle's `[MapFrom]` takes a string and quietly stops matching. |
+| You need AOT with no path that can fall back to runtime code generation | **Mapperly.** Mapsicle's declared pairs are AOT clean, but an undeclared one compiles an expression tree at first use, and nothing stops you leaving one undeclared by accident. |
+| Collection throughput at around a hundred elements bounds your workload | **Mapperly**, by about 12 percent over an undeclared Mapsicle pair on x64. A declared pair closes that. |
 
 Mapsicle is 1.30x to 1.44x faster than AutoMapper on single objects depending on the architecture,
 1.09x to 1.20x on collections, and faster again on deeply nested graphs and large collections. That
@@ -706,7 +712,8 @@ Numeric widening, enum into a string, enum into a different enum by name, `DateT
 `DateTimeOffset`, nullable lifting, nested objects, `List<T>` and array collections, and flattened
 paths up to four levels deep.
 
-Three things are refused on purpose, and each is a refusal rather than a gap:
+These are refused on purpose, and each is a refusal rather than a gap. A refused pair reports
+`MSG001`, keeps mapping through the engine, and the call site does not change:
 
 - **A cyclic graph.** Generated code has no depth ceiling and the engine has one, so emitting a mapper
   that follows a cycle would produce a lane that aborts the process where the other returns.
@@ -715,8 +722,13 @@ Three things are refused on purpose, and each is a refusal rather than a gap:
 - **Anything into a string that is not an enum.** The engine formats through
   `CultureInfo.InvariantCulture`, and re-deriving that in the emitter is how two implementations of
   one rule start disagreeing.
-
-A refusal reports `MSG001`, the build carries on, and the call site does not change.
+- **A public field on either side, or a getter-only collection.** The engine copies fields and fills
+  setterless collections in place; generated code can do neither, so emitting the pair would return
+  less than the engine does.
+- **A `required` destination member nothing maps to.** Reflection may leave one unset and an object
+  initializer may not, so emitting it would fail your build inside a file you cannot edit.
+- **A source or destination the emitter cannot express**: a cyclic graph, a generic type, a
+  non-public type, or a destination with no public parameterless constructor.
 
 Two things to know before using it on your own code. The generated extension is **internal to the
 assembly that declares the pair**, so declaring it in one project does nothing for another. And if

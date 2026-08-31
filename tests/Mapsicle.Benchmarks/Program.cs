@@ -1411,6 +1411,8 @@ public class GeneratedVersusHandwritten
         _order = AgHandwritten.Build();
         _ = AgHandwritten.Map(_order);
         _ = _order.MapTo<AgOrderDto>();
+
+        AgHandwritten.AssertLanesAgree(_order);
     }
 
     [Benchmark(Baseline = true)]

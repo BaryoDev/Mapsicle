@@ -29,7 +29,7 @@ single object, 5 properties   57.8 ns     83.2 ns   18.8 ns  1.44x faster
 flattening                    64.9 ns    101.2 ns   21.1 ns  1.56x faster
 collection of 100            2,175 ns    2,618 ns  1,933 ns  1.20x faster</code></pre>
 
-<p><strong>arm64, idle 4 core Ampere VM, median of three runs</strong></p>
+<p><strong>arm64, idle 4 core Ampere VM</strong> (the figures as published; the README carries the maintained set and states six runs)</p>
 
 <pre><code>scenario                 Mapsicle  AutoMapper  vs AutoMapper
 single object            101.2 ns    131.3 ns  1.30x faster
@@ -100,7 +100,7 @@ array collection PasswordHash='SECRET-HASH'  Ignore honoured: False</code></pre>
 
 <h2>What is next</h2>
 
-<p>2.2 absorbs a source generator as an opt in lane behind the same API, so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads. This paragraph originally said the aim was not to beat Mapperly, which cannot be beaten at being Mapperly. That turned out to be wrong: measured against the same projection written by hand, a declared pair is 1.00x and Mapperly is 1.12x.</p>
+<p>2.2 absorbs a source generator as an opt-in lane behind the same API, so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads.</p>
 
 <h2>A note on the numbers</h2>
 

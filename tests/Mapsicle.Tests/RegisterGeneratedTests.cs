@@ -111,7 +111,7 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void ARegistrationSurvivesARacingFirstMap()
+        public async System.Threading.Tasks.Task ARegistrationSurvivesARacingFirstMap()
         {
             // Both calls complete and the registration used to lose. Thread A takes the cold path,
             // spends a slow Expression.Compile and writes the typed cache; thread B registers; A
@@ -137,7 +137,7 @@ namespace Mapsicle.Tests
                     RegisterMarker();
                 });
 
-                System.Threading.Tasks.Task.WaitAll(mapFirst, register);
+                await System.Threading.Tasks.Task.WhenAll(mapFirst, register);
 
                 if (Sample().MapTo<RgSource, RgDest>()!.Name != Marker) lost++;
             }

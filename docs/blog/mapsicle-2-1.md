@@ -38,7 +38,7 @@ because one is not evidence of anything portable. Against AutoMapper 15.1.3.
 | flattening | 64.9 ns | 101.2 ns | 21.1 ns | 1.56x faster |
 | collection of 100 | 2,175 ns | 2,618 ns | 1,933 ns | 1.20x faster |
 
-**arm64, idle 4 core Ampere VM, median of three runs:**
+**arm64, idle 4 core Ampere VM (the figures as published; the README carries the maintained set and states six runs):**
 
 | scenario | Mapsicle | AutoMapper | vs AutoMapper |
 | :--- | ---: | ---: | :--- |
@@ -153,11 +153,7 @@ reports what has been compiled.
 
 ## What is next
 
-2.2 absorbs a source generator as an opt in lane behind the same API, so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads. This paragraph originally said the aim was not to beat Mapperly, which cannot be beaten at being Mapperly. That turned out to be wrong: measured against the same projection written by hand, a declared pair is 1.00x and Mapperly is 1.12x.
-cannot be beaten at being Mapperly, but so that pairs known at compile time stop paying for the
-apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is
-made from how it is used, so the generator emits the same delegate as plain C# at build time and
-registers it into the cache the engine already reads.
+2.2 absorbs a source generator as an opt-in lane behind the same API, so that pairs known at compile time stop paying for the apparatus while pairs discovered at runtime still work. The engine already separates how a mapper is made from how it is used, so the generator emits the same delegate as plain C# at build time and registers it into the cache the engine already reads.
 
 ## A note on the numbers
 

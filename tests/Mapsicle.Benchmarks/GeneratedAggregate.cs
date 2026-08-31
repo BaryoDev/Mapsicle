@@ -126,6 +126,62 @@ namespace Mapsicle.Benchmarks
             return new AgLineDto { Quantity = l.Quantity, Sku = l.Sku, Discounts = discounts };
         }
 
+        /// <summary>Fails before a single timing is taken if the two rows map differently.</summary>
+        /// <remarks>
+        /// Warming both lanes is not checking them. A generated mapper that drops a member, or
+        /// converts one differently, is faster than one that does not, and both the time bound and
+        /// the allocation bound would have reported that as a pass. Every member of the graph is
+        /// compared, including inside both collections, because the members most likely to be
+        /// dropped are the ones furthest from the root.
+        /// </remarks>
+        public static void AssertLanesAgree(AgOrder order)
+        {
+            var hand = Map(order);
+            var generated = order.MapTo<AgOrderDto>()
+                ?? throw new InvalidOperationException("the generated lane returned null");
+
+            var differences = new List<string>();
+
+            void Same(string name, object? a, object? b)
+            {
+                if (!Equals(a, b)) differences.Add($"{name}: hand written={a ?? "null"} generated={b ?? "null"}");
+            }
+
+            Same(nameof(hand.Id), hand.Id, generated.Id);
+            Same(nameof(hand.Reference), hand.Reference, generated.Reference);
+            Same(nameof(hand.State), hand.State, generated.State);
+            Same(nameof(hand.Channel), hand.Channel, generated.Channel);
+            Same(nameof(hand.Total), hand.Total, generated.Total);
+            Same(nameof(hand.PlacedOn), hand.PlacedOn, generated.PlacedOn);
+            Same(nameof(hand.ShippedOn), hand.ShippedOn, generated.ShippedOn);
+            Same(nameof(hand.CustomerFullName), hand.CustomerFullName, generated.CustomerFullName);
+            Same(nameof(hand.CustomerAddressCity), hand.CustomerAddressCity, generated.CustomerAddressCity);
+            Same("Customer.FullName", hand.Customer.FullName, generated.Customer.FullName);
+            Same("Customer.Address.City", hand.Customer.Address.City, generated.Customer.Address.City);
+            Same("Customer.Address.Country.Iso", hand.Customer.Address.Country.Iso, generated.Customer.Address.Country.Iso);
+            Same("Lines.Count", hand.Lines.Count, generated.Lines.Count);
+
+            for (var i = 0; i < Math.Min(hand.Lines.Count, generated.Lines.Count); i++)
+            {
+                Same($"Lines[{i}].Quantity", hand.Lines[i].Quantity, generated.Lines[i].Quantity);
+                Same($"Lines[{i}].Sku", hand.Lines[i].Sku, generated.Lines[i].Sku);
+                Same($"Lines[{i}].Discounts.Count", hand.Lines[i].Discounts.Count, generated.Lines[i].Discounts.Count);
+
+                for (var j = 0; j < Math.Min(hand.Lines[i].Discounts.Count, generated.Lines[i].Discounts.Count); j++)
+                {
+                    Same($"Lines[{i}].Discounts[{j}].Code", hand.Lines[i].Discounts[j].Code, generated.Lines[i].Discounts[j].Code);
+                    Same($"Lines[{i}].Discounts[{j}].Percent", hand.Lines[i].Discounts[j].Percent, generated.Lines[i].Discounts[j].Percent);
+                }
+            }
+
+            if (differences.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "the generated lane and the hand written baseline map differently, so timing them "
+                    + "would compare different work:\n  " + string.Join("\n  ", differences));
+            }
+        }
+
         public static AgOrder Build() => new()
         {
             Id = 1001,
