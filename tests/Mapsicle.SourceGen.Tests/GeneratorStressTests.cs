@@ -19,6 +19,7 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StDeepInherit), typeof(Mapsicle.SourceGen.Tests.StDeepInheritDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StManyMembers), typeof(Mapsicle.SourceGen.Tests.StManyMembersDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StFlattenSource), typeof(Mapsicle.SourceGen.Tests.StFlattenDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.StRefused), typeof(Mapsicle.SourceGen.Tests.StRefusedDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -26,6 +27,14 @@ namespace Mapsicle.SourceGen.Tests
 
     public class StWidening { public int Amount { get; set; } }
     public class StWideningDto { public long Amount { get; set; } }
+
+    // Still refused, and the pair that keeps ARefusedPairIsNotSilentlyGeneratedShort honest.
+    // decimal into string is a conversion the engine performs, through
+    // CultureInfo.InvariantCulture, and the emitter deliberately has no rule for it: re-deriving
+    // invariant formatting is exactly the drift the generator is on parole for. Kept refused on
+    // purpose, so replace this type rather than "fixing" it if that ever changes.
+    public class StRefused { public decimal Amount { get; set; } = 1234.5m; public int Id { get; set; } = 3; }
+    public class StRefusedDto { public string Amount { get; set; } = ""; public int Id { get; set; } }
 
     public class StEnumToString { public StColour Colour { get; set; } }
     public class StEnumToStringDto { public string Colour { get; set; } = ""; }
@@ -239,11 +248,48 @@ namespace Mapsicle.SourceGen.Tests
                 .Select(k => k.ToString() ?? "")
                 .ToList();
 
-            // StWidening's only member cannot be emitted, so the pair must not be registered.
-            Assert.DoesNotContain(keys, k => k.Contains(nameof(StWidening), StringComparison.Ordinal));
+            // StRefused has an int the emitter can copy and a decimal into string it cannot, so the
+            // pair must not be registered. This used to be StWidening, which stopped being a refusal
+            // when widening became an emitted rule: the assertion still passed for a while because
+            // the pair was generated and the name check was on the wrong type, which is why the
+            // positive control below matters as much as this one.
+            Assert.DoesNotContain(keys, k => k.Contains(nameof(StRefused), StringComparison.Ordinal));
 
             // StManyMembers is entirely identical-typed, so it must be.
             Assert.Contains(keys, k => k.Contains(nameof(StManyMembers), StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void TheShapesThisSuiteCoversAreActuallyGenerated()
+        {
+            // Without this the suite is decorative. Every AgreesWithTheEngine case compares the
+            // untyped door against the engine, and a refused pair puts the engine on both sides, so
+            // it agrees with itself and the test passes while proving nothing about generated code.
+            // Widening, enum to string, nested, collection and flattening all passed that way before
+            // any of them was emitted.
+            var registry = typeof(Mapper)
+                .GetField("_generatedPairs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                !.GetValue(null)!;
+
+            var keys = ((System.Collections.IEnumerable)registry.GetType().GetProperty("Keys")!.GetValue(registry)!)
+                .Cast<object>()
+                .Select(k => k.ToString() ?? "")
+                .ToList();
+
+            var expected = new[]
+            {
+                nameof(StWidening), nameof(StEnumToString), nameof(StNested),
+                nameof(StCollection), nameof(StNullableToValue), nameof(StValueToNullable),
+                nameof(StDeepInherit), nameof(StManyMembers), nameof(StFlattenSource),
+            };
+
+            var missing = expected
+                .Where(name => !keys.Any(k => k.Contains(name, StringComparison.Ordinal)))
+                .ToArray();
+
+            Assert.True(missing.Length == 0,
+                "these shapes are declared and the generator refused them, so the cases covering them "
+                + "are running the engine against itself:\n  " + string.Join("\n  ", missing));
         }
     }
 }

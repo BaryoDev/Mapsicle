@@ -12,6 +12,13 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfDerived), typeof(Mapsicle.SourceGen.Tests.ConfDerivedDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCasing), typeof(Mapsicle.SourceGen.Tests.ConfCasingDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfPartial), typeof(Mapsicle.SourceGen.Tests.ConfPartialDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfWiden), typeof(Mapsicle.SourceGen.Tests.ConfWidenDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfEnumText), typeof(Mapsicle.SourceGen.Tests.ConfEnumTextDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCrossEnum), typeof(Mapsicle.SourceGen.Tests.ConfCrossEnumDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfStamp), typeof(Mapsicle.SourceGen.Tests.ConfStampDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfNest), typeof(Mapsicle.SourceGen.Tests.ConfNestDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfList), typeof(Mapsicle.SourceGen.Tests.ConfListDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfFlatten), typeof(Mapsicle.SourceGen.Tests.ConfFlattenDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -58,6 +65,40 @@ namespace Mapsicle.SourceGen.Tests
 
     public class ConfPartial { public int Kept { get; set; } public string Dropped { get; set; } = ""; }
     public class ConfPartialDto { public int Kept { get; set; } public string Absent { get; set; } = "not-mapped"; }
+
+
+    // ---- shapes the emitter learned when it was widened -----------------------------------------
+
+    public class ConfWiden { public int Amount { get; set; } public int? Maybe { get; set; } public short Small { get; set; } }
+    public class ConfWidenDto { public long Amount { get; set; } public long? Maybe { get; set; } public decimal Small { get; set; } }
+
+    public class ConfEnumText { public ConfColour Colour { get; set; } public ConfColour? Maybe { get; set; } }
+    public class ConfEnumTextDto { public string Colour { get; set; } = ""; public string Maybe { get; set; } = ""; }
+
+    // Amber sits at a different value in each, so a rule matching by value gives a number the
+    // destination declares no member for and this row goes red.
+    public enum ConfLeft { Unset = 0, Teal = 1, Amber = 7 }
+    public enum ConfRight { Unset = 0, Amber = 2, Teal = 5 }
+    public class ConfCrossEnum { public ConfLeft Colour { get; set; } public ConfLeft? Maybe { get; set; } }
+    public class ConfCrossEnumDto { public ConfRight Colour { get; set; } public ConfRight? Maybe { get; set; } }
+
+    public class ConfStamp { public DateTime At { get; set; } public DateTime? Maybe { get; set; } }
+    public class ConfStampDto { public DateTimeOffset At { get; set; } public DateTimeOffset? Maybe { get; set; } }
+
+    public class ConfInner2 { public string City { get; set; } = ""; public ConfDeep? Deep { get; set; } }
+    public class ConfDeep { public string Iso { get; set; } = ""; }
+    public class ConfInner2Dto { public string City { get; set; } = ""; public ConfDeepDto? Deep { get; set; } }
+    public class ConfDeepDto { public string Iso { get; set; } = ""; }
+    public class ConfNest { public ConfInner2? Inner { get; set; } }
+    public class ConfNestDto { public ConfInner2Dto? Inner { get; set; } }
+
+    public class ConfItem { public string Sku { get; set; } = ""; public int Qty { get; set; } }
+    public class ConfItemDto { public string Sku { get; set; } = ""; public int Qty { get; set; } }
+    public class ConfList { public List<ConfItem> Items { get; set; } = new(); public int[] Numbers { get; set; } = System.Array.Empty<int>(); }
+    public class ConfListDto { public List<ConfItemDto> Items { get; set; } = new(); public List<int> Numbers { get; set; } = new(); }
+
+    public class ConfFlatten { public ConfInner2? Inner { get; set; } }
+    public class ConfFlattenDto { public string InnerCity { get; set; } = ""; public string InnerDeepIso { get; set; } = ""; }
 
     /// <summary>
     /// One table of cases, run through the runtime lane and the generated lane, asserting they agree.
@@ -181,10 +222,113 @@ namespace Mapsicle.SourceGen.Tests
                 new ConfFlat { Id = 0, Name = "" },
                 d => d.Id, d => d.Name);
 
-        // ---- refusals ---------------------------------------------------------------------------
 
-        public class ConfWiden { public int Amount { get; set; } }
-        public class ConfWidenDto { public long Amount { get; set; } }
+        // ---- the widened rules -------------------------------------------------------------------
+
+        [Fact]
+        public void WideningAgrees() =>
+            LanesAgree<ConfWiden, ConfWidenDto>(
+                new ConfWiden { Amount = 7, Maybe = 3, Small = 5 },
+                d => d.Amount, d => d.Maybe, d => d.Small);
+
+        [Fact]
+        public void WideningANullNullableAgrees() =>
+            LanesAgree<ConfWiden, ConfWidenDto>(
+                new ConfWiden { Amount = 0, Maybe = null, Small = 0 },
+                d => d.Amount, d => d.Maybe, d => d.Small);
+
+        [Fact]
+        public void AnEnumIntoAStringAgrees() =>
+            LanesAgree<ConfEnumText, ConfEnumTextDto>(
+                new ConfEnumText { Colour = ConfColour.Amber, Maybe = ConfColour.Teal },
+                d => d.Colour, d => d.Maybe);
+
+        [Fact]
+        public void ANullEnumIntoAStringAgrees() =>
+            LanesAgree<ConfEnumText, ConfEnumTextDto>(
+                new ConfEnumText { Colour = ConfColour.Unset, Maybe = null },
+                d => d.Colour, d => d.Maybe);
+
+        [Fact]
+        public void AnEnumIntoADifferentEnumAgrees() =>
+            LanesAgree<ConfCrossEnum, ConfCrossEnumDto>(
+                new ConfCrossEnum { Colour = ConfLeft.Amber, Maybe = ConfLeft.Teal },
+                d => d.Colour, d => d.Maybe);
+
+        [Fact]
+        public void ANullCrossEnumAgrees() =>
+            LanesAgree<ConfCrossEnum, ConfCrossEnumDto>(
+                new ConfCrossEnum { Colour = ConfLeft.Unset, Maybe = null },
+                d => d.Colour, d => d.Maybe);
+
+        [Fact]
+        public void ADateTimeIntoAnOffsetAgrees() =>
+            LanesAgree<ConfStamp, ConfStampDto>(
+                new ConfStamp
+                {
+                    At = new DateTime(2026, 8, 31, 10, 0, 0, DateTimeKind.Utc),
+                    Maybe = new DateTime(2026, 9, 1, 11, 0, 0, DateTimeKind.Utc),
+                },
+                d => d.At, d => d.Maybe);
+
+        [Fact]
+        public void ANullDateTimeIntoAnOffsetAgrees() =>
+            LanesAgree<ConfStamp, ConfStampDto>(
+                new ConfStamp { At = default, Maybe = null },
+                d => d.At, d => d.Maybe);
+
+        [Fact]
+        public void ANestedObjectAgrees() =>
+            LanesAgree<ConfNest, ConfNestDto>(
+                new ConfNest { Inner = new ConfInner2 { City = "Cebu", Deep = new ConfDeep { Iso = "PH" } } },
+                d => d.Inner!.City, d => d.Inner!.Deep!.Iso);
+
+        [Fact]
+        public void ANullNestedObjectAgrees() =>
+            LanesAgree<ConfNest, ConfNestDto>(new ConfNest { Inner = null }, d => d.Inner);
+
+        [Fact]
+        public void ANestedObjectWithANullChildAgrees() =>
+            LanesAgree<ConfNest, ConfNestDto>(
+                new ConfNest { Inner = new ConfInner2 { City = "Cebu", Deep = null } },
+                d => d.Inner!.City, d => d.Inner!.Deep);
+
+        [Fact]
+        public void ACollectionAgrees() =>
+            LanesAgree<ConfList, ConfListDto>(
+                new ConfList
+                {
+                    Items = { new ConfItem { Sku = "a", Qty = 1 }, new ConfItem { Sku = "b", Qty = 2 } },
+                    Numbers = new[] { 3, 4, 5 },
+                },
+                d => d.Items.Count, d => d.Items[0].Sku, d => d.Items[1].Qty,
+                d => d.Numbers.Count, d => d.Numbers[2]);
+
+        [Fact]
+        public void AnEmptyCollectionAgrees() =>
+            LanesAgree<ConfList, ConfListDto>(
+                new ConfList(), d => d.Items.Count, d => d.Numbers.Count);
+
+        [Fact]
+        public void FlatteningAgrees() =>
+            LanesAgree<ConfFlatten, ConfFlattenDto>(
+                new ConfFlatten { Inner = new ConfInner2 { City = "Cebu", Deep = new ConfDeep { Iso = "PH" } } },
+                d => d.InnerCity, d => d.InnerDeepIso);
+
+        [Fact]
+        public void FlatteningThroughANullIntermediateAgrees() =>
+            // The one most likely to drift: the engine yields the destination default rather than
+            // throwing, and generated code has to write that guard out by hand at every hop.
+            LanesAgree<ConfFlatten, ConfFlattenDto>(
+                new ConfFlatten { Inner = null }, d => d.InnerCity, d => d.InnerDeepIso);
+
+        [Fact]
+        public void FlatteningThroughAPartiallyNullPathAgrees() =>
+            LanesAgree<ConfFlatten, ConfFlattenDto>(
+                new ConfFlatten { Inner = new ConfInner2 { City = "Cebu", Deep = null } },
+                d => d.InnerCity, d => d.InnerDeepIso);
+
+        // ---- refusals ---------------------------------------------------------------------------
 
         public class ConfInner { public string City { get; set; } = ""; }
         public class ConfInnerDto { public string City { get; set; } = ""; }
@@ -192,18 +336,11 @@ namespace Mapsicle.SourceGen.Tests
         public class ConfNestedDto { public ConfInnerDto? Inner { get; set; } }
 
         [Fact]
-        public void AWideningPairIsRefusedAndStillMapsThroughTheEngine()
+        public void AnUndeclaredPairStillMapsThroughTheEngine()
         {
-            // Not declared for generation, because the emitter has no widening rule and guessing one
-            // is how the two lanes start disagreeing. The engine still performs it.
-            var dto = ((object)new ConfWiden { Amount = 7 }).MapTo<ConfWidenDto>();
-
-            Assert.Equal(7L, dto!.Amount);
-        }
-
-        [Fact]
-        public void ANestedPairIsRefusedAndStillMapsThroughTheEngine()
-        {
+            // The property that makes the attribute safe to add or leave off: a pair nobody declared
+            // is untouched, and the call site is the same either way. Widening and nesting are both
+            // emitted rules now, so this pair is undeclared rather than refused.
             var dto = ((object)new ConfNested { Inner = new ConfInner { City = "Cebu" } }).MapTo<ConfNestedDto>();
 
             Assert.Equal("Cebu", dto!.Inner?.City);
@@ -255,8 +392,10 @@ namespace Mapsicle.SourceGen.Tests
 
             var covered = new[]
             {
-                nameof(ConfCasing), nameof(ConfDerived), nameof(ConfFlat),
-                nameof(ConfKinds), nameof(ConfNullable), nameof(ConfPartial),
+                nameof(ConfCasing), nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumText),
+                nameof(ConfFlat), nameof(ConfFlatten), nameof(ConfKinds), nameof(ConfList),
+                nameof(ConfNest), nameof(ConfNullable), nameof(ConfPartial), nameof(ConfStamp),
+                nameof(ConfWiden),
             };
 
             Assert.Equal(covered, declared);
