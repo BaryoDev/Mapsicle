@@ -60,17 +60,23 @@ namespace Mapsicle
         {
             var entry = new Lazy<TValue>(() => value, LazyThreadSafetyMode.ExecutionAndPublication);
 
-            if (_cache.TryGetValue(key, out _))
+            // TryAdd decides new against replace, rather than a TryGetValue followed by a write.
+            // With the two-step version a GetOrAdd landing between the look and the write made both
+            // paths count an add, and nothing ever corrects the count: measured at 117,389 against
+            // 100,000 real entries over paired threads. TryEvict loops while the count exceeds
+            // capacity, so a drifted count trims real entries until the cache holds capacity minus
+            // the drift, which is the failure the Lazy wrapper was added to end.
+            if (_cache.TryAdd(key, entry))
             {
-                _cache[key] = entry;
+                Interlocked.Increment(ref _approximateCount);
                 MarkRecentlyUsed(key);
+                TryEvict();
                 return;
             }
 
+            // Already present. Replace it without touching the count.
             _cache[key] = entry;
-            Interlocked.Increment(ref _approximateCount);
             MarkRecentlyUsed(key);
-            TryEvict();
         }
 
         public TValue GetOrAdd(TKey key, Func<TKey, TValue> factory)

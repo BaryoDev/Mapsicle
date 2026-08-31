@@ -550,8 +550,25 @@ namespace Mapsicle
         /// </remarks>
         private static void TrimTypedCache()
         {
-            while (_typedCacheResetters.Count > _maxCacheSize && _typedCacheOrder.TryDequeue(out var oldest))
+            // A generated registration is never evicted. The order is first in, and module
+            // initializers run first, so registrations were always the oldest and went first: under
+            // the bounded cache a declared pair degraded to the engine lane permanently once enough
+            // other pairs had been mapped, because the rebuild path does not consult the registry.
+            // The untyped cache already treats registrations this way, since Set never enqueues into
+            // the access order. This makes the typed side agree.
+            var scanned = 0;
+            var capacity = _typedCacheOrder.Count;
+
+            while (_typedCacheResetters.Count > _maxCacheSize
+                   && scanned++ < capacity
+                   && _typedCacheOrder.TryDequeue(out var oldest))
             {
+                if (_generatedPairs.ContainsKey(oldest))
+                {
+                    _typedCacheOrder.Enqueue(oldest);
+                    continue;
+                }
+
                 if (_typedCacheResetters.TryRemove(oldest, out var reset))
                 {
                     reset();
@@ -567,9 +584,39 @@ namespace Mapsicle
 
             public static TypedMapperCacheEntry<TSource, TDest>? Entry => _entry;
 
-            public static void Initialize(Func<TSource, TDest> mapper, bool requiresDepthTracking)
+            /// <summary>Stores an entry, unconditionally. Only a registration may call this.</summary>
+            public static void Initialize(Func<TSource, TDest> mapper, bool requiresDepthTracking) =>
+                Store(new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking));
+
+            /// <summary>Stores an entry the engine compiled, and yields to anything already there.</summary>
+            /// <remarks>
+            /// An unconditional write here lost completed registrations. Thread A takes the cold
+            /// path, spends a slow Expression.Compile, and writes; thread B calls RegisterGenerated
+            /// and writes; A finishes last and its engine-built entry wins. Both calls returned
+            /// successfully and the registration was gone for the rest of the process, because the
+            /// cold path never runs again and nothing rechecks the registry. Measured at roughly two
+            /// thirds of three thousand interleavings, and it left the typed and untyped doors
+            /// answering differently for the same pair.
+            ///
+            /// A registration is a statement about the pair; an engine build is a cache fill. The
+            /// cache fill is the one that gives way.
+            /// </remarks>
+            public static void InitializeFromEngine(Func<TSource, TDest> mapper, bool requiresDepthTracking)
             {
-                _entry = new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking);
+                var candidate = new TypedMapperCacheEntry<TSource, TDest>(mapper, requiresDepthTracking);
+                if (System.Threading.Interlocked.CompareExchange(ref _entry, candidate, null) != null) return;
+
+                Register();
+            }
+
+            private static void Store(TypedMapperCacheEntry<TSource, TDest> entry)
+            {
+                _entry = entry;
+                Register();
+            }
+
+            private static void Register()
+            {
 
                 var key = (typeof(TSource), typeof(TDest));
                 if (_typedCacheResetters.TryAdd(key, static () => _entry = null))
@@ -761,8 +808,8 @@ namespace Mapsicle
             bool requiresDepthTracking = HasNestedComplexTypes(sourceType);
             var mapper = BuildTypedMapper<TSource, TDest>();
 
-            // Single atomic write of immutable entry
-            TypedMapperCache<TSource, TDest>.Initialize(mapper, requiresDepthTracking);
+            // The yielding write, because a registration may have landed while this was compiling.
+            TypedMapperCache<TSource, TDest>.InitializeFromEngine(mapper, requiresDepthTracking);
 
             // Execute with depth tracking if needed
             if (requiresDepthTracking)

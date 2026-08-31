@@ -111,6 +111,79 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
+        public void ARegistrationSurvivesARacingFirstMap()
+        {
+            // Both calls complete and the registration used to lose. Thread A takes the cold path,
+            // spends a slow Expression.Compile and writes the typed cache; thread B registers; A
+            // finishes last and overwrites. It stayed lost for the rest of the process, because the
+            // cold path never runs again, and it left the typed and untyped doors disagreeing.
+            // Measured at roughly two thirds of three thousand interleavings before the fix.
+            var lost = 0;
+
+            for (var i = 0; i < 200; i++)
+            {
+                Mapper.ResetGeneratedRegistrations();
+                Mapper.ClearCache();
+
+                using var gate = new System.Threading.Barrier(2);
+                var mapFirst = System.Threading.Tasks.Task.Run(() =>
+                {
+                    gate.SignalAndWait();
+                    _ = Sample().MapTo<RgSource, RgDest>();
+                });
+                var register = System.Threading.Tasks.Task.Run(() =>
+                {
+                    gate.SignalAndWait();
+                    RegisterMarker();
+                });
+
+                System.Threading.Tasks.Task.WaitAll(mapFirst, register);
+
+                if (Sample().MapTo<RgSource, RgDest>()!.Name != Marker) lost++;
+            }
+
+            Assert.True(lost == 0, $"the registration was lost to a racing first map {lost} times in 200");
+        }
+
+        [Fact]
+        public void TheBoundedTypedCacheDoesNotEvictARegistration()
+        {
+            // First in, first out, and a module initializer runs first, so registrations were always
+            // the oldest and went first. The rebuild path does not consult the registry, so under the
+            // bounded cache a declared pair degraded to the engine permanently once enough other
+            // pairs had been mapped.
+            var previous = Mapper.UseLruCache;
+            var previousSize = Mapper.MaxCacheSize;
+
+            try
+            {
+                Mapper.ResetGeneratedRegistrations();
+                Mapper.UseLruCache = true;
+                Mapper.MaxCacheSize = 1;
+                Mapper.ClearCache();
+
+                RegisterMarker();
+                Assert.Equal(Marker, Sample().MapTo<RgSource, RgDest>()!.Name);
+
+                _ = new RgFillerOne { A = 1 }.MapTo<RgFillerOne, RgFillerOneDto>();
+                _ = new RgFillerTwo { A = 2 }.MapTo<RgFillerTwo, RgFillerTwoDto>();
+
+                Assert.Equal(Marker, Sample().MapTo<RgSource, RgDest>()!.Name);
+            }
+            finally
+            {
+                Mapper.UseLruCache = previous;
+                Mapper.MaxCacheSize = previousSize;
+                Mapper.ClearCache();
+            }
+        }
+
+        public class RgFillerOne { public int A { get; set; } }
+        public class RgFillerOneDto { public int A { get; set; } }
+        public class RgFillerTwo { public int A { get; set; } }
+        public class RgFillerTwoDto { public int A { get; set; } }
+
+        [Fact]
         public void RegisteringAfterMappingStillWinsUnderTheBoundedCache()
         {
             // The bounded cache stores through GetOrAdd, which keeps whichever entry arrived first.

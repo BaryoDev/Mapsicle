@@ -21,6 +21,7 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfFlatten), typeof(Mapsicle.SourceGen.Tests.ConfFlattenDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfLift), typeof(Mapsicle.SourceGen.Tests.ConfLiftDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCaseEnum), typeof(Mapsicle.SourceGen.Tests.ConfCaseEnumDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfControlled), typeof(Mapsicle.SourceGen.Tests.ConfControlledDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -115,6 +116,24 @@ namespace Mapsicle.SourceGen.Tests
     public enum ConfCaseTo { None = 0, BRAVO = 2, Bravo = 1 }
     public class ConfCaseEnum { public ConfCaseFrom Value { get; set; } }
     public class ConfCaseEnumDto { public ConfCaseTo Value { get; set; } }
+
+    // The two attributes that are controls rather than conventions. Section 6 says [IgnoreMap] is
+    // honoured on every entry point, and the generated one is the fastest entry point, so it is the
+    // one most worth pinning.
+    public class ConfControlled
+    {
+        public int Id { get; set; }
+        public bool IsAdmin { get; set; }
+        public string Actual { get; set; } = "";
+        public string Decoy { get; set; } = "";
+    }
+
+    public class ConfControlledDto
+    {
+        public int Id { get; set; }
+        [IgnoreMap] public bool IsAdmin { get; set; }
+        [MapFrom("Actual")] public string Decoy { get; set; } = "";
+    }
 
     /// <summary>
     /// One table of cases, run through the runtime lane and the generated lane, asserting they agree.
@@ -355,6 +374,15 @@ namespace Mapsicle.SourceGen.Tests
             LanesAgree<ConfCaseEnum, ConfCaseEnumDto>(
                 new ConfCaseEnum { Value = ConfCaseFrom.Bravo }, d => d.Value);
 
+        [Fact]
+        public void IgnoreMapAndMapFromAgree() =>
+            // A privilege escalation if the generated lane regresses: IsAdmin arrives true from a
+            // request body the engine would have refused, on every call site, process-wide, because
+            // the module initializer registers the pair before user code runs.
+            LanesAgree<ConfControlled, ConfControlledDto>(
+                new ConfControlled { Id = 4, IsAdmin = true, Actual = "real", Decoy = "decoy" },
+                d => d.Id, d => d.IsAdmin, d => d.Decoy);
+
         // ---- refusals ---------------------------------------------------------------------------
 
         public class ConfInner { public string City { get; set; } = ""; }
@@ -419,11 +447,10 @@ namespace Mapsicle.SourceGen.Tests
 
             var covered = new[]
             {
-                nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfCrossEnum), nameof(ConfDerived),
-                nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten), nameof(ConfKinds),
-                nameof(ConfLift), nameof(ConfList),
-                nameof(ConfNest), nameof(ConfNullable), nameof(ConfPartial), nameof(ConfStamp),
-                nameof(ConfWiden),
+                nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCrossEnum),
+                nameof(ConfDerived), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
+                nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfNest),
+                nameof(ConfNullable), nameof(ConfPartial), nameof(ConfStamp), nameof(ConfWiden),
             };
 
             Assert.Equal(covered, declared);
