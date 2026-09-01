@@ -132,5 +132,79 @@ namespace Mapsicle.Docs.Tests
                 "these packages ship and the README does not tell anyone:\n  " + string.Join("\n  ", missing));
         }
 
+        /// <summary>The licence is stated in four places and they all have to agree.</summary>
+        /// <remarks>
+        /// Section 1 of CLAUDE.md opens on the licence and says a claim nothing checks is a claim
+        /// that quietly stops being true. Nothing checked this one. The project moved from MPL-2.0 to
+        /// MIT across a LICENSE file, the package metadata that stamps every shipped package, a
+        /// README badge and the README footer, and the failure mode of missing one is a package whose
+        /// nuspec and whose LICENSE disagree about what the user is allowed to do.
+        /// </remarks>
+        [Fact]
+        public void TheLicenceAgreesEverywhereItIsStated()
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "Mapsicle.sln")))
+            {
+                root = root.Parent;
+            }
+
+            Assert.NotNull(root);
+
+            var licence = File.ReadAllText(Path.Combine(root!.FullName, "LICENSE"));
+            var props = File.ReadAllText(Path.Combine(root.FullName, "src", "Directory.Build.props"));
+            var readme = Readme();
+
+            var disagreements = new System.Collections.Generic.List<string>();
+
+            if (!licence.TrimStart().StartsWith("MIT License", StringComparison.Ordinal))
+            {
+                disagreements.Add("LICENSE does not begin with the MIT licence");
+            }
+
+            if (!props.Contains("<PackageLicenseExpression>MIT</PackageLicenseExpression>", StringComparison.Ordinal))
+            {
+                disagreements.Add("src/Directory.Build.props does not stamp MIT onto the packages");
+            }
+
+            // The props file sets the default and any project may override it, so the effective value
+            // per package is what matters. Reading the shared file alone would pass while one package
+            // shipped under a different licence.
+            foreach (var csproj in new DirectoryInfo(Path.Combine(root.FullName, "src")).GetFiles("*.csproj", SearchOption.AllDirectories))
+            {
+                var text = File.ReadAllText(csproj.FullName);
+                var expression = Regex.Match(text, @"<PackageLicenseExpression>\s*([^<\s]+)\s*</PackageLicenseExpression>");
+
+                if (expression.Success && expression.Groups[1].Value != "MIT")
+                {
+                    disagreements.Add($"{csproj.Name} overrides the licence with {expression.Groups[1].Value}");
+                }
+
+                if (text.Contains("<PackageLicenseFile>", StringComparison.Ordinal))
+                {
+                    disagreements.Add($"{csproj.Name} sets PackageLicenseFile, which overrides the expression");
+                }
+            }
+
+            if (!readme.Contains("License-MIT", StringComparison.Ordinal))
+            {
+                disagreements.Add("the README badge does not say MIT");
+            }
+
+            // The footer states it a second time, and is the half a search and replace misses.
+            if (!readme.Contains("MIT License \u00a9", StringComparison.Ordinal))
+            {
+                disagreements.Add("the README footer does not say MIT License");
+            }
+
+            if (readme.Contains("MPL", StringComparison.Ordinal) || licence.Contains("Mozilla Public", StringComparison.Ordinal))
+            {
+                disagreements.Add("a reference to the previous licence survives in the README or LICENSE");
+            }
+
+            Assert.True(disagreements.Count == 0,
+                "the licence does not agree with itself:\n  " + string.Join("\n  ", disagreements));
+        }
+
     }
 }

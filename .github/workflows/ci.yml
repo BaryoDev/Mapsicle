@@ -176,10 +176,11 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-  # AutoMapper is RPL-1.5 or a paid licence, and the entire reason to choose Mapsicle is that it is
-  # MPL-2.0. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so the
-  # comparison is fine. A reference reaching src/ would make the shipped packages carry a reciprocal
-  # licence obligation and destroy the positioning, so it is worth more than a code review.
+  # AutoMapper is RPL-1.5 or a paid licence. Mapsicle is MIT, and that is exactly why this boundary
+  # matters: a reference reaching src/ would put a reciprocal obligation on every shipped package
+  # regardless of what this project's own licence says, which is the one way an MIT package can stop
+  # being safe to take. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so
+  # the comparison itself is fine. Worth more than a code review.
   parity:
     name: never worse than AutoMapper
     runs-on: ubuntu-latest

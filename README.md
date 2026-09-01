@@ -5,7 +5,7 @@
 [![CI](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml/badge.svg)](https://github.com/BaryoDev/Mapsicle/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/Mapsicle.svg)](https://www.nuget.org/packages/Mapsicle)
 [![Downloads](https://img.shields.io/nuget/dt/Mapsicle.svg)](https://www.nuget.org/packages/Mapsicle)
-[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub_Sponsors-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/arnelirobles)
 
@@ -50,7 +50,8 @@ Coming from AutoMapper? [docs/migrating-from-automapper.md](docs/migrating-from-
 > Software, which includes a free Community License for those who qualify. Earlier versions keep
 > their original licence. RPL-1.5 is strong reciprocal: its source obligations reach software that
 > is only deployed internally, not just software you distribute. Check the terms against your own
-> situation rather than taking this paragraph as advice. Mapsicle is MPL 2.0.
+> situation rather than taking this paragraph as advice. Mapsicle is MIT, the same licence as
+> Mapperly and Mapster, so moving to it does not trade one licence question for another.
 
 ### When Mapsicle is the right choice, and when it is not
 
@@ -91,7 +92,7 @@ is real and it is measured below, but it is a supporting argument rather than th
 
 | Feature              | Mapsicle         | AutoMapper   | Mapperly     |
 | :------------------- | :--------------- | :----------- | :----------- |
-| **License**          | **MPL 2.0**   | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
+| **License**          | **MIT**       | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
 | **Architecture**     | Runtime + Caching, with an opt-in source generator | Runtime + Expressions | Source Generator |
 | **Setup Required**   | **None**, or one line per pair to bind it at compile time | Profiles, DI | Partial class |
 | **Dependencies**     | **0** (core)     | 8            | 0 (compile-time) |
@@ -214,7 +215,7 @@ loops side by side.
 | **A large graph you do not want to declare** | **Mapsicle** | An undeclared pair still maps, at 1.77x hand written and still 1.4x faster than AutoMapper |
 | **Need integrated validation** | **Mapsicle** | `Mapsicle.Validation`, no equivalent in either |
 | **Existing AutoMapper codebase** | **AutoMapper** (if licensed) or migrate | |
-| **Budget-conscious or OSS project** | **Mapsicle** or **Mapperly** | MPL-2.0 and MIT respectively |
+| **Budget-conscious or OSS project** | **Mapsicle** or **Mapperly** | Both MIT. Permissive, and both ask only that the copyright and permission notice travels with the code. |
 | **Complex mapping configurations** | **AutoMapper** or **Mapsicle** (fluent) | |
 | **ASP.NET Core Minimal APIs** | **Mapsicle** (AspNetCore package) | |
 | **Need audit trail of changes** | **Mapsicle** (Audit package) | |
@@ -2361,7 +2362,7 @@ PRs welcome. Areas for contribution:
 
 ## License
 
-MPL 2.0 License © [Arnel Isiderio Robles](https://github.com/arnelirobles)
+MIT License © [Arnel Isiderio Robles](https://github.com/arnelirobles)
 
 ---
 

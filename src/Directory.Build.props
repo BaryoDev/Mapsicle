@@ -4,7 +4,7 @@
   <PropertyGroup>
     <Version>2.1.0</Version>
     <Authors>Arnel Isiderio Robles</Authors>
-    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/BaryoDev/Mapsicle</PackageProjectUrl>
     <RepositoryUrl>https://github.com/BaryoDev/Mapsicle</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
