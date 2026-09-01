@@ -14,8 +14,8 @@
 > **See it working:** [github.com/arnelirobles/mapsicle_samples](https://github.com/arnelirobles/mapsicle_samples)
 > maps one e-commerce order aggregate through Mapsicle, AutoMapper and Mapperly side by side, in a
 > CRUD API over SQLite, with an endpoint that reports where the three disagree. Declare a pair and
-> Mapsicle matches hand written code on that graph: 288.4 ns against 288.1, allocating the same
-> 1.41 KB.
+> Mapsicle matches hand written code on that graph: 287.7 ns against 288.5, allocating the same
+> 1.41 KB. Mapperly and Mapster are 1.08 and 1.09.
 
 
 | Package                      | Purpose                           | Dependencies      |
@@ -57,12 +57,12 @@ Coming from AutoMapper? [docs/migrating-from-automapper.md](docs/migrating-from-
 
 This section used to open by saying Mapsicle loses to a source generator on speed and always will.
 That stopped being true in 2.2.0: declare a pair and it is measured at 1.00x hand written code on a
-nine type aggregate, against Mapperly's 1.08 to 1.12, and it allocates less. Undeclared pairs are a
-different story and are still 1.77x.
+nine type aggregate, against 1.08 for Mapperly and 1.09 for Mapster. Undeclared pairs are a different
+story and are still 1.80x.
 
-So the honest framing is that speed depends entirely on whether you declared the pair, and the
-argument that does not depend on anything is the licence and the mappings that cannot be known when
-you compile.
+Be honest about the size of that lead. Ten percent against two mappers that are also free and also
+MIT is a tiebreaker, not a migration. What is worth switching for is that you get it without
+configuring anything, and that an undeclared pair still maps instead of failing to compile.
 
 **Reach for Mapsicle when:**
 
@@ -72,8 +72,8 @@ you compile.
 | A collection whose items have different runtime types | Same: nothing to generate, and the shape is only known at runtime. |
 | Types arriving from plugins, reflection or configuration | Compile-time generation is not available at all. |
 | Hundreds of DTOs and no appetite for a `CreateMap` per pair | Mapsicle maps by convention with no setup. AutoMapper throws when it reaches an unconfigured pair. `AssertConfigurationIsValid()` validates the maps you configured, so it does not catch a pair you never registered. |
-| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper needs `PreserveReferences()` or `MaxDepth(...)`, and an unhandled cycle can still overflow the stack. Mapperly needs `UseReferenceHandling`. |
-| The licence has to be permissive | This is the reason most people are reading this page. |
+| Object graphs that contain cycles | Mapsicle returns the default at `MaxDepth` with no configuration. AutoMapper needs `PreserveReferences()` or `MaxDepth(...)`, and an unhandled cycle can still overflow the stack. Mapperly needs `UseReferenceHandling` and Mapster needs `PreserveReference`; on default settings both abort the process. |
+| The licence has to be permissive | Only AutoMapper is a problem here. Mapperly and Mapster are MIT too, so this rules out one of the four rather than picking Mapsicle. |
 
 **Reach for something else when:**
 
@@ -83,38 +83,44 @@ you compile.
 | A rename must never silently unmap a member | **Mapperly.** Its `[MapProperty]` uses `nameof`, so a rename is a compile error. Mapsicle's `[MapFrom]` takes a string and quietly stops matching. |
 | You need AOT with no path that can fall back to runtime code generation | **Mapperly.** Mapsicle's declared pairs are AOT clean, but an undeclared one compiles an expression tree at first use, and nothing stops you leaving one undeclared by accident. |
 | Collection throughput at around a hundred elements bounds your workload | **Mapperly**, by about 12 percent over an undeclared Mapsicle pair on x64. A declared pair closes that. |
+| You want AutoMapper's configuration API without AutoMapper's licence | **Mapster.** Its fluent config is deliberately shaped like `CreateMap`, so porting is mechanical. Mapsicle's fluent API is its own shape. |
 
 Mapsicle is 1.30x to 1.44x faster than AutoMapper on single objects depending on the architecture,
-1.09x to 1.20x on collections, and faster again on deeply nested graphs and large collections. That
-is real and it is measured below, but it is a supporting argument rather than the reason to switch.
+1.09x to 1.20x on collections, and faster again on deeply nested graphs and large collections. Against
+Mapperly and Mapster the gap is ten percent either way. All of that is measured below, and all of it
+is a supporting argument rather than the reason to switch.
 
 ### Quick Comparison
 
-| Feature              | Mapsicle         | AutoMapper   | Mapperly     |
-| :------------------- | :--------------- | :----------- | :----------- |
-| **License**          | **MIT**       | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT |
-| **Architecture**     | Runtime + Caching, with an opt-in source generator | Runtime + Expressions | Source Generator |
-| **Setup Required**   | **None**, or one line per pair to bind it at compile time | Profiles, DI | Partial class |
-| **Dependencies**     | **0** (core)     | 8            | 0 (compile-time) |
-| **Deployed size**    | **45.5 KB**      | 1,117.4 KB   | 0 at runtime |
-| **Warm map, measured** | **1.00x hand written** when the pair is declared, 1.77x when it is not | 2.45x | 1.12x |
-| **Compile-time Safety** | Partial. A pair it cannot emit warns and falls back | No | **Full. It will not compile** |
-| **AOT Compatible**   | Declared pairs yes, undeclared no | No | **Yes, with no fallback to get wrong** |
-| **Circular Refs**    | Stops at a depth ceiling and returns. Safe, but the output holds copies where the input had one | **Preserves the reference by default** (measured on 15.1.3 with a plain `CreateMap`), so the cycle survives intact | Follows it. Default settings overflow the stack and abort the process |
-| **Memory Bounded**   | **LRU Option**   | No           | N/A          |
-| **Cache Statistics** | **Yes**          | No           | N/A          |
-| **Integrated Validation** | **Yes**     | No           | No           |
-| **ASP.NET Core Helpers** | **Yes**      | No           | No           |
+| Feature              | Mapsicle         | AutoMapper   | Mapperly     | Mapster      |
+| :------------------- | :--------------- | :----------- | :----------- | :----------- |
+| **License**          | **MIT**       | RPL-1.5, or a Lucky Penny Software agreement (a free Community License exists) | MIT | MIT |
+| **Architecture**     | Runtime + Caching, with an opt-in source generator | Runtime + Expressions | Source Generator | Runtime + Expressions, with an optional codegen tool |
+| **Setup Required**   | **None**, or one line to bind the assembly at compile time | Profiles, DI | Partial class | **None** |
+| **Dependencies**     | **0** (core)     | 8            | 1, attributes only | 1 (`Mapster.Core`) |
+| **Deployed size**    | 59.5 KB          | 1,117.4 KB   | **29.5 KB**, attributes only | 198.0 KB |
+| **Warm map, measured** | **1.00x hand written** when the pair is declared, 1.80x when it is not | 2.48x | 1.08x | 1.09x |
+| **Compile-time Safety** | Partial. A pair it cannot emit warns and falls back | No | **Full. It will not compile** | Partial |
+| **AOT Compatible**   | Declared pairs yes, undeclared no | No | **Yes, with no fallback to get wrong** | With its codegen tool |
+| **Circular Refs**    | Stops on a repeated instance and returns a usable object, with no configuration | **Preserves the reference by default** (measured on 15.1.3 with a plain `CreateMap`) | Default settings **overflow the stack**; correct with `UseReferenceHandling` | Default settings **overflow the stack**; correct with `PreserveReference` |
+| **Memory Bounded**   | **LRU Option**   | No           | N/A          | No           |
+| **Cache Statistics** | **Yes**          | No           | N/A          | No           |
+| **Integrated Validation** | **Yes**     | No           | No           | No           |
+| **ASP.NET Core Helpers** | **Yes**      | No           | No           | No           |
 
 ### Size
 
 Two projects, each referencing one mapper and nothing else, `dotnet publish -c Release` on net8.0:
 
-| | Mapsicle | AutoMapper 15.1.3 |
-| :-- | --: | --: |
-| the mapper's own assembly | **45.5 KB** | 286.0 KB |
-| assemblies it brings with it | **0** | 8 |
-| total on disk | **45.5 KB** | **1,117.4 KB** |
+| | Mapsicle | AutoMapper 15.1.3 | Mapperly 4.1.1 | Mapster 7.4.0 |
+| :-- | --: | --: | --: | --: |
+| the mapper's own assembly | 59.5 KB | 286.0 KB | **29.5 KB**, attributes only | 166.5 KB |
+| assemblies it brings with it | **0** | 8 | **0** | 1 |
+| total on disk | 59.5 KB | **1,117.4 KB** | **29.5 KB** | 198.0 KB |
+
+Mapperly wins this one, and for a real reason: the only thing it ships at runtime is the attributes
+assembly, because the mapping itself is your own source. Mapsicle is second and Mapster deploys
+`Mapster.Core` alongside it.
 
 More than half of what AutoMapper 15 deploys is not mapping code. `Microsoft.IdentityModel.Tokens`,
 `JsonWebTokens`, `Logging` and `Abstractions` come to 599.1 KB, and they are there because
@@ -128,7 +134,7 @@ ecosystem is a separate opt-in package.
 
 ---
 
-## Detailed Comparison: Mapsicle vs AutoMapper vs Mapperly
+## Detailed Comparison: Mapsicle vs AutoMapper vs Mapperly vs Mapster
 
 ### Core Mapping Features
 
@@ -187,35 +193,55 @@ collections, mapped on an Apple M1 under .NET 8 Release, against the same projec
 hand. Reproduce it from
 [github.com/arnelirobles/mapsicle_samples](https://github.com/arnelirobles/mapsicle_samples).
 
-| Aspect | Mapsicle | AutoMapper | Mapperly |
-|--------|----------|------------|----------|
-| **Warm map, pair declared** | **288.4 ns (1.00x hand written)** | n/a | 321.5 ns (1.12x) |
-| **Warm map, nothing declared** | 523.0 ns (1.77x) | 728.8 ns (2.45x) | n/a, it always generates |
-| **Allocated per map** | **1.41 KB, equal to hand written** | 1.48 KB | 1.50 KB |
-| **First map of a pair** | 2,480 ns declared, 367,138 ns not | high, it compiles too | **none, it is already code** |
-| **Startup time impact** | none for declared pairs | medium | **none** |
-| **AOT compatible** | declared pairs yes, undeclared no | no | **yes** |
+All seven lanes in one process, each checked against the hand written baseline member by member
+before a single timing is taken, because a mapper that drops a member is faster than one that does
+not.
 
-Mapperly's 1.12 is one habit rather than anything structural: its collection helpers take
-`IReadOnlyCollection<T>` where the member is a `List<T>`, so every `foreach` boxes the struct
-enumerator. That is also why it is the only row above the hand written allocation. The section on
+| Lane | Mean | vs hand written | Allocated |
+|------|-----:|----------------:|----------:|
+| hand written | 288.5 ns | 1.00 | 1.41 KB |
+| **Mapsicle, pair declared** | **287.7 ns** | **1.00** | **1.41 KB** |
+| Mapperly 4.1.1 | 312.8 ns | 1.08 | 1.50 KB |
+| Mapster 7.4.0 | 313.7 ns | 1.09 | 1.38 KB |
+| Mapsicle, declared, untyped call | 316.1 ns | 1.10 | 1.41 KB |
+| Mapsicle, nothing declared | 519.5 ns | 1.80 | 1.41 KB |
+| AutoMapper 15.1.3 | 715.8 ns | 2.48 | 1.48 KB |
+
+**Read the middle of that table as a range, not a ranking.** Mapperly and Mapster are 1.08 and 1.09
+here and have swapped places between runs. The three modern mappers sit inside ten percent of each
+other and of hand written code, and nobody migrates a codebase for ten percent.
+
+**What holds across every run is the two ends.** A declared pair is level with hand written code and
+allocates the same. An undeclared pair is 1.80, which is still 1.4x faster than AutoMapper and needs
+no setup at all.
+
+**Mapster allocates the least of anyone**, including hand written code. Mapperly is the only lane
+above the baseline, and that is one habit rather than anything structural: its collection helpers
+take `IReadOnlyCollection<T>` where the member is a `List<T>`, so every `foreach` boxes the struct
+enumerator. The section on
 [compile-time mapping](#compile-time-mapping-and-how-it-compares-to-mapperly) shows both emitted
 loops side by side.
+
+| | Mapsicle | AutoMapper | Mapperly | Mapster |
+|---|---|---|---|---|
+| **First map of a pair** | 2,480 ns declared, 367,138 ns not | high, it compiles too | **none, it is already code** | it compiles at startup |
+| **Startup time impact** | none for declared pairs | medium | **none** | compiles on first use or at startup |
+| **AOT compatible** | declared pairs yes, undeclared no | no | **yes** | with its codegen tool |
 
 ### When to Use Each
 
 | Scenario | Recommendation | Why |
 |----------|----------------|-----|
-| **Fastest warm mapping** | **Mapsicle**, pair declared | 1.00x hand written against Mapperly's 1.12x, and it allocates less |
+| **Fastest warm mapping** | **Mapsicle**, pair declared | 1.00x hand written, against 1.08 and 1.09 for Mapperly and Mapster. Ten percent, which is a tiebreaker rather than a reason |
 | **The compiler must prove every pair maps** | **Mapperly** | A pair it cannot generate does not compile. Mapsicle warns and falls back, which is safer at run time and weaker as a guarantee |
 | **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs are AOT clean, but an undeclared one compiles an expression tree at run time. Mapperly has no such path to leave open by accident |
 | **AOT, and you will declare every pair** | **Mapsicle** or **Mapperly** | Both work. Check the build for `MSG001` if you pick Mapsicle |
-| **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives. Mapsicle stops at a ceiling and returns something usable. Mapperly's default settings abort the process |
-| **Quick prototyping, zero setup** | **Mapsicle** | No configuration of any kind, and you can add the generator later without touching a call site |
-| **A large graph you do not want to declare** | **Mapsicle** | An undeclared pair still maps, at 1.77x hand written and still 1.4x faster than AutoMapper |
-| **Need integrated validation** | **Mapsicle** | `Mapsicle.Validation`, no equivalent in either |
+| **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives intact. Mapsicle stops on a repeated instance and returns something usable. Mapperly and Mapster both abort the process on default settings, and both are correct with one line of configuration |
+| **Quick prototyping, zero setup** | **Mapsicle** or **Mapster** | Neither asks for configuration. Mapsicle additionally lets you add the generator later without touching a call site |
+| **A large graph you do not want to declare** | **Mapsicle** or **Mapster** | Neither needs a line of setup. An undeclared Mapsicle pair is 1.80x hand written and still 1.4x faster than AutoMapper; Mapster is 1.09x with no declaration at all |
+| **Need integrated validation** | **Mapsicle** | `Mapsicle.Validation`, no equivalent in any of the other three |
 | **Existing AutoMapper codebase** | **AutoMapper** (if licensed) or migrate | |
-| **Budget-conscious or OSS project** | **Mapsicle** or **Mapperly** | Both MIT. Permissive, and both ask only that the copyright and permission notice travels with the code. |
+| **Budget-conscious or OSS project** | **Mapsicle**, **Mapperly** or **Mapster** | All three MIT. Permissive, and each asks only that the copyright and permission notice travels with the code |
 | **Complex mapping configurations** | **AutoMapper** or **Mapsicle** (fluent) | |
 | **ASP.NET Core Minimal APIs** | **Mapsicle** (AspNetCore package) | |
 | **Need audit trail of changes** | **Mapsicle** (Audit package) | |
@@ -223,7 +249,13 @@ loops side by side.
 Two of those rows go to Mapperly on purpose. Its guarantee is stronger than Mapsicle's precisely
 because it has no fallback: if it cannot emit a mapper you find out at compile time, every time.
 Mapsicle trades that for a mapper that always works, and the cost of the trade is that a `MSG001` you
-did not read is a pair running 1.77x instead of 1.00x.
+did not read is a pair running 1.80x instead of 1.00x.
+
+Mapster shares several rows, and that is the honest picture rather than an oversight. It is MIT, it
+maps by convention with no setup, and its configuration API is deliberately shaped like AutoMapper's
+so a port is mechanical. Where Mapsicle differs is the pair of things no single competitor offers
+together: no configuration to start, and hand written speed when you want it, without the call site
+changing either way.
 
 ### Code Comparison
 
@@ -558,8 +590,8 @@ bind a call site in your API project. Put the attribute in both.
 
 This one fails silently and only costs you part of the win. The module initializer registers the
 generated delegate process-wide, so a call site in another assembly still runs generated code; it
-just reaches it through the dictionary lookup instead of the compiler. That is 309.7 ns against
-288.4, not the 523.0 an undeclared pair pays.
+just reaches it through the dictionary lookup instead of the compiler. That is 316.1 ns against
+287.7, not the 519.5 an undeclared pair pays.
 
 **3. Call it on a typed variable, not `object`.** The binding is the compiler choosing a more specific
 extension, so it needs to see the type.
@@ -591,7 +623,7 @@ System.Collections.Generic.List<Shop.ItemDto>, which the engine performs and thi
 has no emitted rule for. The pair still maps through the runtime engine.
 ```
 
-Nothing is broken when you see it. It is the difference between 1.00x and 1.77x on that pair, and it
+Nothing is broken when you see it. It is the difference between 1.00x and 1.80x on that pair, and it
 names the member responsible.
 
 **To check it worked**, turn on the emitted files and read them:
@@ -621,19 +653,20 @@ which is the only baseline worth having.
 
 | whole graph | mean | vs hand written | allocated |
 | :---------- | ---: | --------------: | --------: |
-| hand written | 288.1 ns | 1.00 | 1.41 KB |
-| **Mapsicle, declared pair** | **288.4 ns** | **1.00** | **1.41 KB (1.00)** |
-| Mapsicle, declared, reached through an untyped call | 309.7 ns | 1.07 | 1.41 KB (1.00) |
-| Mapperly 4.1.1 | 321.5 ns | 1.12 | 1.50 KB (1.07) |
-| Mapsicle, undeclared, through the engine | 523.0 ns | 1.77 | 1.41 KB (1.00) |
-| AutoMapper 15.1.3 | 728.8 ns | 2.45 | 1.48 KB (1.06) |
+| hand written | 288.5 ns | 1.00 | 1.41 KB |
+| **Mapsicle, declared pair** | **287.7 ns** | **1.00** | **1.41 KB (1.00)** |
+| Mapperly 4.1.1 | 312.8 ns | 1.08 | 1.50 KB (1.07) |
+| Mapster 7.4.0 | 313.7 ns | 1.09 | 1.38 KB (0.98) |
+| Mapsicle, declared, reached through an untyped call | 316.1 ns | 1.10 | 1.41 KB (1.00) |
+| Mapsicle, undeclared, through the engine | 519.5 ns | 1.80 | 1.41 KB (1.00) |
+| AutoMapper 15.1.3 | 715.8 ns | 2.48 | 1.48 KB (1.06) |
 
-Generated code is level with hand written: 0.3 ns apart on a 288 ns call, standard deviations near
-3 ns, and the same 1.41 KB. Declaring the pair is what moves it from 1.77 to 1.00.
+Generated code is level with hand written: 0.8 ns apart on a 288 ns call, well inside the run-to-run
+spread, and the same 1.41 KB. Declaring the pair is what moves it from 1.80 to 1.00.
 
-The third row is the same generated method reached a different way. `((object)order).MapTo<OrderDto>()`
+The untyped row is the same generated method reached a different way. `((object)order).MapTo<OrderDto>()`
 pays a `GetType`, a dictionary probe for the delegate, a second probe to decide on depth tracking and
-a cast before it runs. That 21 ns is what the compile-time binding removes.
+a cast before it runs. That 28 ns is what the compile-time binding removes.
 
 Cold start is the larger and less obvious win:
 
