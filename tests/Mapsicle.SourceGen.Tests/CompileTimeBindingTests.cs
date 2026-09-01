@@ -98,6 +98,9 @@ namespace Mapsicle.SourceGen.Tests
         }
     }
 
-    [CollectionDefinition("SourceGenBinding", DisableParallelization = true)]
+    // Every class that touches the shared registry joins this one, so the definition has to name the
+    // collection they actually join. It named "SourceGenBinding", which nothing joins, so the
+    // DisableParallelization it carries attached to nothing and the classes were free to interleave.
+    [CollectionDefinition("SourceGenRegistry", DisableParallelization = true)]
     public class SourceGenBindingCollection { }
 }

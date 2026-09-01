@@ -556,6 +556,16 @@ namespace Mapsicle
         /// interlocked increment on one shared cache line, taken on every single map call, is a
         /// throughput regression on a path measured in tens of nanoseconds.
         /// </remarks>
+        /// <summary>The delegate for this pair, rebuilding it only when nothing has claimed it.</summary>
+        /// <remarks>
+        /// A miss consults the registry before compiling anything. Under the bounded cache a
+        /// registered pair could be evicted like any other entry, and the rebuild then compiled an
+        /// expression tree and answered with it, so the untyped door returned the engine's result
+        /// while the typed door still returned the registration: the two doors disagreed for the
+        /// rest of the process. The typed cache pins registrations during its trim and the untyped
+        /// one cannot, since eviction there is the whole point of the bound, so the fix belongs on
+        /// the rebuild. Eviction now costs a re-resolve rather than a wrong answer.
+        /// </remarks>
         private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
         {
             if (_useLruCache && _lruMapToCache != null)
@@ -567,6 +577,17 @@ namespace Mapsicle
                 }
 
                 System.Threading.Interlocked.Increment(ref _cacheMisses);
+
+                if (_generatedPairs.TryGetValue(key, out var reapply))
+                {
+                    reapply();
+
+                    if (_lruMapToCache.TryGetValue(key, out var restored))
+                    {
+                        return (Func<object, T>)restored;
+                    }
+                }
+
                 return (Func<object, T>)_lruMapToCache.GetOrAdd(key, factory);
             }
 
