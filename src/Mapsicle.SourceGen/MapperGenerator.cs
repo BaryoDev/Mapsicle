@@ -117,6 +117,22 @@ namespace Mapsicle.SourceGen
             return generic.Identifier.ValueText == "MapTo" && generic.TypeArgumentList.Arguments.Count == 1;
         }
 
+        /// <summary>Whether this resolved method is one of Mapsicle's own <c>MapTo</c> overloads.</summary>
+        /// <remarks>
+        /// Two owners count. The engine's own extensions live on <c>Mapsicle.Mapper</c>, and a call
+        /// site in an assembly that has already been generated for binds to
+        /// <c>MapsicleGeneratedExtensions</c> instead, which is this generator's own output and must
+        /// keep resolving on the next compile or the pair would drop out.
+        /// </remarks>
+        private static bool IsMapsicleMapTo(IMethodSymbol method)
+        {
+            var owner = method.ReducedFrom?.ContainingType ?? method.ContainingType;
+            if (owner is null) return false;
+
+            var name = owner.ToDisplayString();
+            return name == "Mapsicle.Mapper" || owner.Name == "MapsicleGeneratedExtensions";
+        }
+
         /// <summary>The pair a call site names, or null when it does not name one this can use.</summary>
         /// <remarks>
         /// The receiver's static type is the source. A receiver typed <c>object</c> is exactly the
@@ -131,6 +147,14 @@ namespace Mapsicle.SourceGen
             var invocation = (InvocationExpressionSyntax)context.Node;
             var access = (MemberAccessExpressionSyntax)invocation.Expression;
             var generic = (GenericNameSyntax)access.Name;
+
+            // The name is not enough. MapTo is an ordinary identifier and any library, framework or
+            // local helper may declare one, so matching on it alone registered a Mapsicle mapper for
+            // a call that had nothing to do with Mapsicle: someone else's
+            // MapTo<ThingDto>(this Thing, bool) produced a Thing into ThingDto registration. Resolve
+            // the method and check whose it is.
+            if (context.SemanticModel.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method) return null;
+            if (!IsMapsicleMapTo(method)) return null;
 
             if (context.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0]).Symbol
                 is not INamedTypeSymbol destination)
@@ -184,6 +208,12 @@ namespace Mapsicle.SourceGen
 
                 var location = attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? Location.None;
 
+                // Claimed before planning, so a declaration that is refused still owns the pair. It
+                // did not, so a refused declaration reported MSG001 and then scanning found the same
+                // pair and reported MSG002 as well: two diagnostics for one pair, the second of them
+                // telling the author about something they had already been told.
+                seen.Add(PairKey(source, destination));
+
                 var plan = TryPlan(source, destination, index, out var refusal);
 
                 if (plan is null)
@@ -194,7 +224,6 @@ namespace Mapsicle.SourceGen
                 }
 
                 plans.Add(plan);
-                seen.Add(PairKey(source, destination));
                 index++;
             }
 

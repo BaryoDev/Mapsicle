@@ -23,6 +23,16 @@ namespace Mapsicle.SourceGen.Tests
     public class GaProduct { public string Sku { get; set; } = ""; }
     public class GaProductDto { public string Sku { get; set; } = ""; }
 
+    // Somebody else's MapTo. A different library, a framework, a helper in your own codebase: the
+    // name is an ordinary identifier and anyone may declare one.
+    public class GaForeign { public int Id { get; set; } }
+    public class GaForeignDto { public int Id { get; set; } }
+
+    public static class NotMapsicleAtAll
+    {
+        public static TDest MapTo<TDest>(this GaForeign source, bool marker) where TDest : new() => new();
+    }
+
     // Never appears at a call site with a known receiver type, so scanning has nothing to find.
     // This is the control: without it, "scanning generated everything" and "everything was already
     // generated" look identical.
@@ -85,6 +95,18 @@ namespace Mapsicle.SourceGen.Tests
             Assert.Equal(interpreted!.Id, generated!.Id);
             Assert.Equal(interpreted.Ship.City, generated.Ship.City);
             Assert.Equal(interpreted.Ship.Country.Iso, generated.Ship.Country.Iso);
+        }
+
+        [Fact]
+        public void SomeoneElsesMapToIsNotScanned()
+        {
+            // Matching on the method name alone registered a Mapsicle mapper for a call that had
+            // nothing to do with Mapsicle, purely because a method somewhere shared the name.
+            // Called as an extension, which is the form that resolves the receiver to GaForeign and
+            // is therefore the form the scan would pick up.
+            _ = new GaForeign { Id = 1 }.MapTo<GaForeignDto>(marker: true);
+
+            Assert.DoesNotContain(Registry(), k => k.Contains(nameof(GaForeign), StringComparison.Ordinal));
         }
 
         [Fact]
