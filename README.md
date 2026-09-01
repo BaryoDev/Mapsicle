@@ -504,6 +504,39 @@ var dto = order.MapTo<OrderDto>();
 
 That is the whole setup. One line per pair, anywhere in the assembly.
 
+### Or let it find them
+
+Declaring pairs one at a time gets tedious once there are more than a handful, so there is a second
+door:
+
+```csharp
+[assembly: MapsicleGenerateAll]
+```
+
+One line for the whole assembly. The generator walks your call sites for `.MapTo<TDest>()` and emits
+a mapper for every pair whose source type it can read there. Nothing else changes, and the call sites
+are the ones you already wrote.
+
+It finds what the compiler can already see, which means it cannot help with the case the runtime
+engine exists for:
+
+```csharp
+var dto = order.MapTo<OrderDto>();            // found: the receiver is an Order
+var dto = ((object)order).MapTo<OrderDto>();  // not found: the type is not known until it runs
+```
+
+An unresolvable call site is not a gap to close. The type genuinely is not known until the call
+happens, so it keeps mapping through the engine as before.
+
+The two doors work together and a pair named both ways is emitted once. Naming a pair explicitly is
+still the only way to reach one that has no call site to read: something resolved from configuration,
+loaded from a plugin, or only ever mapped through `object`.
+
+A pair scanning finds but cannot emit reports `MSG002` at information level rather than `MSG001` at
+warning level. The difference is deliberate: you asked for a declared pair by name, so a silent
+refusal there would be a broken promise, whereas turning one attribute on should not fill your build
+log with notices about members you never mentioned.
+
 A working repository that maps one e-commerce order aggregate through Mapsicle, AutoMapper and
 Mapperly side by side, with a CRUD API over SQLite and the benchmarks below:
 **[github.com/arnelirobles/mapsicle_samples](https://github.com/arnelirobles/mapsicle_samples)**

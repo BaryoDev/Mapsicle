@@ -6,3 +6,4 @@
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
 MSG001 | Mapsicle | Warning | A declared pair could not be generated and falls back to the runtime engine.
+MSG002 | Mapsicle | Info | MapperGenerator
