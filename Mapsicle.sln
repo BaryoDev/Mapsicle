@@ -79,6 +79,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mapsicle.SourceGen", "src\M
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mapsicle.SourceGen.Tests", "tests\Mapsicle.SourceGen.Tests\Mapsicle.SourceGen.Tests.csproj", "{9B1FDC73-02B6-454C-8957-AF70DDFE6D62}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mapsicle.SourceGen.OptIn.Tests", "tests\Mapsicle.SourceGen.OptIn.Tests\Mapsicle.SourceGen.OptIn.Tests.csproj", "{7D3DC0FB-7864-436B-B4A3-C164A98289BA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -509,6 +511,18 @@ Global
 		{9B1FDC73-02B6-454C-8957-AF70DDFE6D62}.Release|x64.Build.0 = Release|Any CPU
 		{9B1FDC73-02B6-454C-8957-AF70DDFE6D62}.Release|x86.ActiveCfg = Release|Any CPU
 		{9B1FDC73-02B6-454C-8957-AF70DDFE6D62}.Release|x86.Build.0 = Release|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Debug|x64.Build.0 = Debug|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Debug|x86.Build.0 = Debug|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Release|x64.ActiveCfg = Release|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Release|x64.Build.0 = Release|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Release|x86.ActiveCfg = Release|Any CPU
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -549,5 +563,6 @@ Global
 		{75125546-5551-481B-88F7-C6D778614A15} = {3A0525C5-7A1E-4E6E-A617-442A73AC1522}
 		{C613DDA4-8E7C-4D39-A8EB-94B5836D04F4} = {6B6174EC-A782-4FDE-A29C-B16A5A827845}
 		{9B1FDC73-02B6-454C-8957-AF70DDFE6D62} = {3A0525C5-7A1E-4E6E-A617-442A73AC1522}
+		{7D3DC0FB-7864-436B-B4A3-C164A98289BA} = {3A0525C5-7A1E-4E6E-A617-442A73AC1522}
 	EndGlobalSection
 EndGlobal

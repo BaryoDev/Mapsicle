@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
 namespace Mapsicle.SourceGen
@@ -39,6 +40,7 @@ namespace Mapsicle.SourceGen
     public sealed class MapperGenerator : IIncrementalGenerator
     {
         private const string AttributeName = "Mapsicle.MapsicleGenerateAttribute";
+        private const string GenerateAllAttributeName = "Mapsicle.MapsicleGenerateAllAttribute";
 
         private static readonly DiagnosticDescriptor CannotGenerate = new(
             id: "MSG001",
@@ -50,11 +52,41 @@ namespace Mapsicle.SourceGen
             description: "A pair the generator refuses falls back to the runtime engine, so mapping still works. " +
                          "The warning exists because the declaration asked for something it did not get.");
 
+        /// <summary>Reported for a pair found by scanning that could not be emitted.</summary>
+        /// <remarks>
+        /// Information rather than a warning, and the severity is the whole point. MSG001 answers a
+        /// declaration you wrote, so a silent refusal there would be a broken promise. MSG002 answers
+        /// a call site the generator went looking for on its own, so a refusal is worth knowing and
+        /// not worth interrupting a build over.
+        /// </remarks>
+        private static readonly DiagnosticDescriptor NotGeneratedByScan = new(
+            id: "MSG002",
+            title: "Mapsicle did not generate a scanned pair",
+            messageFormat: "Scanning found '{0}' into '{1}' but did not generate it: {2}. The pair maps through the runtime engine.",
+            category: "Mapsicle",
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "MapsicleGenerateAll asks the generator to find pairs at call sites. One it cannot emit " +
+                         "keeps working through the engine, and is reported as information because nothing asked " +
+                         "for it by name.");
+
         /// <summary>Wires the generator to the assembly's declared pairs.</summary>
         /// <param name="context">Supplied by Roslyn.</param>
         public void Initialize(IncrementalGeneratorInitializationContext context)
         {
-            var pairs = context.CompilationProvider.Select(static (compilation, _) => ReadPairs(compilation));
+            // Every call site that could name a pair, gathered cheaply by syntax and resolved later.
+            // The predicate has to be fast and allocation free: it runs on every node of every file
+            // on every keystroke in the IDE, so it looks at the shape of the syntax and nothing else.
+            var callSites = context.SyntaxProvider
+                .CreateSyntaxProvider(
+                    static (node, _) => IsMapToCall(node),
+                    static (ctx, _) => ResolveCallSite(ctx))
+                .Where(static pair => pair is not null)
+                .Collect();
+
+            var pairs = context.CompilationProvider
+                .Combine(callSites)
+                .Select(static (both, _) => ReadPairs(both.Left, both.Right));
 
             context.RegisterSourceOutput(pairs, static (spc, requested) =>
             {
@@ -68,6 +100,75 @@ namespace Mapsicle.SourceGen
                 spc.AddSource("MapsicleGenerated.g.cs", SourceText.From(Emit(requested.Plans), Encoding.UTF8));
                 spc.AddSource("MapsicleGeneratedExtensions.g.cs", SourceText.From(EmitExtensions(requested.Plans), Encoding.UTF8));
             });
+        }
+
+        /// <summary>Whether this node looks like <c>something.MapTo&lt;TDest&gt;()</c>.</summary>
+        /// <remarks>
+        /// Syntax only, and deliberately so. This predicate runs on every node of every file on every
+        /// keystroke, so it may not touch the semantic model. Anything that gets past it is resolved
+        /// properly in the next step, where being wrong is merely a discarded candidate.
+        /// </remarks>
+        private static bool IsMapToCall(SyntaxNode node)
+        {
+            if (node is not InvocationExpressionSyntax invocation) return false;
+            if (invocation.Expression is not MemberAccessExpressionSyntax access) return false;
+            if (access.Name is not GenericNameSyntax generic) return false;
+
+            return generic.Identifier.ValueText == "MapTo" && generic.TypeArgumentList.Arguments.Count == 1;
+        }
+
+        /// <summary>Whether this resolved method is one of Mapsicle's own <c>MapTo</c> overloads.</summary>
+        /// <remarks>
+        /// Two owners count. The engine's own extensions live on <c>Mapsicle.Mapper</c>, and a call
+        /// site in an assembly that has already been generated for binds to
+        /// <c>MapsicleGeneratedExtensions</c> instead, which is this generator's own output and must
+        /// keep resolving on the next compile or the pair would drop out.
+        /// </remarks>
+        private static bool IsMapsicleMapTo(IMethodSymbol method)
+        {
+            var owner = method.ReducedFrom?.ContainingType ?? method.ContainingType;
+            if (owner is null) return false;
+
+            var name = owner.ToDisplayString();
+            return name == "Mapsicle.Mapper" || owner.Name == "MapsicleGeneratedExtensions";
+        }
+
+        /// <summary>The pair a call site names, or null when it does not name one this can use.</summary>
+        /// <remarks>
+        /// The receiver's static type is the source. A receiver typed <c>object</c> is exactly the
+        /// case scanning cannot help with, because the real type is not known until the call happens,
+        /// so it is skipped and the engine keeps it. A collection receiver is skipped too: the
+        /// element pair is what would be generated and reading it from here would be guessing at
+        /// which overload was chosen.
+        /// </remarks>
+        private static (INamedTypeSymbol Source, INamedTypeSymbol Destination)? ResolveCallSite(
+            GeneratorSyntaxContext context)
+        {
+            var invocation = (InvocationExpressionSyntax)context.Node;
+            var access = (MemberAccessExpressionSyntax)invocation.Expression;
+            var generic = (GenericNameSyntax)access.Name;
+
+            // The name is not enough. MapTo is an ordinary identifier and any library, framework or
+            // local helper may declare one, so matching on it alone registered a Mapsicle mapper for
+            // a call that had nothing to do with Mapsicle: someone else's
+            // MapTo<ThingDto>(this Thing, bool) produced a Thing into ThingDto registration. Resolve
+            // the method and check whose it is.
+            if (context.SemanticModel.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method) return null;
+            if (!IsMapsicleMapTo(method)) return null;
+
+            if (context.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0]).Symbol
+                is not INamedTypeSymbol destination)
+            {
+                return null;
+            }
+
+            var receiver = context.SemanticModel.GetTypeInfo(access.Expression).Type;
+
+            if (receiver is not INamedTypeSymbol source) return null;
+            if (source.SpecialType == SpecialType.System_Object) return null;
+            if (IsEnumerable(source)) return null;
+
+            return (source, destination);
         }
 
         // ---- reading the declarations ---------------------------------------------------------
@@ -84,7 +185,9 @@ namespace Mapsicle.SourceGen
             internal List<Diagnostic> Diagnostics { get; }
         }
 
-        private static Requested ReadPairs(Compilation compilation)
+        private static Requested ReadPairs(
+            Compilation compilation,
+            System.Collections.Immutable.ImmutableArray<(INamedTypeSymbol Source, INamedTypeSymbol Destination)?> scanned)
         {
             var plans = new List<MapPlan>();
             var diagnostics = new List<Diagnostic>();
@@ -93,6 +196,7 @@ namespace Mapsicle.SourceGen
             if (marker is null) return new Requested(plans, diagnostics);
 
             var index = 0;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var attribute in compilation.Assembly.GetAttributes())
             {
@@ -103,6 +207,12 @@ namespace Mapsicle.SourceGen
                 if (attribute.ConstructorArguments[1].Value is not INamedTypeSymbol destination) continue;
 
                 var location = attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? Location.None;
+
+                // Claimed before planning, so a declaration that is refused still owns the pair. It
+                // did not, so a refused declaration reported MSG001 and then scanning found the same
+                // pair and reported MSG002 as well: two diagnostics for one pair, the second of them
+                // telling the author about something they had already been told.
+                seen.Add(PairKey(source, destination));
 
                 var plan = TryPlan(source, destination, index, out var refusal);
 
@@ -117,8 +227,48 @@ namespace Mapsicle.SourceGen
                 index++;
             }
 
+            // Scanning only runs when the assembly asks for it. Without the attribute the scan
+            // results are collected and thrown away, which costs a syntax walk and nothing else.
+            var scanAll = compilation.GetTypeByMetadataName(GenerateAllAttributeName) is { } allMarker
+                && compilation.Assembly.GetAttributes().Any(
+                    a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, allMarker));
+
+            if (!scanAll) return new Requested(plans, diagnostics);
+
+            foreach (var candidate in scanned
+                         .Where(c => c is not null)
+                         .Select(c => c!.Value)
+                         .OrderBy(c => c.Source.ToDisplayString(), StringComparer.Ordinal)
+                         .ThenBy(c => c.Destination.ToDisplayString(), StringComparer.Ordinal))
+            {
+                var key = PairKey(candidate.Source, candidate.Destination);
+                if (!seen.Add(key)) continue;
+
+                var found = TryPlan(candidate.Source, candidate.Destination, index, out var why);
+
+                if (found is null)
+                {
+                    // Information, not a warning. Nobody asked for this pair by name, so a refusal
+                    // is news rather than a broken promise, and one attribute should not fill a
+                    // build log with notices about members the author never mentioned.
+                    diagnostics.Add(Diagnostic.Create(
+                        NotGeneratedByScan, Location.None,
+                        candidate.Source.ToDisplayString(), candidate.Destination.ToDisplayString(), why));
+                    continue;
+                }
+
+                plans.Add(found);
+                index++;
+            }
+
             return new Requested(plans, diagnostics);
         }
+
+        /// <summary>A stable key for a pair, so the two doors cannot emit it twice.</summary>
+        private static string PairKey(INamedTypeSymbol source, INamedTypeSymbol destination) =>
+            source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            + "|"
+            + destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
         // ---- planning ---------------------------------------------------------------------------
 
