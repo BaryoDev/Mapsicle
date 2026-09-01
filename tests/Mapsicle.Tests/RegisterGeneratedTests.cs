@@ -146,6 +146,52 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
+        public void AnEvictedRegistrationIsRestoredRatherThanRebuiltFromTheEngine()
+        {
+            // Eviction from the bounded untyped cache is the point of the bound, so a registration
+            // can be pushed out like anything else. What must not happen is the rebuild compiling an
+            // expression tree and answering with it: the untyped door then returned the engine's
+            // result while the typed door still returned the registration, and the two disagreed for
+            // the rest of the process.
+            var previous = Mapper.UseLruCache;
+            var previousSize = Mapper.MaxCacheSize;
+
+            try
+            {
+                Mapper.ResetGeneratedRegistrations();
+                Mapper.UseLruCache = true;
+                Mapper.MaxCacheSize = 2;
+                Mapper.ClearCache();
+
+                _ = ((object)Sample()).MapTo<RgDest>();
+                RegisterMarker();
+
+                // Push it out with unrelated pairs, twice round so the access order rolls over.
+                for (var round = 0; round < 2; round++)
+                {
+                    _ = ((object)new RgFillerOne { A = 1 }).MapTo<RgFillerOneDto>();
+                    _ = ((object)new RgFillerTwo { A = 2 }).MapTo<RgFillerTwoDto>();
+                    _ = ((object)new RgFillerThree { A = 3 }).MapTo<RgFillerThreeDto>();
+                    _ = ((object)new RgFillerFour { A = 4 }).MapTo<RgFillerFourDto>();
+                }
+
+                Assert.Equal(Marker, ((object)Sample()).MapTo<RgDest>()!.Name);
+                Assert.Equal(Marker, Sample().MapTo<RgSource, RgDest>()!.Name);
+            }
+            finally
+            {
+                Mapper.UseLruCache = previous;
+                Mapper.MaxCacheSize = previousSize;
+                Mapper.ClearCache();
+            }
+        }
+
+        public class RgFillerThree { public int A { get; set; } }
+        public class RgFillerThreeDto { public int A { get; set; } }
+        public class RgFillerFour { public int A { get; set; } }
+        public class RgFillerFourDto { public int A { get; set; } }
+
+        [Fact]
         public void TheBoundedTypedCacheDoesNotEvictARegistration()
         {
             // First in, first out, and a module initializer runs first, so registrations were always

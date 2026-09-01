@@ -81,6 +81,37 @@ jobs:
       - name: Restore with NuGet audit as error
         run: dotnet restore Mapsicle.sln /p:NuGetAudit=true /p:NuGetAuditMode=all /p:WarningsNotAsErrors= /p:TreatWarningsAsErrors=true
 
+  # The publish workflow packs every project in a loop under set -e, so one project failing to pack
+  # stops the release partway through and the projects after it never ship. That happened: the shared
+  # props turn on IncludeSymbols for everything, Mapsicle.SourceGen contributes no build output to
+  # symbolise, and its snupkg failed NU5017 after its own nupkg had already succeeded. Nothing caught
+  # it because nothing packs everything until a tag is pushed, which is the worst moment to find out.
+  every-package-packs:
+    name: every package packs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Pack every project the release would pack
+        run: |
+          set -euo pipefail
+          for proj in src/*/*.csproj; do
+            echo "::group::$proj"
+            dotnet pack "$proj" --configuration Release --output ./packages
+            echo "::endgroup::"
+          done
+          expected=$(ls src/*/*.csproj | wc -l)
+          produced=$(ls ./packages/*.nupkg | wc -l)
+          echo "expected $expected packages, produced $produced"
+          test "$expected" -eq "$produced"
+
   core-has-no-dependencies:
     name: core package stays dependency-free
     runs-on: ubuntu-latest

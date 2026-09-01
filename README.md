@@ -367,14 +367,14 @@ a type chosen at runtime, or a collection whose items turn out to have different
 because there is nothing for it to generate against. Mapsicle needs no configuration and resolves
 types as it meets them.
 
-**If your mappings are all known at compile time and you are willing to declare them, choose
-Mapperly.** Mapsicle is for the case where they are not, and its comparison is with AutoMapper.
+**If you need the compiler to prove every mapping exists, choose Mapperly.** That guarantee is
+real and Mapsicle does not offer it: a pair it cannot generate warns and falls back rather than
+failing the build.
 
-The Mapperly column is here for scale, not as a fair fight. It is a source generator measured
-against two runtime mappers, and it wins on throughput by construction. The comparison becomes
-like for like when 2.2.0 lands its own generator as an opt-in lane, which is described under
-Unreleased in [CHANGELOG.md](CHANGELOG.md). Read the AutoMapper column as the competitive one and
-the Mapperly column as the ceiling.
+The table below measures Mapsicle's runtime engine, which is what an undeclared pair uses. Declare
+the pair and it is level with hand written code instead, which is measured in
+[Compile-time mapping](#compile-time-mapping-and-how-it-compares-to-mapperly) further down. Read the
+undeclared row as the floor rather than the whole story.
 
 **Other scenarios:**
 

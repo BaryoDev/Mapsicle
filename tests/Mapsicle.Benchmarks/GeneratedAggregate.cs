@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Mapsicle;
 
 // The declaration under test. Everything below exists to answer one question: does the code the
@@ -136,6 +137,30 @@ namespace Mapsicle.Benchmarks
         /// </remarks>
         public static void AssertLanesAgree(AgOrder order)
         {
+            // First, that there is a generated lane at all. Without this the whole gate passes with
+            // the analyzer removed: MapTo binds to the engine instead, the engine agrees with itself,
+            // both allocate the same, and the ratio sits comfortably inside the band while measuring
+            // the thing the gate exists to compare against. The test suite has an equivalent check
+            // and the benchmark did not.
+            var registry = typeof(global::Mapsicle.Mapper)
+                .GetField("_generatedPairs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                ?.GetValue(null)
+                ?? throw new InvalidOperationException("could not read the generated registry");
+
+            var keys = ((System.Collections.IEnumerable)registry.GetType().GetProperty("Keys")!.GetValue(registry)!)
+                .Cast<object>()
+                .Select(k => k.ToString() ?? "")
+                .ToList();
+
+            if (!keys.Any(k => k.Contains(nameof(AgOrder), StringComparison.Ordinal)
+                            && k.Contains(nameof(AgOrderDto), StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    "AgOrder into AgOrderDto was not generated, so this benchmark is timing the engine "
+                    + "against hand written code and calling the result a generator result. Check the "
+                    + "build for MSG001 and that the analyzer reference is present.");
+            }
+
             var hand = Map(order);
             var generated = order.MapTo<AgOrderDto>()
                 ?? throw new InvalidOperationException("the generated lane returned null");
