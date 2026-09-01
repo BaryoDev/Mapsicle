@@ -437,21 +437,103 @@ namespace Mapsicle
 
         #region Depth Tracking (Cycle Detection)
 
-        private static bool IncrementDepth()
+        /// <summary>Source instances on the current mapping path, tracked only past the ceiling.</summary>
+        /// <remarks>
+        /// Allocated lazily and reused for the lifetime of the thread, so a map that never exceeds
+        /// <see cref="MaxDepth"/> never touches it. That keeps the warm path allocating nothing
+        /// beyond the destination, which section 5 of the working agreement treats as a correctness
+        /// property rather than a preference.
+        /// </remarks>
+        [ThreadStatic]
+        private static HashSet<object>? _onPath;
+
+        /// <summary>The depth at which recursion stops even when no repeat has been seen.</summary>
+        /// <remarks>
+        /// A guard against exhausting the stack, not a cycle detector. A graph this deep would
+        /// overflow hand written recursion too, so stopping is the only useful thing left.
+        /// </remarks>
+        private const int StackGuardDepth = 10_000;
+
+        /// <summary>
+        /// Enters one level of mapping, or refuses when the graph genuinely loops back on itself.
+        /// </summary>
+        /// <remarks>
+        /// A counter alone cannot tell a cycle from a deep graph, and treating them the same lost
+        /// real data: a two hundred element chain with no cycle in it came back holding thirty two
+        /// elements, silently, because the counter reached <see cref="MaxDepth"/> and gave up. Both
+        /// source generators return all two hundred.
+        ///
+        /// So the counter now decides only when to start checking. Below the ceiling nothing is
+        /// tracked and nothing is allocated, which is the common case and the measured one. At the
+        /// ceiling the source instances on the current path start being recorded, and mapping stops
+        /// on a genuine repeat rather than on an arbitrary number. A cycle repeats within one loop of
+        /// itself so it still terminates promptly, and a long chain never repeats so it completes.
+        /// </remarks>
+        private static bool IncrementDepth(object? source = null)
         {
             // OPTIMIZATION: ThreadStatic access is much faster than AsyncLocal
-            if (_mappingDepth >= MaxDepth)
+            if (_mappingDepth < MaxDepth)
             {
-                Logger?.Invoke($"[Mapsicle] Max depth {MaxDepth} reached - possible circular reference");
+                _mappingDepth++;
+                return true;
+            }
+
+            if (_mappingDepth >= StackGuardDepth)
+            {
+                Logger?.Invoke($"[Mapsicle] Depth {StackGuardDepth} reached, stopping to protect the stack");
                 return false;
             }
+
+            // Nothing to check against, so the old behaviour stands: stop. The collection loops take
+            // one level for the whole loop rather than one per element, so they have no single
+            // instance to offer. Continuing without an instance would mean nothing could ever stop
+            // that path, and a list holding itself went from truncating to overflowing the stack.
+            if (source is null)
+            {
+                Logger?.Invoke($"[Mapsicle] Max depth {MaxDepth} reached with no instance to check, stopping");
+                return false;
+            }
+
+            var path = _onPath ??= new HashSet<object>(ReferenceIdentity.Instance);
+
+            if (!path.Add(source))
+            {
+                Logger?.Invoke("[Mapsicle] Circular reference reached, the same instance is already being mapped");
+                return false;
+            }
+
             _mappingDepth++;
             return true;
         }
 
-        private static void DecrementDepth()
+        private static void DecrementDepth(object? source = null)
         {
             if (_mappingDepth > 0) _mappingDepth--;
+
+            if (source is not null && _mappingDepth >= MaxDepth)
+            {
+                _onPath?.Remove(source);
+            }
+
+            // Back at the top, so nothing is on the path. Cleared rather than freed, because the next
+            // deep map on this thread would otherwise allocate it again.
+            if (_mappingDepth == 0) _onPath?.Clear();
+        }
+
+        /// <summary>Compares by instance, not by whatever Equals the type happens to define.</summary>
+        /// <remarks>
+        /// Supplied rather than taken from the framework because netstandard2.0 is a target and
+        /// <c>ReferenceEqualityComparer</c> arrived in .NET 5. A record, or anything else overriding
+        /// Equals, would otherwise make two distinct instances look like a cycle.
+        /// </remarks>
+        private sealed class ReferenceIdentity : IEqualityComparer<object>
+        {
+            internal static readonly ReferenceIdentity Instance = new();
+
+            bool IEqualityComparer<object>.Equals(object? x, object? y) => ReferenceEquals(x, y);
+
+            int IEqualityComparer<object>.GetHashCode(object obj) =>
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
         }
 
         #endregion
@@ -783,14 +865,14 @@ namespace Mapsicle
             {
                 if (entry.RequiresDepthTracking)
                 {
-                    if (!IncrementDepth()) return default;
+                    if (!IncrementDepth(source)) return default;
                     try
                     {
                         return entry.CompiledMapper(source);
                     }
                     finally
                     {
-                        DecrementDepth();
+                        DecrementDepth(source);
                     }
                 }
                 return entry.CompiledMapper(source);
@@ -814,14 +896,14 @@ namespace Mapsicle
             // Execute with depth tracking if needed
             if (requiresDepthTracking)
             {
-                if (!IncrementDepth()) return default;
+                if (!IncrementDepth(source)) return default;
                 try
                 {
                     return mapper(source);
                 }
                 finally
                 {
-                    DecrementDepth();
+                    DecrementDepth(source);
                 }
             }
             return mapper(source);
@@ -1171,19 +1253,19 @@ namespace Mapsicle
                 {
                     return ((Func<object, T>)cached)(source);
                 }
-                if (!IncrementDepth()) return default;
+                if (!IncrementDepth(source)) return default;
                 try
                 {
                     return ((Func<object, T>)cached)(source);
                 }
                 finally
                 {
-                    DecrementDepth();
+                    DecrementDepth(source);
                 }
             }
 
             // Cold path with depth tracking
-            if (!IncrementDepth())
+            if (!IncrementDepth(source))
             {
                 return default;
             }
@@ -1387,7 +1469,7 @@ namespace Mapsicle
             }
             finally
             {
-                DecrementDepth();
+                DecrementDepth(source);
             }
         }
 
@@ -2557,14 +2639,14 @@ namespace Mapsicle
                     return resolved.Map(source);
                 }
 
-                if (!IncrementDepth()) return default;
+                if (!IncrementDepth(source)) return default;
                 try
                 {
                     return resolved.Map(source);
                 }
                 finally
                 {
-                    DecrementDepth();
+                    DecrementDepth(source);
                 }
             }
 

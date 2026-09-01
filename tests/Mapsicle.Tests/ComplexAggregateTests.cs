@@ -316,5 +316,61 @@ namespace Mapsicle.Tests
                 oneAtATime.Select(d => d!.Lines[0].Product.Category.Name),
                 viaCollection.Select(d => d.Lines[0].Product.Category.Name));
         }
+        public class CxChain { public int Depth { get; set; } public CxChain? Next { get; set; } }
+        public class CxChainDto { public int Depth { get; set; } public CxChainDto? Next { get; set; } }
+
+        [Fact]
+        public void ADeepGraphWithNoCycleIsNotTruncated()
+        {
+            // The depth counter could not tell a cycle from a deep graph, so it treated them the
+            // same and lost real data: a two hundred element chain came back holding thirty two,
+            // silently, while both source generators returned all two hundred. The counter now only
+            // decides when to start checking, and what stops the walk is a repeated instance.
+            Mapper.ClearCache();
+
+            var head = new CxChain { Depth = 0 };
+            var cursor = head;
+            for (var i = 1; i < 200; i++)
+            {
+                cursor.Next = new CxChain { Depth = i };
+                cursor = cursor.Next;
+            }
+
+            var dto = ((object)head).MapTo<CxChainDto>();
+
+            var depth = 0;
+            var walk = dto;
+            while (walk?.Next is not null) { walk = walk.Next; depth++; }
+
+            Assert.Equal(199, depth);
+            Assert.Equal(199, walk!.Depth);
+        }
+
+        public class CxSelf { public int Id { get; set; } public CxSelf? Parent { get; set; } }
+        public class CxSelfDto { public int Id { get; set; } public CxSelfDto? Parent { get; set; } }
+
+        [Fact]
+        public void AnInstanceThatIsItsOwnParentStillTerminates()
+        {
+            // The positive control for the test above. Removing the truncation must not remove the
+            // termination: without the instance check this recurses until the stack ends, which is
+            // what both source generators do on this shape.
+            Mapper.ClearCache();
+
+            var node = new CxSelf { Id = 1 };
+            node.Parent = node;
+
+            var dto = ((object)node).MapTo<CxSelfDto>();
+
+            Assert.NotNull(dto);
+            Assert.Equal(1, dto!.Id);
+
+            var depth = 0;
+            var walk = dto;
+            while (walk?.Parent is not null && depth < 10_000) { walk = walk.Parent; depth++; }
+
+            Assert.True(depth < 10_000, $"the self reference did not terminate, reached {depth}");
+        }
+
     }
 }

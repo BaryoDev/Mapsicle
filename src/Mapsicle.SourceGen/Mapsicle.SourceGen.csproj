@@ -10,6 +10,14 @@
     <PackageTags>mapper;mapping;source-generator;roslyn;aot;automapper-alternative</PackageTags>
 
     <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!--
+      No symbol package. The shared props turn on IncludeSymbols for every package, and an analyzer
+      contributes no build output to symbolise, so the snupkg has nothing in it and pack fails with
+      NU5017 after the nupkg itself succeeded. The publish workflow packs every project in a loop
+      under set -e, so this exited 1 partway through and the projects after it never packed.
+    -->
+    <IncludeSymbols>false</IncludeSymbols>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <DevelopmentDependency>true</DevelopmentDependency>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
