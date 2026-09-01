@@ -132,5 +132,54 @@ namespace Mapsicle.Docs.Tests
                 "these packages ship and the README does not tell anyone:\n  " + string.Join("\n  ", missing));
         }
 
+        /// <summary>The licence is stated in four places and they all have to agree.</summary>
+        /// <remarks>
+        /// Section 1 of CLAUDE.md opens on the licence and says a claim nothing checks is a claim
+        /// that quietly stops being true. Nothing checked this one. The project moved from MPL-2.0 to
+        /// MIT across a LICENSE file, the package metadata that stamps every shipped package, a
+        /// README badge and the README footer, and the failure mode of missing one is a package whose
+        /// nuspec and whose LICENSE disagree about what the user is allowed to do.
+        /// </remarks>
+        [Fact]
+        public void TheLicenceAgreesEverywhereItIsStated()
+        {
+            var root = new DirectoryInfo(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "Mapsicle.sln")))
+            {
+                root = root.Parent;
+            }
+
+            Assert.NotNull(root);
+
+            var licence = File.ReadAllText(Path.Combine(root!.FullName, "LICENSE"));
+            var props = File.ReadAllText(Path.Combine(root.FullName, "src", "Directory.Build.props"));
+            var readme = Readme();
+
+            var disagreements = new System.Collections.Generic.List<string>();
+
+            if (!licence.TrimStart().StartsWith("MIT License", StringComparison.Ordinal))
+            {
+                disagreements.Add("LICENSE does not begin with the MIT licence");
+            }
+
+            if (!props.Contains("<PackageLicenseExpression>MIT</PackageLicenseExpression>", StringComparison.Ordinal))
+            {
+                disagreements.Add("src/Directory.Build.props does not stamp MIT onto the packages");
+            }
+
+            if (!readme.Contains("License-MIT", StringComparison.Ordinal))
+            {
+                disagreements.Add("the README badge does not say MIT");
+            }
+
+            if (readme.Contains("MPL", StringComparison.Ordinal) || licence.Contains("Mozilla Public", StringComparison.Ordinal))
+            {
+                disagreements.Add("a reference to the previous licence survives in the README or LICENSE");
+            }
+
+            Assert.True(disagreements.Count == 0,
+                "the licence does not agree with itself:\n  " + string.Join("\n  ", disagreements));
+        }
+
     }
 }

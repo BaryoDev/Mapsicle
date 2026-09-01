@@ -1,5 +1,9 @@
 # Mapsicle 2.1: an MPL-2.0 object mapper, and honest numbers against AutoMapper
 
+> **Licence note, added later:** Mapsicle moved from MPL-2.0 to MIT after this article was
+> published. The article is kept as it was written. The reasoning is unchanged, and MIT is the
+> more permissive of the two.
+
 AutoMapper is the default object mapper in .NET and has been for over a decade. Since version 15 it
 ships under the Reciprocal Public License 1.5, or a commercial agreement from Lucky Penny Software.
 You can read that in the package: `LICENSE.md` inside `AutoMapper.15.1.3.nupkg` says so directly.

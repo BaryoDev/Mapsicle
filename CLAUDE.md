@@ -9,19 +9,29 @@ anyone, person or agent, changing code here.
 
 ## 1. What the project is selling
 
-Two claims, and everything else is downstream of them:
+**MIT, and switching to it is a deletion rather than a rewrite.** Everything else is downstream of
+that, including the speed.
 
-1. **MPL 2.0, where AutoMapper is not.** AutoMapper 15 is RPL-1.5 or a paid licence from Lucky
-   Penny Software. RPL-1.5 is strong reciprocal: it obliges you to publish source of software built
-   with it, including software only deployed internally.
-2. **Faster than AutoMapper, and it allocates almost nothing.**
+The licence was MPL-2.0 and is now MIT, which is the same licence Mapperly and Mapster carry. That
+change is deliberately a demotion of the argument, not a promotion. Measured against the libraries
+people actually migrate to, a permissive licence is table stakes: both destinations are already MIT,
+and AutoMapper stays free below five million dollars of revenue. So the licence answers an objection
+and does not open the pitch.
 
-Both are gated in CI, because a claim nothing checks is a claim that quietly stops being true. The
-README once said "2x faster" on a path its own benchmark measured at parity, and that survived
+What does open it is that no competitor asks for less to adopt. Mapping the sample aggregate takes
+nine `CreateMap` calls under AutoMapper and zero lines under Mapsicle, where moving that same code to
+Mapperly is a rewrite of every profile into partial methods. Speed is the third argument, not the
+first: on that graph a declared pair is 0.99 against hand written, Mapperly 1.09 and Mapster 1.11, and
+nobody migrates a codebase for eleven percent.
+
+Two things stay gated in CI, because a claim nothing checks is a claim that quietly stops being true.
+The README once said "2x faster" on a path its own benchmark measured at parity, and that survived
 because the benchmark job printed a number and exited 0.
 
-- `licence-boundary` fails if anything under `src/` references AutoMapper. Compare against it in
-  `tests/` as much as you like; `tests/Mapsicle.Benchmarks` is never packed.
+- `licence-boundary` fails if anything under `src/` references AutoMapper. This matters more under
+  MIT rather than less: a reference reaching `src/` would put an RPL-1.5 obligation on every shipped
+  package no matter what this project's own licence says. Compare against it in `tests/` as much as
+  you like; `tests/Mapsicle.Benchmarks` is never packed.
 - `core-has-no-dependencies` packs `src/Mapsicle` and fails if the nuspec declares a dependency.
 - `claims` runs the comparison and fails if a ratio moves outside its bound.
 
