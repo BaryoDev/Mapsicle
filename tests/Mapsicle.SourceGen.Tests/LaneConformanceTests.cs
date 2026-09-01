@@ -22,6 +22,7 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfLift), typeof(Mapsicle.SourceGen.Tests.ConfLiftDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCaseEnum), typeof(Mapsicle.SourceGen.Tests.ConfCaseEnumDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfControlled), typeof(Mapsicle.SourceGen.Tests.ConfControlledDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCovariant), typeof(Mapsicle.SourceGen.Tests.ConfCovariantDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -134,6 +135,14 @@ namespace Mapsicle.SourceGen.Tests
         [IgnoreMap] public bool IsAdmin { get; set; }
         [MapFrom("Actual")] public string Decoy { get; set; } = "";
     }
+
+    // A collection whose element type is assignable but not identical. The emitter passed the
+    // element straight through, so the generated lane handed back the source instances: mutating the
+    // DTO mutated the entity, and the runtime type leaked through a contract that said the base.
+    public class ConfAnimal { public string Name { get; set; } = ""; }
+    public class ConfDog : ConfAnimal { public string Breed { get; set; } = ""; }
+    public class ConfCovariant { public List<ConfDog> Pets { get; set; } = new(); }
+    public class ConfCovariantDto { public List<ConfAnimal> Pets { get; set; } = new(); }
 
     /// <summary>
     /// One table of cases, run through the runtime lane and the generated lane, asserting they agree.
@@ -383,6 +392,25 @@ namespace Mapsicle.SourceGen.Tests
                 new ConfControlled { Id = 4, IsAdmin = true, Actual = "real", Decoy = "decoy" },
                 d => d.Id, d => d.IsAdmin, d => d.Decoy);
 
+        [Fact]
+        public void ACollectionOfAssignableElementsCopiesRatherThanAliases()
+        {
+            var source = new ConfCovariant { Pets = { new ConfDog { Name = "Rex", Breed = "collie" } } };
+
+            var generated = ((object)source).MapTo<ConfCovariantDto>();
+
+            using var runtime = MapperFactory.Create();
+            var interpreted = runtime.MapTo<ConfCovariantDto>(source);
+
+            // Both lanes must build a new element rather than hand back the source instance, and the
+            // runtime type must be the declared one.
+            Assert.False(ReferenceEquals(generated!.Pets[0], source.Pets[0]), "the generated lane aliased the source element");
+            Assert.False(ReferenceEquals(interpreted!.Pets[0], source.Pets[0]), "the engine aliased the source element");
+            Assert.Equal(typeof(ConfAnimal), generated.Pets[0].GetType());
+            Assert.Equal(interpreted.Pets[0].GetType(), generated.Pets[0].GetType());
+            Assert.Equal(interpreted.Pets[0].Name, generated.Pets[0].Name);
+        }
+
         // ---- refusals ---------------------------------------------------------------------------
 
         public class ConfInner { public string City { get; set; } = ""; }
@@ -447,8 +475,8 @@ namespace Mapsicle.SourceGen.Tests
 
             var covered = new[]
             {
-                nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCrossEnum),
-                nameof(ConfDerived), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
+                nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCovariant),
+                nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
                 nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfNest),
                 nameof(ConfNullable), nameof(ConfPartial), nameof(ConfStamp), nameof(ConfWiden),
             };

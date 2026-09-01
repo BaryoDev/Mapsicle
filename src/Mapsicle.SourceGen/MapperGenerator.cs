@@ -258,6 +258,17 @@ namespace Mapsicle.SourceGen
 
                 if (match != null)
                 {
+                    // Checked here rather than on the root pair's assignments, because a nested
+                    // helper, an enum arm and a flattened leaf all emit references the root check
+                    // never saw. The pragma in the preamble cannot help: it disables warnings and
+                    // CS0619 is an error, so the consumer's build failed inside a generated file.
+                    if (IsObsoleteAsError(match) || IsObsoleteAsError(destProp))
+                    {
+                        refusal = $"'{destProp.Name}' is marked [Obsolete] as an error, which generated "
+                                + "code cannot reference";
+                        return null;
+                    }
+
                     var expression = Convert(match.Type, destProp.Type, $"source.@{match.Name}", context);
 
                     if (expression is null)
@@ -277,6 +288,13 @@ namespace Mapsicle.SourceGen
                 var path = FlattenedPath(destProp, readable);
                 if (path != null)
                 {
+                    if (IsObsoleteAsError(destProp) || path.Any(IsObsoleteAsError))
+                    {
+                        refusal = $"'{destProp.Name}' flattens through a member marked [Obsolete] as an "
+                                + "error, which generated code cannot reference";
+                        return null;
+                    }
+
                     var expression = FlattenedExpression(path, destProp.Type, context);
 
                     if (expression is null)
@@ -553,7 +571,19 @@ namespace Mapsicle.SourceGen
         /// </remarks>
         private static string? ElementConvert(ITypeSymbol from, ITypeSymbol to, string expression, PlanContext context)
         {
+            // Identical element type passes straight through, which is what the engine does: a
+            // List<Tag> into a List<Tag> hands back the same Tag instances on both lanes.
             if (SymbolEqualityComparer.Default.Equals(from, to)) return expression;
+
+            // A reference-assignable element is NOT passed through, and that is the difference that
+            // matters. A List<Dog> into a List<Animal> handed back the same Dog instances on the
+            // generated lane, so mutating the DTO mutated the entity and the runtime type leaked
+            // through a contract that said Animal. The engine builds a fresh Animal, so this maps.
+            if (IsMappable(from) && to.TypeKind == TypeKind.Class && !IsString(to))
+            {
+                return NestedCall(from, to, expression, context);
+            }
+
             if (IsReferenceAssignable(from, to)) return expression;
 
             if (from.TypeKind == TypeKind.Enum && to.TypeKind == TypeKind.Enum
@@ -571,7 +601,8 @@ namespace Mapsicle.SourceGen
         }
 
         /// <summary>Plans the enum switch and returns the call, resolving names now rather than later.</summary>
-        private static string EnumCall(
+        /// <summary>Plans the enum switch, or null when an arm cannot be referenced.</summary>
+        private static string? EnumCall(
             ITypeSymbol fromEnum, ITypeSymbol toEnum, ITypeSymbol from, ITypeSymbol to,
             string expression, PlanContext context)
         {
@@ -586,10 +617,9 @@ namespace Mapsicle.SourceGen
                 // sorted by value, not by declaration. With two destination names differing only by
                 // case the two lanes picked different members: BRAVO = 2 declared first won here
                 // while Bravo = 1 won at runtime.
-                var destNames = toEnum.GetMembers().OfType<IFieldSymbol>()
+                var destFields = toEnum.GetMembers().OfType<IFieldSymbol>()
                     .Where(f => f.HasConstantValue)
                     .OrderBy(f => UnsignedKey(f.ConstantValue))
-                    .Select(f => f.Name)
                     .ToList();
 
                 var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -603,14 +633,25 @@ namespace Mapsicle.SourceGen
                     // spent on the first. The engine yields the default there, so this must too.
                     if (!seen.Add(member.ConstantValue?.ToString() ?? member.Name)) continue;
 
-                    var match = destNames.FirstOrDefault(
-                        n => string.Equals(n, member.Name, StringComparison.OrdinalIgnoreCase));
+                    var match = destFields.FirstOrDefault(
+                        f => string.Equals(f.Name, member.Name, StringComparison.OrdinalIgnoreCase));
 
                     if (match is null) continue;
 
-                    helper.Assignments.Add(new Assignment(match, member.Name, member.Name));
+                    // A switch arm names both enum members, so both have to be referenceable. An
+                    // obsolete-as-error member here breaks the consumer's build the same way a
+                    // property does, and the root check never looked at enum fields at all.
+                    if (IsObsoleteAsError(member) || IsObsoleteAsError(match))
+                    {
+                        helper.HasBlockedMember = true;
+                        return null;
+                    }
+
+                    helper.Assignments.Add(new Assignment(match.Name, member.Name, member.Name));
                 }
             }
+
+            if (helper.HasBlockedMember) return null;
 
             var fromNullable = Underlying(from);
             var toNullable = Underlying(to);
@@ -979,6 +1020,29 @@ namespace Mapsicle.SourceGen
         private static string Key(ITypeSymbol from, ITypeSymbol to, HelperKind kind) =>
             $"{kind}|{Full(from)}|{Full(to)}";
 
+        /// <summary>Whether this member is marked obsolete as an error.</summary>
+        /// <remarks>
+        /// Takes the symbol rather than a type and a name. The name based version could only be
+        /// asked about the root pair, so an obsolete member on a nested type, on an enum reached
+        /// through a switch arm, or partway along a flattened path was emitted and broke the
+        /// consumer's build with CS0619 inside a file they did not write.
+        /// </remarks>
+        private static bool IsObsoleteAsError(ISymbol member)
+        {
+            foreach (var attribute in member.GetAttributes())
+            {
+                if (attribute.AttributeClass?.ToDisplayString() != "System.ObsoleteAttribute") continue;
+
+                if (attribute.ConstructorArguments.Length > 1
+                    && attribute.ConstructorArguments[1].Value is true)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>The member's name when it is obsolete as an error, otherwise null.</summary>
         private static string? ObsoleteAsError(INamedTypeSymbol type, string memberName)
         {
@@ -1042,6 +1106,9 @@ namespace Mapsicle.SourceGen
             internal List<Assignment> Assignments { get; }
 
             internal string? ElementExpression { get; set; }
+            /// <summary>Set when a member this helper must emit cannot be referenced.</summary>
+            internal bool HasBlockedMember { get; set; }
+
             internal string? ElementSourceType { get; set; }
             internal string? ElementDestinationType { get; set; }
             internal bool SourceIsArray { get; set; }
