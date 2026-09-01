@@ -7,16 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Two releases are planned and their shapes are settled rather than open, so they are written down
-here. 2.2.0 is in progress; 3.0.0 is not started.
+Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
+written down here.
 
-The split is by whether the change is additive. The source generator adds a package and one method
-and changes no existing signature, which is a minor release under semantic versioning and under the
-API stability rule in CONTRIBUTING. Reshaping the extension points into a data model does change
-public surface, so it waits for a major. Bundling them would have made the generator wait on the
-rework for no reason, and the generator is the time-sensitive half.
+### 3.0.0: extension points become configuration, not code
 
-### 2.2.0: the source generator, measured against hand written code
+Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
+delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
+the identical model when emitting. An extension added once then appears in both lanes and the
+conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
+runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
+`DynamicObject` without a core pull request.
+
+This is a major because it reshapes public surface that consumers have written against, unlike the
+generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
+additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
+change a major version exists to signal.
+
+## [2.2.0] - 2026-09-01
+
+### The licence is now MIT
+
+Mapsicle was MPL-2.0 and every package in this release is MIT. Sole copyright holder, no external
+contributions to relicense, and every shipped dependency is already Apache-2.0 or MIT.
+
+The reason is positioning rather than principle. Measured against the libraries people actually
+migrate to, MPL-2.0 was the second least permissive licence in the group: Mapperly and Mapster are
+both MIT and AutoMapper stays free below five million dollars of revenue. A weak copyleft still
+triggers a legal review at companies where MIT does not.
+
+MIT is compatible with MPL-2.0 in the direction that matters, so a consumer whose own project is
+MPL-2.0 is unaffected.
+
+### Deep graphs are no longer truncated
+
+**This one lost data and neither test caught it.** A two hundred element chain with no cycle in it
+came back holding thirty two elements, silently, because the depth counter reached `MaxDepth` and
+gave up. A counter cannot tell a cycle from a deep graph and this treated them the same. Both source
+generators return all two hundred; AutoMapper returns sixty four.
+
+The counter now decides only when to *start* checking. Below `MaxDepth` nothing is tracked and
+nothing is allocated, so the warm path is unchanged and the allocation budgets still pass. At the
+ceiling the source instances on the current path start being recorded and mapping stops on a repeated
+instance rather than on an arbitrary number: a cycle repeats within one loop of itself so it still
+terminates promptly, and a long chain never repeats so it completes.
+
+Verified across five shapes: self reference, self through a collection, mutual A to B to A, the EF
+parent and child pair, and a two hundred deep acyclic chain. All four cycles terminate and the chain
+now returns all two hundred.
+
+### The source generator, measured against hand written code
 
 `Mapsicle.SourceGen` emits a mapper at build time for any pair declared with
 `[assembly: MapsicleGenerate(typeof(Order), typeof(OrderDto))]`. It is opt in per pair, the call site
@@ -30,13 +70,19 @@ projection written out by hand:
 
 ```
 whole graph, Order into OrderDto        mean   vs hand written  allocated
-hand written                          288.1 ns          1.00     1.41 KB
-Mapsicle, pair declared               288.4 ns          1.00     1.41 KB
-Mapsicle, declared, untyped call      309.7 ns          1.07     1.41 KB
-Mapperly 4.1.1                        321.5 ns          1.12     1.50 KB
-Mapsicle, nothing declared            523.0 ns          1.77     1.41 KB
-AutoMapper 15.1.3                     728.8 ns          2.45     1.48 KB
+hand written                          288.5 ns          1.00     1.41 KB
+Mapsicle, pair declared               287.7 ns          1.00     1.41 KB
+Mapperly 4.1.1                        312.8 ns          1.08     1.50 KB
+Mapster 7.4.0                         313.7 ns          1.09     1.38 KB
+Mapsicle, declared, untyped call      316.1 ns          1.10     1.41 KB
+Mapsicle, nothing declared            519.5 ns          1.80     1.41 KB
+AutoMapper 15.1.3                     715.8 ns          2.48     1.48 KB
 ```
+
+Read the middle of that as a range, not a ranking: Mapperly and Mapster have swapped places between
+runs and all three modern mappers sit inside ten percent of each other. What holds across every run
+is the two ends. Every lane is checked against the hand written baseline member by member before a
+timing is taken, because a mapper that drops a member is faster than one that does not.
 
 **What the gap actually was.** Not the mapping. On a five member copy, hand written is 9.54 ns, the
 typed overload is 12.32 and the untyped one is 27.96, running the identical delegate over the
@@ -92,20 +138,37 @@ first map never applied at all.
 collection regression shows up and is deterministic where a shared runner's clock is not. The 1.00
 plus or minus 0.05 band runs under `--band` on an idle machine.
 
+### Or let it find the pairs
 
-### Planned for 3.0.0: extension points become configuration, not code
+Declaring pairs one at a time gets tedious past a handful, so `[assembly: MapsicleGenerateAll]` asks
+the generator to walk this assembly's call sites for `.MapTo<TDest>()` and emit a mapper for every
+pair whose source type it can read there. Nothing else changes.
 
-Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
-delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
-the identical model when emitting. An extension added once then appears in both lanes and the
-conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
-runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
-`DynamicObject` without a core pull request.
+It finds what the compiler can already see, which is the honest limit. A receiver typed `object` is
+skipped, because that is precisely the case the runtime engine exists for. Anything resolved from
+configuration, loaded from a plugin, or only ever mapped through `object` still needs naming.
 
-This is a major because it reshapes public surface that consumers have written against, unlike the
-generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
-additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
-change a major version exists to signal.
+The two doors work together and a pair reached both ways is emitted once. A scanned pair that cannot
+be emitted reports `MSG002` at information level rather than `MSG001` at warning level: naming a pair
+and getting a silent refusal is a broken promise, where turning one attribute on should not fill a
+build log with notices about members nobody mentioned.
+
+### Fixed in packaging
+
+`Mapsicle.SourceGen` could not have shipped. The shared props turn on `IncludeSymbols` for every
+package and an analyzer contributes no build output to symbolise, so `dotnet pack` produced the
+nupkg and then exited 1 on `NU5017` for an empty snupkg. The publish workflow packs every project in
+a loop, so the release would have stopped partway through with some packages built and some not.
+
+A CI job now packs every packable project on every pull request, which is the check that would have
+caught it. Verified for this release by packing all fourteen and installing `Mapsicle.SourceGen`
+from a local feed into a fresh project: the generator runs, the mapper is emitted, and the values
+come back correct.
+
+The README also listed neither `Mapsicle.SourceGen` nor an install line for
+`Mapsicle.DependencyInjection`. Both added, and a test reads the packable projects under `src` and
+fails if one is missing from either place.
+
 
 ## 2.1.0
 
