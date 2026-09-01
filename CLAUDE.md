@@ -15,7 +15,9 @@ that, including the speed.
 The licence was MPL-2.0 and is now MIT, which is the same licence Mapperly and Mapster carry. That
 change is deliberately a demotion of the argument, not a promotion. Measured against the libraries
 people actually migrate to, a permissive licence is table stakes: both destinations are already MIT,
-and AutoMapper stays free below five million dollars of revenue. So the licence answers an objection
+and AutoMapper has a free Community License for organisations under five million dollars of annual
+revenue that have never taken more than ten million in outside capital, with government,
+quasi-government and higher education excluded. So the licence answers an objection
 and does not open the pitch.
 
 What does open it is that no competitor asks for less to adopt. Mapping the sample aggregate takes

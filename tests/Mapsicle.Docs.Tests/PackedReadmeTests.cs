@@ -167,9 +167,34 @@ namespace Mapsicle.Docs.Tests
                 disagreements.Add("src/Directory.Build.props does not stamp MIT onto the packages");
             }
 
+            // The props file sets the default and any project may override it, so the effective value
+            // per package is what matters. Reading the shared file alone would pass while one package
+            // shipped under a different licence.
+            foreach (var csproj in new DirectoryInfo(Path.Combine(root.FullName, "src")).GetFiles("*.csproj", SearchOption.AllDirectories))
+            {
+                var text = File.ReadAllText(csproj.FullName);
+                var expression = Regex.Match(text, @"<PackageLicenseExpression>\s*([^<\s]+)\s*</PackageLicenseExpression>");
+
+                if (expression.Success && expression.Groups[1].Value != "MIT")
+                {
+                    disagreements.Add($"{csproj.Name} overrides the licence with {expression.Groups[1].Value}");
+                }
+
+                if (text.Contains("<PackageLicenseFile>", StringComparison.Ordinal))
+                {
+                    disagreements.Add($"{csproj.Name} sets PackageLicenseFile, which overrides the expression");
+                }
+            }
+
             if (!readme.Contains("License-MIT", StringComparison.Ordinal))
             {
                 disagreements.Add("the README badge does not say MIT");
+            }
+
+            // The footer states it a second time, and is the half a search and replace misses.
+            if (!readme.Contains("MIT License \u00a9", StringComparison.Ordinal))
+            {
+                disagreements.Add("the README footer does not say MIT License");
             }
 
             if (readme.Contains("MPL", StringComparison.Ordinal) || licence.Contains("Mozilla Public", StringComparison.Ordinal))

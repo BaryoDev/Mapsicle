@@ -215,7 +215,7 @@ loops side by side.
 | **A large graph you do not want to declare** | **Mapsicle** | An undeclared pair still maps, at 1.77x hand written and still 1.4x faster than AutoMapper |
 | **Need integrated validation** | **Mapsicle** | `Mapsicle.Validation`, no equivalent in either |
 | **Existing AutoMapper codebase** | **AutoMapper** (if licensed) or migrate | |
-| **Budget-conscious or OSS project** | **Mapsicle** or **Mapperly** | Both MIT. Neither asks anything of you. |
+| **Budget-conscious or OSS project** | **Mapsicle** or **Mapperly** | Both MIT. Permissive, and both ask only that the copyright and permission notice travels with the code. |
 | **Complex mapping configurations** | **AutoMapper** or **Mapsicle** (fluent) | |
 | **ASP.NET Core Minimal APIs** | **Mapsicle** (AspNetCore package) | |
 | **Need audit trail of changes** | **Mapsicle** (Audit package) | |
