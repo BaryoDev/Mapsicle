@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A value mapped on its own through `MapTo<TSource, TDest>()` or `MapperFactory` returned default
   instead of converting: `5.MapTo<int, long>()` gave 0, and so did an enum into an `int`. Both now
   use the same conversions as `MapTo<T>(object)`.
+- `[IgnoreMap]` is now honoured on a getter-only collection, on a property whose source is a public field, and by Fluent in-place `Map`, which also now reads `[MapFrom]`; each of these copied the ignored value across.
 - `Mapsicle.EntityFramework`: `ProjectTo` ignored `[IgnoreMap]` on nested destination members, so a
   field such as `Customer.Secret` was selected from the database and returned. Nested objects and
   collection elements are now built by the same code as the top level, which also makes a

@@ -2463,11 +2463,13 @@ namespace Mapsicle
             }
 
             // A destination property whose only source is a field. The property paths matched on
-            // source properties alone, so these were dropped.
+            // source properties alone, so these were dropped. Resolved through MemberResolution so
+            // [IgnoreMap] and [MapFrom] mean the same here as there: this pass once copied a source
+            // field onto an [IgnoreMap] property, so IsAdmin arrived true from a request body.
+            var readable = GetCachedReadableProperties(sourceType);
             foreach (var destProp in destType.GetProperties(Public).Where(p => p.CanWrite && p.GetIndexParameters().Length == 0))
             {
-                if (sourceType.GetProperties(Public).Any(
-                        p => string.Equals(p.Name, destProp.Name, StringComparison.OrdinalIgnoreCase))) continue;
+                if (!MemberResolution.TryResolveSource(destProp, readable, out var resolved) || resolved != null) continue;
 
                 var field = sourceType.GetFields(Public).FirstOrDefault(
                     f => string.Equals(f.Name, destProp.Name, StringComparison.OrdinalIgnoreCase));
@@ -2493,6 +2495,10 @@ namespace Mapsicle
             foreach (var destProp in destType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (destProp.CanWrite || destProp.GetIndexParameters().Length > 0) continue;
+
+                // Without this an [IgnoreMap] collection was filled anyway, so an ignored Roles list
+                // arrived holding whatever the source sent.
+                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
 
                 var destItem = ElementTypeOf(destProp.PropertyType);
                 if (destItem is null) continue;

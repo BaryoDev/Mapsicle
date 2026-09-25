@@ -23,6 +23,7 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCaseEnum), typeof(Mapsicle.SourceGen.Tests.ConfCaseEnumDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfControlled), typeof(Mapsicle.SourceGen.Tests.ConfControlledDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCovariant), typeof(Mapsicle.SourceGen.Tests.ConfCovariantDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfShielded), typeof(Mapsicle.SourceGen.Tests.ConfShieldedDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -143,6 +144,24 @@ namespace Mapsicle.SourceGen.Tests
     public class ConfDog : ConfAnimal { public string Breed { get; set; } = ""; }
     public class ConfCovariant { public List<ConfDog> Pets { get; set; } = new(); }
     public class ConfCovariantDto { public List<ConfAnimal> Pets { get; set; } = new(); }
+
+    // [IgnoreMap] on the two shapes the emitter otherwise refuses: a getter-only collection, and a
+    // property whose only source is a public field. The engine filled and copied both regardless, so
+    // the refused pair fell back to a lane that leaked, and the generator now skips them as the
+    // engine does.
+    public class ConfShielded
+    {
+        public int Id { get; set; }
+        public List<string> Roles { get; set; } = new();
+        public bool IsAdmin;
+    }
+
+    public class ConfShieldedDto
+    {
+        public int Id { get; set; }
+        [IgnoreMap] public List<string> Roles { get; } = new();
+        [IgnoreMap] public bool IsAdmin { get; set; }
+    }
 
     /// <summary>
     /// One table of cases, run through the runtime lane and the generated lane, asserting they agree.
@@ -393,6 +412,20 @@ namespace Mapsicle.SourceGen.Tests
                 d => d.Id, d => d.IsAdmin, d => d.Decoy);
 
         [Fact]
+        public void IgnoreMapOnAGetterOnlyCollectionAndAFieldSourcedMemberAgrees()
+        {
+            var source = new ConfShielded { Id = 9, Roles = { "admin" }, IsAdmin = true };
+
+            LanesAgree<ConfShielded, ConfShieldedDto>(source, d => d.Id, d => d.IsAdmin, d => d.Roles.Count);
+
+            // Agreement alone passes when both lanes leak, so the values are pinned as well.
+            var generated = ((object)source).MapTo<ConfShieldedDto>()!;
+            Assert.Equal(9, generated.Id);
+            Assert.False(generated.IsAdmin);
+            Assert.Empty(generated.Roles);
+        }
+
+        [Fact]
         public void ACollectionOfAssignableElementsCopiesRatherThanAliases()
         {
             var source = new ConfCovariant { Pets = { new ConfDog { Name = "Rex", Breed = "collie" } } };
@@ -478,7 +511,7 @@ namespace Mapsicle.SourceGen.Tests
                 nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCovariant),
                 nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
                 nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfNest),
-                nameof(ConfNullable), nameof(ConfPartial), nameof(ConfStamp), nameof(ConfWiden),
+                nameof(ConfNullable), nameof(ConfPartial), nameof(ConfShielded), nameof(ConfStamp), nameof(ConfWiden),
             };
 
             Assert.Equal(covered, declared);
