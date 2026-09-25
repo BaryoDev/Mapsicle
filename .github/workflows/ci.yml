@@ -212,6 +212,26 @@ jobs:
   # regardless of what this project's own licence says, which is the one way an MIT package can stop
   # being safe to take. It is referenced only by tests/Mapsicle.Benchmarks, which is never packed, so
   # the comparison itself is fine. Worth more than a code review.
+  native-aot:
+    name: declared pairs run under NativeAOT
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            10.0.x
+      # Under JIT every case here passed while the published binary threw on a declared list and
+      # returned null for an undeclared pair. Only a published binary can show that, so it is
+      # published and run.
+      - name: Publish and run the smoke binary
+        run: |
+          dotnet publish tests/Mapsicle.Aot.Smoke/Mapsicle.Aot.Smoke.csproj -c Release -r linux-x64 -o aot-out
+          ./aot-out/Mapsicle.Aot.Smoke
+
   parity:
     name: never worse than AutoMapper
     runs-on: ubuntu-latest

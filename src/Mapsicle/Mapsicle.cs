@@ -301,11 +301,13 @@ namespace Mapsicle
             // build and keep a delegate while the public counter said nothing had been cached.
             var typed = _typedCacheResetters.Count + CompiledListLoopCount();
 
-            if (_useLruCache && _lruMapToCache != null && _lruMapCache != null)
+            var lruMapTo = _lruMapToCache;
+            var lruMap = _lruMapCache;
+            if (_useLruCache && lruMapTo != null && lruMap != null)
             {
                 return new MapperCacheInfo(
-                    _lruMapToCache.Count + typed,
-                    _lruMapCache.Count,
+                    lruMapTo.Count + typed,
+                    lruMap.Count,
                     System.Threading.Interlocked.Read(ref _cacheHits),
                     System.Threading.Interlocked.Read(ref _cacheMisses));
             }
@@ -595,9 +597,13 @@ namespace Mapsicle
         /// </remarks>
         private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
         {
-            if (_useLruCache && _lruMapToCache != null)
+            // The bounded cache fields are volatile and UseLruCache sets them to null. Checking the
+            // field and then reading it again let a toggle land in between, and the second read
+            // threw NullReferenceException from a map call. Every reader takes one local copy.
+            var lru = _lruMapToCache;
+            if (_useLruCache && lru != null)
             {
-                if (_lruMapToCache.TryGetValue(key, out var cached))
+                if (lru.TryGetValue(key, out var cached))
                 {
                     System.Threading.Interlocked.Increment(ref _cacheHits);
                     return (Func<object, T>)cached;
@@ -609,13 +615,13 @@ namespace Mapsicle
                 {
                     reapply();
 
-                    if (_lruMapToCache.TryGetValue(key, out var restored))
+                    if (lru.TryGetValue(key, out var restored))
                     {
                         return (Func<object, T>)restored;
                     }
                 }
 
-                return (Func<object, T>)_lruMapToCache.GetOrAdd(key, factory);
+                return (Func<object, T>)lru.GetOrAdd(key, factory);
             }
 
             return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
@@ -623,16 +629,17 @@ namespace Mapsicle
 
         private static Action<object, object> GetOrAddMapDelegate((Type, Type) key, Func<(Type, Type), Action<object, object>> factory)
         {
-            if (_useLruCache && _lruMapCache != null)
+            var lru = _lruMapCache;
+            if (_useLruCache && lru != null)
             {
-                if (_lruMapCache.TryGetValue(key, out var cached))
+                if (lru.TryGetValue(key, out var cached))
                 {
                     System.Threading.Interlocked.Increment(ref _cacheHits);
                     return cached;
                 }
 
                 System.Threading.Interlocked.Increment(ref _cacheMisses);
-                return _lruMapCache.GetOrAdd(key, factory);
+                return lru.GetOrAdd(key, factory);
             }
 
             return _mapCache.GetOrAdd(key, factory);
@@ -837,12 +844,13 @@ namespace Mapsicle
             var key = (typeof(TSource), typeof(TDest));
             Func<object, TDest> untyped = source => mapper((TSource)source);
 
-            if (_useLruCache && _lruMapToCache != null)
+            var lru = _lruMapToCache;
+            if (_useLruCache && lru != null)
             {
                 // A replacing write, not GetOrAdd. Under the bounded cache a pair mapped before this
                 // registration already had a compiled delegate stored, and GetOrAdd keeps whichever
                 // arrived first, so the generated mapper never applied for the rest of the process.
-                _lruMapToCache.Set(key, untyped);
+                lru.Set(key, untyped);
             }
             else
             {
@@ -933,6 +941,7 @@ namespace Mapsicle
         private static TDest? BuildAndCacheTypedMapper<TSource, TDest>(TSource source)
         {
             var sourceType = typeof(TSource);
+            DynamicCodeGuard.EnsureSupported(sourceType, typeof(TDest));
 
             // Build the strongly-typed mapper and determine depth tracking
             bool requiresDepthTracking = HasNestedComplexTypes(sourceType);
@@ -1097,6 +1106,17 @@ namespace Mapsicle
             var sourceType = typeof(TSource);
             var destType = typeof(TDest);
             var sourceParam = Expression.Parameter(sourceType, "source");
+
+            // A value mapped on its own goes through the shared cascade, as the untyped path does.
+            // Without this, 5.MapTo<int, long>() fell through to member mapping and returned 0.
+            if (sourceType.IsValueType || sourceType == typeof(string))
+            {
+                var direct = PropertyConversion.TryBuild(sourceParam, sourceType, destType, BuildNestedMapCall);
+                if (direct is not null)
+                {
+                    return Expression.Lambda<Func<TSource, TDest>>(direct, sourceParam).Compile();
+                }
+            }
 
             var sourceProps = GetCachedReadableProperties(sourceType);
             var destProps = GetCachedWritableProperties(destType);
@@ -1325,6 +1345,7 @@ namespace Mapsicle
             {
                 var sourceType = k.Item1;
                 var destType = k.Item2;
+                DynamicCodeGuard.EnsureSupported(sourceType, destType);
                 var sourceParam = Expression.Parameter(typeof(object), "source");
                 bool isSourceVisible = sourceType.IsVisible;
                 var typedSource = Expression.Convert(sourceParam, sourceType);
@@ -1584,6 +1605,7 @@ namespace Mapsicle
         private static Action<object, object> BuildInPlaceMapper(
             Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers)
         {
+            DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             var destParam = Expression.Parameter(typeof(object), "destination");
 
@@ -1701,7 +1723,8 @@ namespace Mapsicle
                     // This will initialize the cache
                     result.Add(first.MapTo<TSource, TDest>()!);
 
-                    // Re-read the now-initialized entry
+                    // Null again if a trim or clear on another thread reset the pair after the map
+                    // above stored it. Under a small MaxCacheSize that dereferenced null below.
                     entry = TypedMapperCache<TSource, TDest>.Entry;
                     // Now process remaining with fast path
                     // (route through MapTo when depth tracking is required so cyclic items can't overflow the stack)
@@ -1714,7 +1737,7 @@ namespace Mapsicle
                         }
                         else
                         {
-                            result.Add(entry!.RequiresDepthTracking ? item.MapTo<TSource, TDest>()! : entry.CompiledMapper(item)!);
+                            result.Add(entry is null || entry.RequiresDepthTracking ? item.MapTo<TSource, TDest>()! : entry.CompiledMapper(item)!);
                         }
                     }
                     return result;
@@ -1837,6 +1860,12 @@ namespace Mapsicle
             // The bound cache exists to limit retained delegates, and a second unbounded cache
             // beside it would defeat that.
             if (_useLruCache) return null;
+
+            // The loop is an expression tree over List<T>.Count and its indexer, and under NativeAOT
+            // the trimmer removes that metadata: every declared pair mapped as a list threw
+            // ArgumentNullException naming 'property'. The fallback loop maps each element through
+            // the object entry point, which serves the generated mapper without building anything.
+            if (!DynamicCodeGuard.IsSupported) return null;
 
             // Keyed on the concrete List<T> rather than its element, because reaching the element
             // means GetGenericArguments, which allocates a Type[] every call. That is 16 bytes per
@@ -2218,6 +2247,7 @@ namespace Mapsicle
         public static T? MapTo<T>(this IDictionary<string, object?>? source) where T : new()
         {
             if (source is null) return default;
+            DynamicCodeGuard.EnsureDictionarySupported(typeof(T));
 
             var dest = new T();
             var destProps = GetCachedWritableProperties(typeof(T));
