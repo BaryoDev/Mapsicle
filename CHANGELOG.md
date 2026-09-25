@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Fixed, for 2.2.1
+### Fixed
 
 - Under NativeAOT a declared pair mapped as a `List` threw `ArgumentNullException` naming
   `property`, because the compiled list loop reads `List<T>.Count` and its indexer through reflection
@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing, `MapperFactory` returned null and a dictionary filled zeros, all without an error. Each now
   throws `NotSupportedException` naming the pair and the attribute that fixes it. A new CI job
   publishes a NativeAOT binary and runs it.
+- A value mapped on its own through `MapTo<TSource, TDest>()` or `MapperFactory` returned default
+  instead of converting: `5.MapTo<int, long>()` gave 0, and so did an enum into an `int`. Both now
+  use the same conversions as `MapTo<T>(object)`.
 
 Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
 written down here.

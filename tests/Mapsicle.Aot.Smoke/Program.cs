@@ -49,7 +49,8 @@ Refused("undeclared Map(existing)", () => new AotPet { Name = "Rex" }.Map(new Ao
 Refused("declared Map(existing)", () => order.Map(new AotOrderDto()));
 Refused("MapperFactory", () => { using var f = MapperFactory.Create(); return f.MapTo<AotOrderDto>(order); });
 Refused("declared list as object", () => ((object)new List<AotOrder> { order }).MapTo<List<AotOrderDto>>());
-Refused("dictionary", () => new Dictionary<string, object?> { ["Name"] = "Rex" }.MapTo<AotPetDto>());
+Refused("dictionary", () => new Dictionary<string, object?> { ["Name"] = "Rex" }.MapTo<AotPetDto>(),
+    "has no generated form");
 
 Console.WriteLine(failures == 0 ? "all passed" : $"{failures} failed");
 return failures == 0 ? 0 : 1;

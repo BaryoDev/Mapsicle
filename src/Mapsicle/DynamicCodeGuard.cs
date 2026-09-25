@@ -36,6 +36,17 @@ namespace Mapsicle
                 "support dynamic code (NativeAOT) and the pair has no generated mapper. " + Remedy(sourceType, destType));
         }
 
+        // Dictionary mapping never goes through a generated mapper, so declaring a pair cannot help.
+        internal static void EnsureDictionarySupported(Type destType)
+        {
+            if (IsSupported) return;
+
+            throw new NotSupportedException(
+                $"Mapsicle cannot map a dictionary to {Describe(destType)} here: this runtime does not support " +
+                "dynamic code (NativeAOT), and MapTo<T>(IDictionary<string, object?>) has no generated form. " +
+                "Map the dictionary by hand, or into a declared class first.");
+        }
+
         private static string Remedy(Type sourceType, Type destType)
         {
             var element = ElementType(destType);
@@ -46,8 +57,8 @@ namespace Mapsicle
             }
 
             return $"Declare it with [assembly: MapsicleGenerate(typeof({Describe(sourceType)}), typeof({Describe(destType)}))] " +
-                "from the Mapsicle.SourceGen package and map it with MapTo; Map onto an existing object, " +
-                "MapperFactory and dictionary mapping are not generated.";
+                "from the Mapsicle.SourceGen package and map it with MapTo; Map onto an existing object " +
+                "and MapperFactory are not generated.";
         }
 
         private static Type? ElementType(Type type)

@@ -50,9 +50,13 @@ namespace Mapsicle.Tests
         }
 
         [Fact]
-        public void DictionaryThrows() =>
-            Assert.Throws<NotSupportedException>(
+        public void DictionaryThrowsWithoutSuggestingADeclaration()
+        {
+            var ex = Assert.Throws<NotSupportedException>(
                 () => new Dictionary<string, object?> { ["Id"] = 1 }.MapTo<DcgDest>());
+            Assert.Contains("has no generated form", ex.Message);
+            Assert.DoesNotContain("MapsicleGenerate(", ex.Message);
+        }
 
         [Fact]
         public void TheMessageNamesThePairAndTheAttribute()

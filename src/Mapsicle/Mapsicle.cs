@@ -2211,7 +2211,7 @@ namespace Mapsicle
         public static T? MapTo<T>(this IDictionary<string, object?>? source) where T : new()
         {
             if (source is null) return default;
-            DynamicCodeGuard.EnsureSupported(source.GetType(), typeof(T));
+            DynamicCodeGuard.EnsureDictionarySupported(typeof(T));
 
             var dest = new T();
             var destProps = GetCachedWritableProperties(typeof(T));

@@ -161,8 +161,10 @@ migration. In short:
   element by element rather than through that compiled loop. The static API is the one the fast
   numbers describe.
 - If you need NativeAOT, only pairs declared with `[MapsicleGenerate]` or found by
-  `[MapsicleGenerateAll]` map, and only through `MapTo`. Anything else throws `NotSupportedException`
-  at first use, so a pair you forgot to declare fails at run time, not at build time.
+  `[MapsicleGenerateAll]` map, and only through `MapTo`. Scalar conversions such as `int` to `long`
+  or an enum to `int` still work without a declaration. Any other pair throws
+  `NotSupportedException` at first use, so a pair you forgot to declare fails at run time, not at
+  build time.
 
 Mapsicle wins where the shapes are not all known when you compile, where the licence has to be
 permissive, and where you would rather not write a `CreateMap` per pair.
