@@ -19,30 +19,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A value mapped on its own through `MapTo<TSource, TDest>()` or `MapperFactory` returned default
   instead of converting: `5.MapTo<int, long>()` gave 0, and so did an enum into an `int`. Both now
   use the same conversions as `MapTo<T>(object)`.
-
-Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
-written down here.
-
-### Fixed
-
+- `Mapsicle.EntityFramework`: `ProjectTo` ignored `[IgnoreMap]` on nested destination members, so a
+  field such as `Customer.Secret` was selected from the database and returned. Nested objects and
+  collection elements are now built by the same code as the top level, which also makes a
+  second level of nesting and a `List<TDest>` collection member project instead of coming back
+  empty, and applies a fluent `Ignore()` configured for the nested pair.
+- `Mapsicle.Json`: `MapFromJsonDocument` and `MapFromJsonElement` deserialize straight into the
+  destination, so `{"isAdmin":true}` set an `[IgnoreMap]` `IsAdmin`. Both now deserialize with a
+  copy of the options whose resolver drops the setter of every `[IgnoreMap]` member, nested ones
+  included. The caller's options instance is not changed.
+- `Mapsicle.NamingConventions`: `MapWithConvention` wrote `[IgnoreMap]` members, so `is_admin`
+  filled an ignored `IsAdmin`. The `IMapper` overload also filled a member the configuration
+  ignored with `ForMember(..., o => o.Ignore())`, because the mapper leaves it at its default and
+  the convention pass reads a default as not yet mapped. `GetPropertyMappings` no longer lists
+  `[IgnoreMap]` destination members.
+- `Mapsicle.Audit`: `MapWithAudit` matched `[IgnoreMap]` members by name like any other, so an
+  ignored `Password` was reported as mapped and the audit carried the source value the mapper had
+  refused to copy. Ignored members, and on the `IMapper` overload members ignored in the
+  configuration, are now reported as not mapped with no source value.
 - Mapping from several threads no longer throws `NullReferenceException` while `UseLruCache` is toggled, `CacheInfo()` runs, or a small `MaxCacheSize` trims the typed cache under a collection map. The bounded cache fields were checked for null and then read a second time, and the collection path dereferenced a typed cache entry another thread had just reset.
-
-### 3.0.0: extension points become configuration, not code
-
-Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
-delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
-the identical model when emitting. An extension added once then appears in both lanes and the
-conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
-runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
-`DynamicObject` without a core pull request.
-
-This is a major because it reshapes public surface that consumers have written against, unlike the
-generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
-additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
-change a major version exists to signal.
-
-### Fixed
-
 - Mapsicle.Caching could return one caller's cached result to another. Auto keys named types by
   `Type.Name`, so destinations with the same name in different namespaces shared a key (and the
   second threw `InvalidCastException`), and the source hash was 48 bits of JSON that skipped
@@ -59,6 +54,22 @@ change a major version exists to signal.
   serializer skips came back empty, and an entry stored for one destination type deserialized into
   another. A value is now stored only if it reads back identical, and a hit is accepted only for the
   type it was written for. Entries written by earlier versions are treated as misses.
+
+The next major is 3.0.0 and its shape is settled rather than open, so it is written down here.
+
+### 3.0.0: extension points become configuration, not code
+
+Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
+delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
+the identical model when emitting. An extension added once then appears in both lanes and the
+conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
+runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
+`DynamicObject` without a core pull request.
+
+This is a major because it reshapes public surface that consumers have written against, unlike the
+generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
+additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
+change a major version exists to signal.
 
 ## [2.2.0] - 2026-09-01
 
