@@ -6,6 +6,7 @@ using Xunit;
 
 namespace Mapsicle.Json.Tests;
 
+[Collection("StaticMapperTests")]
 public class JsonMappingTests
 {
     #region Test Models

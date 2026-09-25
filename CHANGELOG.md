@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A value mapped on its own through `MapTo<TSource, TDest>()` or `MapperFactory` returned default
   instead of converting: `5.MapTo<int, long>()` gave 0, and so did an enum into an `int`. Both now
   use the same conversions as `MapTo<T>(object)`.
+- `Mapsicle.EntityFramework`: `ProjectTo` ignored `[IgnoreMap]` on nested destination members, so a
+  field such as `Customer.Secret` was selected from the database and returned. Nested objects and
+  collection elements are now built by the same code as the top level, which also makes a
+  second level of nesting and a `List<TDest>` collection member project instead of coming back
+  empty, and applies a fluent `Ignore()` configured for the nested pair.
+- `Mapsicle.Json`: `MapFromJsonDocument` and `MapFromJsonElement` deserialize straight into the
+  destination, so `{"isAdmin":true}` set an `[IgnoreMap]` `IsAdmin`. Both now deserialize with a
+  copy of the options whose resolver drops the setter of every `[IgnoreMap]` member, nested ones
+  included. The caller's options instance is not changed.
+- `Mapsicle.NamingConventions`: `MapWithConvention` wrote `[IgnoreMap]` members, so `is_admin`
+  filled an ignored `IsAdmin`. The `IMapper` overload also filled a member the configuration
+  ignored with `ForMember(..., o => o.Ignore())`, because the mapper leaves it at its default and
+  the convention pass reads a default as not yet mapped. `GetPropertyMappings` no longer lists
+  `[IgnoreMap]` destination members.
+- `Mapsicle.Audit`: `MapWithAudit` matched `[IgnoreMap]` members by name like any other, so an
+  ignored `Password` was reported as mapped and the audit carried the source value the mapper had
+  refused to copy. Ignored members, and on the `IMapper` overload members ignored in the
+  configuration, are now reported as not mapped with no source value.
 - Mapping from several threads no longer throws `NullReferenceException` while `UseLruCache` is toggled, `CacheInfo()` runs, or a small `MaxCacheSize` trims the typed cache under a collection map. The bounded cache fields were checked for null and then read a second time, and the collection path dereferenced a typed cache entry another thread had just reset.
 - Mapsicle.Caching could return one caller's cached result to another. Auto keys named types by
   `Type.Name`, so destinations with the same name in different namespaces shared a key (and the
