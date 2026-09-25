@@ -44,6 +44,18 @@ public class EndpointFilterTests
         None,
         FluentIMapper,
         MapperInstance,
+        MarkerInstance,
+    }
+
+    // Returns a value the static Mapper never would, so a test can tell which mapper ran.
+    private sealed class MarkerMapperInstance : IMapperInstance
+    {
+        public T? MapTo<T>(object? source) => (T)(object)new EfCommand { Name = "from-instance" };
+        public System.Collections.Generic.List<T> MapTo<T>(System.Collections.IEnumerable? source) => new();
+        public TDest Map<TDest>(object? source, TDest destination) => destination;
+        public void ClearCache() { }
+        public MapperCacheInfo CacheInfo() => default!;
+        public void Dispose() { }
     }
 
     private static async Task<(WebApplication App, HttpClient Client)> Start(
@@ -61,6 +73,10 @@ public class EndpointFilterTests
         else if (registration == MapperRegistration.MapperInstance)
         {
             builder.Services.AddSingleton<IMapperInstance>(_ => MapperFactory.Create());
+        }
+        else if (registration == MapperRegistration.MarkerInstance)
+        {
+            builder.Services.AddSingleton<IMapperInstance>(new MarkerMapperInstance());
         }
 
         var app = builder.Build();
@@ -136,6 +152,18 @@ public class EndpointFilterTests
         var response = await client.PostAsJsonAsync("/validated", new EfRequest { Name = "" });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WithMappedRequest_NoIMapper_UsesRegisteredIMapperInstance()
+    {
+        var (app, client) = await Start(MapperRegistration.MarkerInstance, MapMappedEndpoint);
+        await using var _ = app;
+
+        var response = await client.PostAsJsonAsync("/mapped", new EfRequest { Name = "from-body" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("from-instance", await response.Content.ReadFromJsonAsync<string>());
     }
 
     [Fact]
