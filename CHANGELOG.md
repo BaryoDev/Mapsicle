@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed, for 2.2.1
+
+- An acyclic chain about 2,200 deep crashed the process with a `StackOverflowException`, which cannot
+  be caught, because the only guard was a fixed depth of 10,000. Past `MaxDepth` the mapper now also
+  checks the stack the thread has left and stops the way it already did at the fixed depth.
+
 Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
 written down here.
 

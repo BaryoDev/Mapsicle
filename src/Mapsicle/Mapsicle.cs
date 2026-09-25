@@ -484,6 +484,16 @@ namespace Mapsicle
                 return false;
             }
 
+            // The fixed ceiling alone did not protect anything: an acyclic chain about 2,200 deep
+            // overflowed a default 1.5 MB thread stack long before 10,000, and a StackOverflowException
+            // cannot be caught, so one linked request body killed the process. What the thread has
+            // left is the real limit, and it is only asked once past MaxDepth.
+            if (!HasStackHeadroom())
+            {
+                Logger?.Invoke($"[Mapsicle] Stack nearly exhausted at depth {_mappingDepth}, stopping to protect the process");
+                return false;
+            }
+
             // Nothing to check against, so the old behaviour stands: stop. The collection loops take
             // one level for the whole loop rather than one per element, so they have no single
             // instance to offer. Continuing without an instance would mean nothing could ever stop
@@ -504,6 +514,23 @@ namespace Mapsicle
 
             _mappingDepth++;
             return true;
+        }
+
+        private static bool HasStackHeadroom()
+        {
+#if NETSTANDARD2_0
+            try
+            {
+                System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
+                return true;
+            }
+            catch (InsufficientExecutionStackException)
+            {
+                return false;
+            }
+#else
+            return System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack();
+#endif
         }
 
         private static void DecrementDepth(object? source = null)
