@@ -983,6 +983,10 @@ namespace Mapsicle.SourceGen
             {
                 if (!sourceNames.Contains(member.Name)) continue;
 
+                // The engine leaves an [IgnoreMap] member alone on both of these paths, so there is
+                // nothing the emitter would miss and no reason to refuse the pair.
+                if (HasAttribute(member, "Mapsicle.IgnoreMapAttribute")) continue;
+
                 if (member is IFieldSymbol { IsConst: false, IsStatic: false }) return member.Name;
 
                 if (member is IPropertySymbol { IsIndexer: false, SetMethod: null } getterOnly

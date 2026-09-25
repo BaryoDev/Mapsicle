@@ -637,7 +637,7 @@ namespace Mapsicle.Fluent
 
             private static Plan Build()
             {
-                var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                var sourceProps = Mapper.GetCachedReadableProperties(typeof(TSource));
                 var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
                 var steps = new List<Step>(destProps.Length);
@@ -646,16 +646,9 @@ namespace Mapsicle.Fluent
                 {
                     if (!destProp.CanWrite) continue;
 
-                    PropertyInfo? sourceProp = null;
-                    foreach (var candidate in sourceProps)
-                    {
-                        if (candidate.CanRead &&
-                            candidate.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase))
-                        {
-                            sourceProp = candidate;
-                            break;
-                        }
-                    }
+                    // The same resolution the core lanes use. Matching on name alone here copied
+                    // an [IgnoreMap] IsAdmin across and read the wrong member under [MapFrom].
+                    MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp);
 
                     Action<TSource, TDest>? assign = null;
                     if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
