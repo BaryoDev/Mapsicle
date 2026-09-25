@@ -138,6 +138,23 @@ namespace Mapsicle.EntityFramework
             MapperConfiguration? configuration)
         {
             var sourceParam = Expression.Parameter(sourceType, "src");
+            var path = new Dictionary<(Type, Type), int> { [(sourceType, destType)] = 1 };
+            var memberInit = BuildMemberInit(sourceParam, sourceType, destType, configuration, path);
+            var funcType = typeof(Func<,>).MakeGenericType(sourceType, destType);
+            return Expression.Lambda(funcType, memberInit, sourceParam);
+        }
+
+        // Every level of the graph goes through here. Nested objects and collection elements used
+        // to be built by a separate, weaker copy that bound any assignable member by name, so
+        // [IgnoreMap] on a nested destination was ignored and the value was selected from the
+        // database and returned.
+        private static MemberInitExpression BuildMemberInit(
+            Expression source,
+            Type sourceType,
+            Type destType,
+            MapperConfiguration? configuration,
+            Dictionary<(Type, Type), int> path)
+        {
             var bindings = new List<MemberBinding>();
 
             var typeMap = configuration?.GetTypeMap(sourceType, destType);
@@ -158,7 +175,7 @@ namespace Mapsicle.EntityFramework
                 var expressionMapping = typeMap?.GetExpressionMapping(destProp.Name);
                 if (expressionMapping != null)
                 {
-                    valueExpression = ReplaceParameter(expressionMapping.Body, expressionMapping.Parameters[0], sourceParam);
+                    valueExpression = ReplaceParameter(expressionMapping.Body, expressionMapping.Parameters[0], source);
 
                     if (valueExpression.Type != destProp.PropertyType)
                     {
@@ -177,11 +194,11 @@ namespace Mapsicle.EntityFramework
 
                 if (sourceProp != null)
                 {
-                    valueExpression = BuildPropertyExpression(sourceParam, sourceProp, destProp);
+                    valueExpression = BuildPropertyExpression(source, sourceProp, destProp, configuration, path);
                 }
                 else
                 {
-                    valueExpression = TryBuildFlattenedExpression(sourceParam, sourceProps, destProp);
+                    valueExpression = TryBuildFlattenedExpression(source, sourceProps, destProp);
                 }
 
                 if (valueExpression != null)
@@ -190,17 +207,17 @@ namespace Mapsicle.EntityFramework
                 }
             }
 
-            var memberInit = Expression.MemberInit(Expression.New(destType), bindings);
-            var funcType = typeof(Func<,>).MakeGenericType(sourceType, destType);
-            return Expression.Lambda(funcType, memberInit, sourceParam);
+            return Expression.MemberInit(Expression.New(destType), bindings);
         }
 
         private static Expression? BuildPropertyExpression(
-            ParameterExpression sourceParam,
+            Expression source,
             PropertyInfo sourceProp,
-            PropertyInfo destProp)
+            PropertyInfo destProp,
+            MapperConfiguration? configuration,
+            Dictionary<(Type, Type), int> path)
         {
-            var sourceAccess = Expression.Property(sourceParam, sourceProp);
+            var sourceAccess = Expression.Property(source, sourceProp);
 
             // Direct assignment if types match
             if (destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
@@ -241,11 +258,17 @@ namespace Mapsicle.EntityFramework
                 return Expression.Coalesce(sourceAccess, Expression.Default(destProp.PropertyType));
             }
 
+            var collection = BuildCollectionProjection(sourceAccess, sourceProp.PropertyType, destProp.PropertyType, configuration, path);
+            if (collection != null)
+            {
+                return collection;
+            }
+
             // Nested object projection (recursive)
             if (sourceProp.PropertyType.IsClass && destProp.PropertyType.IsClass &&
                 sourceProp.PropertyType != typeof(string) && destProp.PropertyType != typeof(string))
             {
-                return BuildNestedProjection(sourceAccess, sourceProp.PropertyType, destProp.PropertyType);
+                return BuildNestedProjection(sourceAccess, sourceProp.PropertyType, destProp.PropertyType, configuration, path);
             }
 
             return null;
@@ -254,39 +277,103 @@ namespace Mapsicle.EntityFramework
         private static Expression? BuildNestedProjection(
             Expression sourceAccess,
             Type sourceType,
-            Type destType)
+            Type destType,
+            MapperConfiguration? configuration,
+            Dictionary<(Type, Type), int> path)
         {
-            var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanWrite);
-            var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                .ToArray();
+            if (IsEnumerable(sourceType) || IsEnumerable(destType)) return null;
+            if (destType.IsAbstract || destType.GetConstructor(Type.EmptyTypes) == null) return null;
 
-            var bindings = new List<MemberBinding>();
+            if (!Enter(path, (sourceType, destType))) return null;
+            var memberInit = BuildMemberInit(sourceAccess, sourceType, destType, configuration, path);
+            Leave(path, (sourceType, destType));
 
-            foreach (var destProp in destProps)
-            {
-                var sourceProp = sourceProps.FirstOrDefault(p =>
-                    p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase));
-
-                if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
-                {
-                    var propAccess = Expression.Property(sourceAccess, sourceProp);
-                    bindings.Add(Expression.Bind(destProp, propAccess));
-                }
-            }
-
-            if (bindings.Count == 0) return null;
-
-            var memberInit = Expression.MemberInit(Expression.New(destType), bindings);
+            if (memberInit.Bindings.Count == 0) return null;
 
             // Handle null source object
             var nullCheck = Expression.Equal(sourceAccess, Expression.Constant(null, sourceType));
             return Expression.Condition(nullCheck, Expression.Constant(null, destType), memberInit);
         }
 
+        // Projects IEnumerable<TSource> into List<TDest> as Select(...).ToList(), which EF Core
+        // translates. Only element types that are themselves projected objects are handled here.
+        private static Expression? BuildCollectionProjection(
+            Expression sourceAccess,
+            Type sourceType,
+            Type destType,
+            MapperConfiguration? configuration,
+            Dictionary<(Type, Type), int> path)
+        {
+            var sourceElement = GetEnumerableElementType(sourceType);
+            var destElement = GetEnumerableElementType(destType);
+            if (sourceElement == null || destElement == null) return null;
+            if (!sourceElement.IsClass || sourceElement == typeof(string)) return null;
+            if (!destElement.IsClass || destElement == typeof(string)) return null;
+            if (destElement.IsAbstract || destElement.GetConstructor(Type.EmptyTypes) == null) return null;
+
+            var listType = typeof(List<>).MakeGenericType(destElement);
+            if (!destType.IsAssignableFrom(listType)) return null;
+
+            if (!Enter(path, (sourceElement, destElement))) return null;
+            var elementParam = Expression.Parameter(sourceElement, "item");
+            var elementInit = BuildMemberInit(elementParam, sourceElement, destElement, configuration, path);
+            Leave(path, (sourceElement, destElement));
+
+            var selector = Expression.Lambda(
+                typeof(Func<,>).MakeGenericType(sourceElement, destElement), elementInit, elementParam);
+
+            var select = Expression.Call(
+                typeof(Enumerable), nameof(Enumerable.Select), new[] { sourceElement, destElement },
+                sourceAccess, selector);
+            var toList = Expression.Call(
+                typeof(Enumerable), nameof(Enumerable.ToList), new[] { destElement }, select);
+
+            return destType == listType ? toList : Expression.Convert(toList, destType);
+        }
+
+        // An expression tree cannot recurse, so a type pair may appear at most twice on one path.
+        // Twice keeps what a self reference such as Node.Parent projected before nested members
+        // were built recursively: the parent's own members, and no further.
+        private const int MaxPairOccurrencesOnPath = 2;
+
+        private static bool Enter(Dictionary<(Type, Type), int> path, (Type, Type) pair)
+        {
+            path.TryGetValue(pair, out var count);
+            if (count >= MaxPairOccurrencesOnPath) return false;
+            path[pair] = count + 1;
+            return true;
+        }
+
+        private static void Leave(Dictionary<(Type, Type), int> path, (Type, Type) pair)
+        {
+            if (--path[pair] == 0) path.Remove(pair);
+        }
+
+        private static bool IsEnumerable(Type type) =>
+            type != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
+        private static Type? GetEnumerableElementType(Type type)
+        {
+            if (type == typeof(string)) return null;
+            if (type.IsArray) return type.GetElementType();
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return type.GetGenericArguments()[0];
+            }
+
+            foreach (var iface in type.GetInterfaces())
+            {
+                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return iface.GetGenericArguments()[0];
+                }
+            }
+
+            return null;
+        }
+
         private static Expression? TryBuildFlattenedExpression(
-            ParameterExpression sourceParam,
+            Expression sourceParam,
             PropertyInfo[] sourceProps,
             PropertyInfo destProp)
         {

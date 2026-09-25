@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Mapsicle.Fluent;
@@ -285,7 +288,7 @@ namespace Mapsicle.Json
         {
             if (document is null) return default;
 
-            return JsonSerializer.Deserialize<TDest>(document.RootElement.GetRawText(), options ?? DefaultOptions);
+            return JsonSerializer.Deserialize<TDest>(document.RootElement.GetRawText(), HonouringIgnoreMap(options ?? DefaultOptions));
         }
 
         /// <summary>
@@ -300,7 +303,36 @@ namespace Mapsicle.Json
             JsonSerializerOptions? options = null)
             where TDest : new()
         {
-            return JsonSerializer.Deserialize<TDest>(element.GetRawText(), options ?? DefaultOptions);
+            return JsonSerializer.Deserialize<TDest>(element.GetRawText(), HonouringIgnoreMap(options ?? DefaultOptions));
+        }
+
+        // These two deserialize straight into TDest without going through the mapper, so the
+        // serializer wrote every matching member and {"isAdmin":true} set an [IgnoreMap] IsAdmin.
+        // A copy of the caller's options with a resolver modifier that removes the setter of every
+        // [IgnoreMap] property, at every depth, is built once per options instance.
+        private static readonly ConditionalWeakTable<JsonSerializerOptions, JsonSerializerOptions> _ignoreMapOptions = new();
+
+        private static JsonSerializerOptions HonouringIgnoreMap(JsonSerializerOptions options) =>
+            _ignoreMapOptions.GetValue(options, static source =>
+            {
+                var copy = new JsonSerializerOptions(source);
+                copy.TypeInfoResolver = (source.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver())
+                    .WithAddedModifier(SkipIgnoreMapMembers);
+                return copy;
+            });
+
+        private static void SkipIgnoreMapMembers(JsonTypeInfo typeInfo)
+        {
+            if (typeInfo.Kind != JsonTypeInfoKind.Object) return;
+
+            foreach (var property in typeInfo.Properties)
+            {
+                if (property.AttributeProvider is MemberInfo member
+                    && member.IsDefined(typeof(IgnoreMapAttribute), inherit: true))
+                {
+                    property.Set = null;
+                }
+            }
         }
 
         #endregion

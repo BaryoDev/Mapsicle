@@ -100,8 +100,14 @@ namespace Mapsicle.NamingConventions
             var sourceType = typeof(TSource);
             var destType = typeof(TDest);
 
+            // A member the configuration ignores is left at its default by the mapper, which is
+            // exactly what this pass reads as "not mapped yet", so it used to fill it anyway.
+            var typeMap = (mapper as FluentMapper)?.Configuration.GetTypeMap(sourceType, destType);
+
             foreach (var mapping in propertyMappings)
             {
+                if (typeMap?.IsIgnored(mapping.Value) == true) continue;
+
                 var sourceProp = sourceType.GetProperty(mapping.Key);
                 var destProp = destType.GetProperty(mapping.Value);
 
@@ -157,7 +163,7 @@ namespace Mapsicle.NamingConventions
                     .Where(p => p.CanRead)
                     .ToList();
                 var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanWrite)
+                    .Where(p => p.CanWrite && p.GetCustomAttribute<IgnoreMapAttribute>() == null)
                     .ToList();
 
                 foreach (var sourceProp in sourceProps)

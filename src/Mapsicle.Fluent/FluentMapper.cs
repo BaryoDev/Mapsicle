@@ -541,6 +541,8 @@ namespace Mapsicle.Fluent
 
         public FluentMapper(MapperConfiguration config) => _config = config;
 
+        internal MapperConfiguration Configuration => _config;
+
         public TDest? Map<TDest>(object? source)
         {
             if (source is null) return default;
