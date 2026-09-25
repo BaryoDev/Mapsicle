@@ -34,4 +34,4 @@ The same logic exists in three places. Tick the ones you changed, or say why onl
 
 ## Housekeeping
 
-- [ ] `CHANGELOG.md` updated under the unreleased heading.
+- [ ] Changelog entry added in `changelog.d/`, or the change is invisible to users and labelled `no changelog`.

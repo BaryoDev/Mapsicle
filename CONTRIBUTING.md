@@ -129,7 +129,8 @@ dotnet run -c Release --filter '*CoreMapperBenchmarks*'
 
 - Branch off `main`.
 - Describe what changed and why. Reference the issue.
-- Add the entry to `CHANGELOG.md` under the unreleased heading.
+- Add a changelog entry as a new file in `changelog.d/`, not in `CHANGELOG.md`. See
+  [changelog.d/README.md](changelog.d/README.md).
 - CI runs build, tests, formatting and a dependency audit on Linux and Windows. All of it must pass;
   none of it is advisory.
 
