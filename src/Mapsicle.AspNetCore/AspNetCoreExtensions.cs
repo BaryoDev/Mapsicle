@@ -1,6 +1,8 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using FluentValidation;
+using FluentValidation.Results;
 using Mapsicle.Fluent;
 using Mapsicle.Validation;
 using Microsoft.AspNetCore.Builder;
@@ -274,8 +276,17 @@ namespace Mapsicle.AspNetCore
         #region Endpoint Filter Extensions
 
         /// <summary>
-        /// Adds a mapping filter that maps request body to specified type.
+        /// Adds a filter that maps the request body to <typeparamref name="TDest"/> and stores it
+        /// on <see cref="HttpContext.Items"/>, retrievable with <see cref="GetMappedRequest{TDest}"/>.
         /// </summary>
+        /// <remarks>
+        /// This used to overwrite <c>context.Arguments[i]</c> with the mapped value. Minimal API
+        /// binds each handler parameter to its declared type before the filter runs, so the slot
+        /// held a <typeparamref name="TSource"/>-typed reference, and assigning a
+        /// <typeparamref name="TDest"/> into it threw InvalidCastException the moment the handler
+        /// read the parameter, on every valid request. The handler parameter is left alone; read
+        /// the mapped value through <see cref="GetMappedRequest{TDest}"/> instead.
+        /// </remarks>
         /// <typeparam name="TSource">The source request type.</typeparam>
         /// <typeparam name="TDest">The destination type to map to.</typeparam>
         /// <param name="builder">The endpoint convention builder.</param>
@@ -286,22 +297,16 @@ namespace Mapsicle.AspNetCore
         {
             return builder.AddEndpointFilter(async (context, next) =>
             {
-                var mapper = context.HttpContext.RequestServices.GetService<IMapper>();
-                if (mapper is null)
-                {
-                    return await next(context);
-                }
-
-                // Find the source argument and replace with mapped version
                 for (int i = 0; i < context.Arguments.Count; i++)
                 {
                     if (context.Arguments[i] is TSource source)
                     {
-                        var mapped = mapper.Map<TSource, TDest>(source);
+                        var mapped = MapWithAvailableMapper<TSource, TDest>(context.HttpContext, source);
                         if (mapped is not null)
                         {
-                            context.Arguments[i] = mapped;
+                            context.HttpContext.Items[MappedRequestKey<TDest>.Instance] = mapped;
                         }
+                        break;
                     }
                 }
 
@@ -310,8 +315,19 @@ namespace Mapsicle.AspNetCore
         }
 
         /// <summary>
-        /// Adds a validation filter that validates and maps request body.
+        /// Adds a filter that maps and validates the request body, returning 400 with the same
+        /// error shape as <see cref="MapValidateAndReturn{TDest, TValidator}"/> when invalid, and
+        /// otherwise stores the mapped <typeparamref name="TDest"/> on <see cref="HttpContext.Items"/>,
+        /// retrievable with <see cref="GetMappedRequest{TDest}"/>.
         /// </summary>
+        /// <remarks>
+        /// See the remarks on <see cref="WithMappedRequest{TSource, TDest}"/> for why the handler
+        /// parameter is left untouched. Validation always runs: it no longer depends on an
+        /// <see cref="IMapper"/> being registered, so a request built only through
+        /// Mapsicle.DependencyInjection's <c>AddMapsicle</c> (which registers
+        /// <see cref="IMapperInstance"/>, not <see cref="IMapper"/>) still gets validated instead
+        /// of the filter quietly calling <c>next()</c> on an invalid body.
+        /// </remarks>
         /// <typeparam name="TSource">The source request type.</typeparam>
         /// <typeparam name="TDest">The destination type to map to.</typeparam>
         /// <typeparam name="TValidator">The FluentValidation validator type.</typeparam>
@@ -324,28 +340,120 @@ namespace Mapsicle.AspNetCore
         {
             return builder.AddEndpointFilter(async (context, next) =>
             {
-                var mapper = context.HttpContext.RequestServices.GetService<IMapper>();
-                if (mapper is null)
-                {
-                    return await next(context);
-                }
-
-                // Find the source argument
                 for (int i = 0; i < context.Arguments.Count; i++)
                 {
                     if (context.Arguments[i] is TSource source)
                     {
-                        var result = mapper.MapAndValidate<TSource, TDest, TValidator>(source);
+                        var result = MapAndValidateWithAvailableMapper<TSource, TDest, TValidator>(context.HttpContext, source);
                         if (!result.IsValid)
                         {
                             return Results.BadRequest(new { errors = result.ErrorsByProperty });
                         }
-                        context.Arguments[i] = result.Value!;
+
+                        context.HttpContext.Items[MappedRequestKey<TDest>.Instance] = result.Value!;
+                        break;
                     }
                 }
 
                 return await next(context);
             });
+        }
+
+        /// <summary>
+        /// Gets the value a prior <see cref="WithMappedRequest{TSource, TDest}"/> or
+        /// <see cref="WithValidatedMapping{TSource, TDest, TValidator}"/> filter stored for this
+        /// request.
+        /// </summary>
+        /// <typeparam name="TDest">The mapped destination type.</typeparam>
+        /// <param name="context">The current HTTP context.</param>
+        /// <returns>The mapped instance.</returns>
+        /// <exception cref="InvalidOperationException">
+        /// No filter stored a mapped <typeparamref name="TDest"/> on this request.
+        /// </exception>
+        public static TDest GetMappedRequest<TDest>(this HttpContext context)
+            where TDest : class
+        {
+            if (context.TryGetMappedRequest<TDest>(out var mapped))
+            {
+                return mapped;
+            }
+
+            throw new InvalidOperationException(
+                $"No mapped {typeof(TDest).Name} was found on this request. Add " +
+                $"WithMappedRequest<TSource, {typeof(TDest).Name}>() or " +
+                $"WithValidatedMapping<TSource, {typeof(TDest).Name}, TValidator>() to the endpoint " +
+                $"before calling GetMappedRequest<{typeof(TDest).Name}>().");
+        }
+
+        /// <summary>
+        /// Attempts to get the value a prior <see cref="WithMappedRequest{TSource, TDest}"/> or
+        /// <see cref="WithValidatedMapping{TSource, TDest, TValidator}"/> filter stored for this
+        /// request.
+        /// </summary>
+        /// <typeparam name="TDest">The mapped destination type.</typeparam>
+        /// <param name="context">The current HTTP context.</param>
+        /// <param name="mapped">The mapped instance, when found.</param>
+        /// <returns>True if a mapped value was found.</returns>
+        public static bool TryGetMappedRequest<TDest>(this HttpContext context, [NotNullWhen(true)] out TDest? mapped)
+            where TDest : class
+        {
+            if (context.Items.TryGetValue(MappedRequestKey<TDest>.Instance, out var value) && value is TDest typed)
+            {
+                mapped = typed;
+                return true;
+            }
+
+            mapped = null;
+            return false;
+        }
+
+        // One key instance per closed TDest, so filters mapping different destination types on the
+        // same request never collide in HttpContext.Items.
+        private static class MappedRequestKey<TDest>
+        {
+            public static readonly object Instance = new object();
+        }
+
+        // IMapper needs a fluent MapperConfiguration and is registered by choice. IMapperInstance is
+        // what Mapsicle.DependencyInjection's AddMapsicle registers, with no configuration required.
+        // Checking only IMapper found nothing under AddMapsicle and fell through to the static
+        // Mapper, silently skipping whatever conventions the caller thought they had configured.
+        private static TDest? MapWithAvailableMapper<TSource, TDest>(HttpContext httpContext, TSource source)
+            where TDest : class
+        {
+            var mapper = httpContext.RequestServices.GetService<IMapper>();
+            if (mapper is not null)
+            {
+                return mapper.Map<TSource, TDest>(source);
+            }
+
+            var mapperInstance = httpContext.RequestServices.GetService<IMapperInstance>();
+            if (mapperInstance is not null)
+            {
+                return mapperInstance.MapTo<TDest>(source);
+            }
+
+            return source.MapTo<TSource, TDest>();
+        }
+
+        private static MapperValidationResult<TDest> MapAndValidateWithAvailableMapper<TSource, TDest, TValidator>(
+            HttpContext httpContext, TSource source)
+            where TDest : class
+            where TValidator : IValidator<TDest>, new()
+        {
+            var mapped = MapWithAvailableMapper<TSource, TDest>(httpContext, source);
+            if (mapped is null)
+            {
+                return MapperValidationResult<TDest>.Failure(
+                    default,
+                    new ValidationResult(new[] { new ValidationFailure("", "Mapping returned null") }));
+            }
+
+            var validator = new TValidator();
+            var validationResult = validator.Validate(mapped);
+            return validationResult.IsValid
+                ? MapperValidationResult<TDest>.Success(mapped)
+                : MapperValidationResult<TDest>.Failure(mapped, validationResult);
         }
 
         #endregion

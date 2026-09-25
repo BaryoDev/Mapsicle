@@ -1373,6 +1373,46 @@ var dtos = users.MapTo<User, UserDto>(mapper);
 
 ---
 
+## Package 8: Mapsicle.AspNetCore
+
+**Minimal API helpers**, map request/response bodies and validate them with endpoint filters.
+
+### Endpoint Filters
+
+`WithMappedRequest` and `WithValidatedMapping` map the request body and store the result on
+`HttpContext.Items`. They do not touch the handler's own parameter, so declare the handler with
+its original source type and read the mapped value through `GetMappedRequest<TDest>()`.
+
+```csharp
+using Mapsicle.AspNetCore;
+
+// Map only
+app.MapPost("/users", (CreateUserRequest req, HttpContext ctx) =>
+{
+    var user = ctx.GetMappedRequest<User>();
+    return Results.Ok(user);
+})
+.WithMappedRequest<CreateUserRequest, User>();
+
+// Map and validate; returns 400 with { errors = ... } when the validator fails
+app.MapPost("/users", (CreateUserRequest req, HttpContext ctx) =>
+{
+    var user = ctx.GetMappedRequest<User>();
+    return Results.Ok(user);
+})
+.WithValidatedMapping<CreateUserRequest, User, CreateUserRequestValidator>();
+```
+
+`GetMappedRequest<TDest>()` throws `InvalidOperationException` if the endpoint has neither filter
+attached. There is also a `TryGetMappedRequest<TDest>(out TDest? mapped)` for callers that would
+rather check than catch.
+
+Mapper resolution checks `IMapper` (Mapsicle.Fluent), then `IMapperInstance` (registered by
+Mapsicle.DependencyInjection's `AddMapsicle`), then falls back to the static `Mapper`. Validation
+always runs regardless of which one is resolved.
+
+---
+
 ## Migration from AutoMapper
 
 ### API Compatibility

@@ -12,6 +12,8 @@ class Mapsicle.AspNetCore.AspNetCoreExtensions
     public static Microsoft.AspNetCore.Http.IResult MapValidateAndCreate<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source, System.String uri) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
     public static Microsoft.AspNetCore.Http.IResult MapValidateAndReturn<TDest,TValidator>(Mapsicle.Fluent.IMapper mapper, System.Object source) where TDest : class where TValidator : FluentValidation.IValidator<TDest>, new()
     public static Microsoft.AspNetCore.Http.IResult ToProblemDetails<T>(Mapsicle.Validation.MapperValidationResult<T> result, System.String title = null, System.String instance = null) where T : class
+    public static System.Boolean TryGetMappedRequest<TDest>(Microsoft.AspNetCore.Http.HttpContext context, out TDest& mapped) where TDest : class
+    public static TDest GetMappedRequest<TDest>(Microsoft.AspNetCore.Http.HttpContext context) where TDest : class
 class Mapsicle.AspNetCore.MappedResponse<T>
     .ctor()
     public System.Boolean Success { get;set; }
