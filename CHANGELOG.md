@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
-written down here.
+### Fixed
+
+- **AspNetCore**: `WithMappedRequest` and `WithValidatedMapping` overwrote the handler's typed
+  parameter in `context.Arguments` with the mapped `TDest`. Minimal API binds each parameter to
+  its declared type before the filter runs, so this threw `InvalidCastException` on every valid
+  request. The filters now leave the handler's parameter alone and store the mapped value on
+  `HttpContext.Items`; read it with the new `GetMappedRequest<TDest>()` (or
+  `TryGetMappedRequest<TDest>()`) extension on `HttpContext`.
+- **AspNetCore**: both filters resolved only `IMapper` from `RequestServices` and silently called
+  `next()` when it was missing. An app wired up through Mapsicle.DependencyInjection's
+  `AddMapsicle()` registers `IMapperInstance`, not `IMapper`, so validation never ran and invalid
+  bodies got a 200. Mapper resolution now checks `IMapper`, then `IMapperInstance`, then falls back
+  to the static `Mapper`, and validation always runs.
+
+3.0.0's shape is settled rather than open, so it is written down here too.
 
 ### 3.0.0: extension points become configuration, not code
 
