@@ -301,11 +301,13 @@ namespace Mapsicle
             // build and keep a delegate while the public counter said nothing had been cached.
             var typed = _typedCacheResetters.Count + CompiledListLoopCount();
 
-            if (_useLruCache && _lruMapToCache != null && _lruMapCache != null)
+            var lruMapTo = _lruMapToCache;
+            var lruMap = _lruMapCache;
+            if (_useLruCache && lruMapTo != null && lruMap != null)
             {
                 return new MapperCacheInfo(
-                    _lruMapToCache.Count + typed,
-                    _lruMapCache.Count,
+                    lruMapTo.Count + typed,
+                    lruMap.Count,
                     System.Threading.Interlocked.Read(ref _cacheHits),
                     System.Threading.Interlocked.Read(ref _cacheMisses));
             }
@@ -568,9 +570,13 @@ namespace Mapsicle
         /// </remarks>
         private static Func<object, T> GetOrAddMapToDelegate<T>((Type, Type) key, Func<(Type, Type), Delegate> factory)
         {
-            if (_useLruCache && _lruMapToCache != null)
+            // The bounded cache fields are volatile and UseLruCache sets them to null. Checking the
+            // field and then reading it again let a toggle land in between, and the second read
+            // threw NullReferenceException from a map call. Every reader takes one local copy.
+            var lru = _lruMapToCache;
+            if (_useLruCache && lru != null)
             {
-                if (_lruMapToCache.TryGetValue(key, out var cached))
+                if (lru.TryGetValue(key, out var cached))
                 {
                     System.Threading.Interlocked.Increment(ref _cacheHits);
                     return (Func<object, T>)cached;
@@ -582,13 +588,13 @@ namespace Mapsicle
                 {
                     reapply();
 
-                    if (_lruMapToCache.TryGetValue(key, out var restored))
+                    if (lru.TryGetValue(key, out var restored))
                     {
                         return (Func<object, T>)restored;
                     }
                 }
 
-                return (Func<object, T>)_lruMapToCache.GetOrAdd(key, factory);
+                return (Func<object, T>)lru.GetOrAdd(key, factory);
             }
 
             return (Func<object, T>)_mapToCache.GetOrAdd(key, factory);
@@ -596,16 +602,17 @@ namespace Mapsicle
 
         private static Action<object, object> GetOrAddMapDelegate((Type, Type) key, Func<(Type, Type), Action<object, object>> factory)
         {
-            if (_useLruCache && _lruMapCache != null)
+            var lru = _lruMapCache;
+            if (_useLruCache && lru != null)
             {
-                if (_lruMapCache.TryGetValue(key, out var cached))
+                if (lru.TryGetValue(key, out var cached))
                 {
                     System.Threading.Interlocked.Increment(ref _cacheHits);
                     return cached;
                 }
 
                 System.Threading.Interlocked.Increment(ref _cacheMisses);
-                return _lruMapCache.GetOrAdd(key, factory);
+                return lru.GetOrAdd(key, factory);
             }
 
             return _mapCache.GetOrAdd(key, factory);
@@ -810,12 +817,13 @@ namespace Mapsicle
             var key = (typeof(TSource), typeof(TDest));
             Func<object, TDest> untyped = source => mapper((TSource)source);
 
-            if (_useLruCache && _lruMapToCache != null)
+            var lru = _lruMapToCache;
+            if (_useLruCache && lru != null)
             {
                 // A replacing write, not GetOrAdd. Under the bounded cache a pair mapped before this
                 // registration already had a compiled delegate stored, and GetOrAdd keeps whichever
                 // arrived first, so the generated mapper never applied for the rest of the process.
-                _lruMapToCache.Set(key, untyped);
+                lru.Set(key, untyped);
             }
             else
             {
@@ -1674,7 +1682,8 @@ namespace Mapsicle
                     // This will initialize the cache
                     result.Add(first.MapTo<TSource, TDest>()!);
 
-                    // Re-read the now-initialized entry
+                    // Null again if a trim or clear on another thread reset the pair after the map
+                    // above stored it. Under a small MaxCacheSize that dereferenced null below.
                     entry = TypedMapperCache<TSource, TDest>.Entry;
                     // Now process remaining with fast path
                     // (route through MapTo when depth tracking is required so cyclic items can't overflow the stack)
@@ -1687,7 +1696,7 @@ namespace Mapsicle
                         }
                         else
                         {
-                            result.Add(entry!.RequiresDepthTracking ? item.MapTo<TSource, TDest>()! : entry.CompiledMapper(item)!);
+                            result.Add(entry is null || entry.RequiresDepthTracking ? item.MapTo<TSource, TDest>()! : entry.CompiledMapper(item)!);
                         }
                     }
                     return result;

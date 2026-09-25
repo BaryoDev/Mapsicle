@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
 written down here.
 
+### Fixed
+
+- Mapping from several threads no longer throws `NullReferenceException` while `UseLruCache` is toggled, `CacheInfo()` runs, or a small `MaxCacheSize` trims the typed cache under a collection map. The bounded cache fields were checked for null and then read a second time, and the collection path dereferenced a typed cache entry another thread had just reset.
+
 ### 3.0.0: extension points become configuration, not code
 
 Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
