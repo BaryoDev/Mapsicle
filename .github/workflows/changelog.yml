@@ -1,0 +1,26 @@
+name: Changelog
+
+on:
+  pull_request:
+    branches: [main]
+    # labeled and unlabeled so adding 'no changelog' reruns the check
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  entry:
+    name: changelog entry present
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Fail if src/ changed without a changelog.d entry
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'no changelog') }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 .github/scripts/changelog.py check "$BASE"
