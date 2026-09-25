@@ -81,7 +81,7 @@ configuring anything, and that an undeclared pair still maps instead of failing 
 | :-------- | :----- |
 | The compiler must prove every pair maps | **Mapperly.** A pair it cannot generate does not compile. Mapsicle warns with `MSG001` and falls back, which is safer at run time and weaker as a guarantee. |
 | A rename must never silently unmap a member | **Mapperly.** Its `[MapProperty]` uses `nameof`, so a rename is a compile error. Mapsicle's `[MapFrom]` takes a string and quietly stops matching. |
-| You need AOT with no path that can fall back to runtime code generation | **Mapperly.** Mapsicle's declared pairs are AOT clean, but an undeclared one compiles an expression tree at first use, and nothing stops you leaving one undeclared by accident. |
+| You need AOT with no path that can fall back to runtime code generation | **Mapperly.** Mapsicle's declared pairs are AOT clean, but an undeclared one throws `NotSupportedException` at first use under NativeAOT, and nothing at build time stops you leaving one undeclared by accident. |
 | Collection throughput at around a hundred elements bounds your workload | **Mapperly**, by about 12 percent over an undeclared Mapsicle pair on x64. A declared pair closes that. |
 | You want AutoMapper's configuration API without AutoMapper's licence | **Mapster.** Its fluent config is deliberately shaped like `CreateMap`, so porting is mechanical. Mapsicle's fluent API is its own shape. |
 
@@ -234,7 +234,7 @@ loops side by side.
 |----------|----------------|-----|
 | **Fastest warm mapping** | **Mapsicle**, pair declared | 1.00x hand written, against 1.08 and 1.09 for Mapperly and Mapster. Ten percent, which is a tiebreaker rather than a reason |
 | **The compiler must prove every pair maps** | **Mapperly** | A pair it cannot generate does not compile. Mapsicle warns and falls back, which is safer at run time and weaker as a guarantee |
-| **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs are AOT clean, but an undeclared one compiles an expression tree at run time. Mapperly has no such path to leave open by accident |
+| **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs are AOT clean, but an undeclared one throws `NotSupportedException` at run time. Mapperly has no such path to leave open by accident |
 | **AOT, and you will declare every pair** | **Mapsicle** or **Mapperly** | Both work. Check the build for `MSG001` if you pick Mapsicle |
 | **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives intact. Mapsicle stops on a repeated instance and returns something usable. Mapperly and Mapster both abort the process on default settings, and both are correct with one line of configuration |
 | **Quick prototyping, zero setup** | **Mapsicle** or **Mapster** | Neither asks for configuration. Mapsicle additionally lets you add the generator later without touching a call site |
@@ -679,10 +679,14 @@ That 148x is the `Expression.Compile` a declared pair never pays. It is what sho
 hit.
 
 It is also the mechanism behind the AOT rows above: a declared pair runs emitted C# and never reaches
-`Expression.Compile`, so there is no runtime IL generation on that path. That is stated as a
-mechanism rather than a result on purpose. **There is no NativeAOT publish in CI yet**, so unlike the
-speed and allocation claims on this page, that one is reasoned from how the code works rather than
-proven by a gate. Treat it accordingly until a job publishes AOT and runs the suite.
+`Expression.Compile`, so there is no runtime IL generation on that path. The `native-aot` CI job
+publishes `tests/Mapsicle.Aot.Smoke` with NativeAOT and runs it: a declared pair maps through `MapTo`
+typed and untyped, as a list and as an array.
+
+Everything else refuses under NativeAOT with `NotSupportedException` naming the pair: an undeclared
+pair, `Map` onto an existing object, `MapperFactory`, and mapping from a dictionary. Before 2.2.1 those
+returned null or an empty object with no error, because the trimmer removes the metadata the runtime
+builder reads. Values and strings on both sides (`5` into a `long`) still convert.
 
 ### What you write, side by side
 

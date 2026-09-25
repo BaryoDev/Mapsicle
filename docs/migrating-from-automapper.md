@@ -160,8 +160,9 @@ migration. In short:
   1.03x AutoMapper and a hundred of them about 1.22x, because the fluent path maps a collection
   element by element rather than through that compiled loop. The static API is the one the fast
   numbers describe.
-- If you need NativeAOT with no runtime code generation, Mapsicle compiles expression trees at
-  first use and is not the tool.
+- If you need NativeAOT, only pairs declared with `[MapsicleGenerate]` or found by
+  `[MapsicleGenerateAll]` map, and only through `MapTo`. Anything else throws `NotSupportedException`
+  at first use, so a pair you forgot to declare fails at run time, not at build time.
 
 Mapsicle wins where the shapes are not all known when you compile, where the licence has to be
 permissive, and where you would rather not write a `CreateMap` per pair.

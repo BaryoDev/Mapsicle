@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed, for 2.2.1
+
+- Under NativeAOT a declared pair mapped as a `List` threw `ArgumentNullException` naming
+  `property`, because the compiled list loop reads `List<T>.Count` and its indexer through reflection
+  and the trimmer had removed them. It now maps each element through the generated mapper.
+- Under NativeAOT an undeclared pair came back null from `MapTo`, `Map` onto an existing object wrote
+  nothing, `MapperFactory` returned null and a dictionary filled zeros, all without an error. Each now
+  throws `NotSupportedException` naming the pair and the attribute that fixes it. A new CI job
+  publishes a NativeAOT binary and runs it.
+
 Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
 written down here.
 

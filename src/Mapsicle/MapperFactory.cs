@@ -242,6 +242,7 @@ namespace Mapsicle
 
         private Delegate BuildMapToDelegate<T>(Type sourceType, Type destType)
         {
+            DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             bool isSourceVisible = sourceType.IsVisible;
             var typedSource = Expression.Convert(sourceParam, sourceType);
@@ -394,6 +395,7 @@ namespace Mapsicle
 
         private Action<object, object> BuildMapAction<TDest>(Type sourceType, Type destType)
         {
+            DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             var destParam = Expression.Parameter(typeof(object), "destination");
 
