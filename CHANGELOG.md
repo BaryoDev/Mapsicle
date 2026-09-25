@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
-written down here.
-
 ### Fixed
 
+- Under NativeAOT a declared pair mapped as a `List` threw `ArgumentNullException` naming
+  `property`, because the compiled list loop reads `List<T>.Count` and its indexer through reflection
+  and the trimmer had removed them. It now maps each element through the generated mapper.
+- Under NativeAOT an undeclared pair came back null from `MapTo`, `Map` onto an existing object wrote
+  nothing, `MapperFactory` returned null and a dictionary filled zeros, all without an error. Each now
+  throws `NotSupportedException` naming the pair and the attribute that fixes it. A new CI job
+  publishes a NativeAOT binary and runs it.
+- A value mapped on its own through `MapTo<TSource, TDest>()` or `MapperFactory` returned default
+  instead of converting: `5.MapTo<int, long>()` gave 0, and so did an enum into an `int`. Both now
+  use the same conversions as `MapTo<T>(object)`.
 - `Mapsicle.EntityFramework`: `ProjectTo` ignored `[IgnoreMap]` on nested destination members, so a
   field such as `Customer.Secret` was selected from the database and returned. Nested objects and
   collection elements are now built by the same code as the top level, which also makes a
@@ -30,6 +37,25 @@ written down here.
   ignored `Password` was reported as mapped and the audit carried the source value the mapper had
   refused to copy. Ignored members, and on the `IMapper` overload members ignored in the
   configuration, are now reported as not mapped with no source value.
+- Mapping from several threads no longer throws `NullReferenceException` while `UseLruCache` is toggled, `CacheInfo()` runs, or a small `MaxCacheSize` trims the typed cache under a collection map. The bounded cache fields were checked for null and then read a second time, and the collection path dereferenced a typed cache entry another thread had just reset.
+- Mapsicle.Caching could return one caller's cached result to another. Auto keys named types by
+  `Type.Name`, so destinations with the same name in different namespaces shared a key (and the
+  second threw `InvalidCastException`), and the source hash was 48 bits of JSON that skipped
+  `[JsonIgnore]` members and public fields. Keys now carry the full type identity and a SHA-256 of
+  every public property and field of the source, and a hit is only returned when the stored
+  description of the source matches exactly. `CachedMapper` instances over different inner mappers
+  no longer share entries, and their keys are no longer the ones `GenerateCacheKey` returns, so
+  evict them with `InvalidateAll`.
+- `CachedMapper` and `MapToCachedAuto` no longer throw on a cyclic source or one deeper than 64
+  levels. A source too large or unreadable to describe is mapped without the cache.
+- `CachedMapper`, `MapToCachedAuto` and `MapToCached` without options work with a size limited
+  `MemoryCache`. Entries they create now have a size of 1.
+- A distributed cache hit could differ from the miss that stored it, since members the JSON
+  serializer skips came back empty, and an entry stored for one destination type deserialized into
+  another. A value is now stored only if it reads back identical, and a hit is accepted only for the
+  type it was written for. Entries written by earlier versions are treated as misses.
+
+The next major is 3.0.0 and its shape is settled rather than open, so it is written down here.
 
 ### 3.0.0: extension points become configuration, not code
 
