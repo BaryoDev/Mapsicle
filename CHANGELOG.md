@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Nothing released yet. The next one is 3.0.0 and its shape is settled rather than open, so it is
 written down here.
 
+### Fixed
+
+- `Mapsicle.EntityFramework`: `ProjectTo` ignored `[IgnoreMap]` on nested destination members, so a
+  field such as `Customer.Secret` was selected from the database and returned. Nested objects and
+  collection elements are now built by the same code as the top level, which also makes a
+  second level of nesting and a `List<TDest>` collection member project instead of coming back
+  empty, and applies a fluent `Ignore()` configured for the nested pair.
+
 ### 3.0.0: extension points become configuration, not code
 
 Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
