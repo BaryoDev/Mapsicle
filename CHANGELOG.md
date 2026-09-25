@@ -21,6 +21,11 @@ written down here.
   destination, so `{"isAdmin":true}` set an `[IgnoreMap]` `IsAdmin`. Both now deserialize with a
   copy of the options whose resolver drops the setter of every `[IgnoreMap]` member, nested ones
   included. The caller's options instance is not changed.
+- `Mapsicle.NamingConventions`: `MapWithConvention` wrote `[IgnoreMap]` members, so `is_admin`
+  filled an ignored `IsAdmin`. The `IMapper` overload also filled a member the configuration
+  ignored with `ForMember(..., o => o.Ignore())`, because the mapper leaves it at its default and
+  the convention pass reads a default as not yet mapped. `GetPropertyMappings` no longer lists
+  `[IgnoreMap]` destination members.
 
 ### 3.0.0: extension points become configuration, not code
 
