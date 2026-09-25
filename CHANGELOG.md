@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+The next major is 3.0.0 and its shape is settled rather than open, so it is written down here.
+
+### 3.0.0: extension points become configuration, not code
+
+Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
+delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
+the identical model when emitting. An extension added once then appears in both lanes and the
+conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
+runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
+`DynamicObject` without a core pull request.
+
+This is a major because it reshapes public surface that consumers have written against, unlike the
+generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
+additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
+change a major version exists to signal.
+
+## [2.3.0] - 2026-09-25
+
+### Added
+
+- **AspNetCore**: `GetMappedRequest<TDest>()` and `TryGetMappedRequest<TDest>()` on `HttpContext`
+  read the value `WithMappedRequest` and `WithValidatedMapping` mapped for the request.
+
 ### Fixed
 
 - **AspNetCore**: `WithMappedRequest` and `WithValidatedMapping` overwrote the handler's typed
@@ -69,22 +92,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serializer skips came back empty, and an entry stored for one destination type deserialized into
   another. A value is now stored only if it reads back identical, and a hit is accepted only for the
   type it was written for. Entries written by earlier versions are treated as misses.
-
-The next major is 3.0.0 and its shape is settled rather than open, so it is written down here.
-
-### 3.0.0: extension points become configuration, not code
-
-Custom converters, hooks, ignores, naming conventions and `[MapFrom]` each modelled as data the
-delegate builder reads, so the runtime engine consumes it when compiling and the generator consumes
-the identical model when emitting. An extension added once then appears in both lanes and the
-conformance suite proves they agree. The highest-value new surface is a pluggable resolver for
-runtime-shaped inputs, so a third party can teach Mapsicle a `JsonElement`, an `IDataRecord` or a
-`DynamicObject` without a core pull request.
-
-This is a major because it reshapes public surface that consumers have written against, unlike the
-generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback belongs here too: it is
-additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
-change a major version exists to signal.
 
 ## [2.2.0] - 2026-09-01
 
