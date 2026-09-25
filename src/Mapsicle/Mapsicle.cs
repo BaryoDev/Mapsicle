@@ -906,6 +906,7 @@ namespace Mapsicle
         private static TDest? BuildAndCacheTypedMapper<TSource, TDest>(TSource source)
         {
             var sourceType = typeof(TSource);
+            DynamicCodeGuard.EnsureSupported(sourceType, typeof(TDest));
 
             // Build the strongly-typed mapper and determine depth tracking
             bool requiresDepthTracking = HasNestedComplexTypes(sourceType);
@@ -1070,6 +1071,17 @@ namespace Mapsicle
             var sourceType = typeof(TSource);
             var destType = typeof(TDest);
             var sourceParam = Expression.Parameter(sourceType, "source");
+
+            // A value mapped on its own goes through the shared cascade, as the untyped path does.
+            // Without this, 5.MapTo<int, long>() fell through to member mapping and returned 0.
+            if (sourceType.IsValueType || sourceType == typeof(string))
+            {
+                var direct = PropertyConversion.TryBuild(sourceParam, sourceType, destType, BuildNestedMapCall);
+                if (direct is not null)
+                {
+                    return Expression.Lambda<Func<TSource, TDest>>(direct, sourceParam).Compile();
+                }
+            }
 
             var sourceProps = GetCachedReadableProperties(sourceType);
             var destProps = GetCachedWritableProperties(destType);
@@ -1298,6 +1310,7 @@ namespace Mapsicle
             {
                 var sourceType = k.Item1;
                 var destType = k.Item2;
+                DynamicCodeGuard.EnsureSupported(sourceType, destType);
                 var sourceParam = Expression.Parameter(typeof(object), "source");
                 bool isSourceVisible = sourceType.IsVisible;
                 var typedSource = Expression.Convert(sourceParam, sourceType);
@@ -1557,6 +1570,7 @@ namespace Mapsicle
         private static Action<object, object> BuildInPlaceMapper(
             Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers)
         {
+            DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             var destParam = Expression.Parameter(typeof(object), "destination");
 
@@ -1810,6 +1824,12 @@ namespace Mapsicle
             // The bound cache exists to limit retained delegates, and a second unbounded cache
             // beside it would defeat that.
             if (_useLruCache) return null;
+
+            // The loop is an expression tree over List<T>.Count and its indexer, and under NativeAOT
+            // the trimmer removes that metadata: every declared pair mapped as a list threw
+            // ArgumentNullException naming 'property'. The fallback loop maps each element through
+            // the object entry point, which serves the generated mapper without building anything.
+            if (!DynamicCodeGuard.IsSupported) return null;
 
             // Keyed on the concrete List<T> rather than its element, because reaching the element
             // means GetGenericArguments, which allocates a Type[] every call. That is 16 bytes per
@@ -2191,6 +2211,7 @@ namespace Mapsicle
         public static T? MapTo<T>(this IDictionary<string, object?>? source) where T : new()
         {
             if (source is null) return default;
+            DynamicCodeGuard.EnsureDictionarySupported(typeof(T));
 
             var dest = new T();
             var destProps = GetCachedWritableProperties(typeof(T));

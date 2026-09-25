@@ -242,28 +242,19 @@ namespace Mapsicle
 
         private Delegate BuildMapToDelegate<T>(Type sourceType, Type destType)
         {
+            DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             bool isSourceVisible = sourceType.IsVisible;
             var typedSource = Expression.Convert(sourceParam, sourceType);
 
-            // Direct Primitive/Value Mapping
+            // Direct Primitive/Value Mapping, through the shared cascade. The reduced copy that was
+            // here covered assignable types and ToString only, so MapTo<long>(5) returned 0.
             if (sourceType.IsValueType || sourceType == typeof(string))
             {
-                if (destType.IsAssignableFrom(sourceType))
+                var direct = PropertyConversion.TryBuild(typedSource, sourceType, destType, BuildNestedMapCall);
+                if (direct is not null)
                 {
-                    return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
-                }
-                if (destType == typeof(string))
-                {
-                    var toStringCall = PropertyConversion.BuildToString(typedSource, sourceType);
-                    return Expression.Lambda<Func<object, T>>(toStringCall, sourceParam).Compile();
-                }
-                var underlyingDest = Nullable.GetUnderlyingType(destType) ?? destType;
-                var underlyingSource = Nullable.GetUnderlyingType(sourceType) ?? sourceType;
-
-                if (underlyingDest.IsAssignableFrom(underlyingSource))
-                {
-                    return Expression.Lambda<Func<object, T>>(Expression.Convert(typedSource, destType), sourceParam).Compile();
+                    return Expression.Lambda<Func<object, T>>(direct, sourceParam).Compile();
                 }
             }
 
@@ -394,6 +385,7 @@ namespace Mapsicle
 
         private Action<object, object> BuildMapAction<TDest>(Type sourceType, Type destType)
         {
+            DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             var destParam = Expression.Parameter(typeof(object), "destination");
 
