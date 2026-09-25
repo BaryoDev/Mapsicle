@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An acyclic chain about 2,200 deep crashed the process with a `StackOverflowException`, which cannot
+  be caught, because the only guard was a fixed depth of 10,000. Past `MaxDepth` the mapper now also
+  checks the stack the thread has left and stops the way it already did at the fixed depth.
 - Under NativeAOT a declared pair mapped as a `List` threw `ArgumentNullException` naming
   `property`, because the compiled list loop reads `List<T>.Count` and its indexer through reflection
   and the trimmer had removed them. It now maps each element through the generated mapper.
