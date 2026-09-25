@@ -64,25 +64,7 @@ namespace Mapsicle.Audit
                 var sourceProps = GetCachedProperties(source.GetType());
                 var destProps = GetCachedProperties(typeof(TDest));
 
-                foreach (var destProp in destProps)
-                {
-                    var destValue = destProp.GetValue(mapped);
-                    var sourceProp = sourceProps.FirstOrDefault(p =>
-                        p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase));
-
-                    var sourceValue = sourceProp?.GetValue(source);
-
-                    audit.PropertyMappings.Add(new PropertyMappingInfo
-                    {
-                        PropertyName = destProp.Name,
-                        SourcePropertyName = sourceProp?.Name,
-                        SourceValue = sourceValue,
-                        DestinationValue = destValue,
-                        WasMapped = sourceProp is not null,
-                        SourceType = sourceProp?.PropertyType,
-                        DestinationType = destProp.PropertyType
-                    });
-                }
+                RecordPropertyMappings(audit, source, mapped, sourceProps, destProps, typeMap: null);
             }
 
             return new AuditedMappingResult<TDest>(mapped, audit);
@@ -132,28 +114,57 @@ namespace Mapsicle.Audit
                 var sourceProps = GetCachedProperties(typeof(TSource));
                 var destProps = GetCachedProperties(typeof(TDest));
 
-                foreach (var destProp in destProps)
-                {
-                    var destValue = destProp.GetValue(mapped);
-                    var sourceProp = sourceProps.FirstOrDefault(p =>
-                        p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase));
-
-                    var sourceValue = sourceProp?.GetValue(source);
-
-                    audit.PropertyMappings.Add(new PropertyMappingInfo
-                    {
-                        PropertyName = destProp.Name,
-                        SourcePropertyName = sourceProp?.Name,
-                        SourceValue = sourceValue,
-                        DestinationValue = destValue,
-                        WasMapped = sourceProp is not null,
-                        SourceType = sourceProp?.PropertyType,
-                        DestinationType = destProp.PropertyType
-                    });
-                }
+                var typeMap = (mapper as FluentMapper)?.Configuration.GetTypeMap(typeof(TSource), typeof(TDest));
+                RecordPropertyMappings(audit, source, mapped, sourceProps, destProps, typeMap);
             }
 
             return new AuditedMappingResult<TDest>(mapped, audit);
+        }
+
+        // An ignored member used to be matched by name like any other, so it was reported as
+        // mapped and the audit carried the source value the mapper had refused to copy, a
+        // password for example.
+        private static void RecordPropertyMappings(
+            MappingAudit audit,
+            object source,
+            object mapped,
+            PropertyInfo[] sourceProps,
+            PropertyInfo[] destProps,
+            ITypeMapConfiguration? typeMap)
+        {
+            foreach (var destProp in destProps)
+            {
+                var destValue = destProp.GetValue(mapped);
+
+                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null
+                    || typeMap?.IsIgnored(destProp.Name) == true)
+                {
+                    audit.PropertyMappings.Add(new PropertyMappingInfo
+                    {
+                        PropertyName = destProp.Name,
+                        DestinationValue = destValue,
+                        WasMapped = false,
+                        DestinationType = destProp.PropertyType
+                    });
+                    continue;
+                }
+
+                var sourceProp = sourceProps.FirstOrDefault(p =>
+                    p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase));
+
+                var sourceValue = sourceProp?.GetValue(source);
+
+                audit.PropertyMappings.Add(new PropertyMappingInfo
+                {
+                    PropertyName = destProp.Name,
+                    SourcePropertyName = sourceProp?.Name,
+                    SourceValue = sourceValue,
+                    DestinationValue = destValue,
+                    WasMapped = sourceProp is not null,
+                    SourceType = sourceProp?.PropertyType,
+                    DestinationType = destProp.PropertyType
+                });
+            }
         }
 
         #endregion

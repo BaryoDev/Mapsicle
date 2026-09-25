@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Mapsicle.NamingConventions" />
+    <InternalsVisibleTo Include="Mapsicle.Audit" />
   </ItemGroup>
 
   <ItemGroup>

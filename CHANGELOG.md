@@ -26,6 +26,10 @@ written down here.
   ignored with `ForMember(..., o => o.Ignore())`, because the mapper leaves it at its default and
   the convention pass reads a default as not yet mapped. `GetPropertyMappings` no longer lists
   `[IgnoreMap]` destination members.
+- `Mapsicle.Audit`: `MapWithAudit` matched `[IgnoreMap]` members by name like any other, so an
+  ignored `Password` was reported as mapped and the audit carried the source value the mapper had
+  refused to copy. Ignored members, and on the `IMapper` overload members ignored in the
+  configuration, are now reported as not mapped with no source value.
 
 ### 3.0.0: extension points become configuration, not code
 
