@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Mapsicle.Fluent;
@@ -40,7 +38,8 @@ namespace Mapsicle.Caching
             {
                 entry.SetOptions(options ?? new MemoryCacheEntryOptions
                 {
-                    SlidingExpiration = TimeSpan.FromMinutes(5)
+                    SlidingExpiration = TimeSpan.FromMinutes(5),
+                    Size = 1
                 });
                 return source.MapTo<TDest>();
             });
@@ -69,7 +68,8 @@ namespace Mapsicle.Caching
             {
                 entry.SetOptions(options ?? new MemoryCacheEntryOptions
                 {
-                    SlidingExpiration = TimeSpan.FromMinutes(5)
+                    SlidingExpiration = TimeSpan.FromMinutes(5),
+                    Size = 1
                 });
                 return mapper.Map<TDest>(source);
             });
@@ -90,13 +90,42 @@ namespace Mapsicle.Caching
         {
             if (source is null) return default;
 
-            var cacheKey = GenerateCacheKey(source, typeof(TDest));
-            var options = new MemoryCacheEntryOptions
-            {
-                SlidingExpiration = expiration ?? TimeSpan.FromMinutes(5)
-            };
+            var fingerprint = Fingerprint.Create(source, typeof(TDest), StaticLane);
+            if (fingerprint is null) return source.MapTo<TDest>();
 
-            return source.MapToCached<TDest>(cache, cacheKey, options);
+            var cacheKey = KeyFor(source, typeof(TDest), fingerprint);
+            if (TryGetVerified(cache, cacheKey, fingerprint, out TDest? hit)) return hit;
+
+            var mapped = source.MapTo<TDest>();
+            cache.Set(cacheKey, new VerifiedEntry(fingerprint, mapped), new MemoryCacheEntryOptions
+            {
+                SlidingExpiration = expiration ?? TimeSpan.FromMinutes(5),
+                Size = 1
+            });
+            return mapped;
+        }
+
+        internal const string StaticLane = "static";
+
+        internal static string KeyFor(object source, Type destType, string fingerprint) =>
+            $"mapsicle:{source.GetType().Name}:{destType.Name}:{Fingerprint.Hash(fingerprint)}";
+
+        /// <summary>
+        /// A hit counts only when the stored fingerprint equals this source's, so a hash
+        /// collision, or an entry someone else put under the same key, maps afresh instead.
+        /// </summary>
+        internal static bool TryGetVerified<TDest>(IMemoryCache cache, string cacheKey, string fingerprint, out TDest? value)
+        {
+            if (cache.TryGetValue(cacheKey, out var entry)
+                && entry is VerifiedEntry verified
+                && string.Equals(verified.Fingerprint, fingerprint, StringComparison.Ordinal))
+            {
+                value = verified.Value is TDest typed ? typed : default;
+                return true;
+            }
+
+            value = default;
+            return false;
         }
 
         /// <summary>
@@ -153,15 +182,14 @@ namespace Mapsicle.Caching
             if (source is null) return default;
 
             var cachedBytes = await cache.GetAsync(cacheKey, cancellationToken);
-            if (cachedBytes is not null)
-            {
-                return JsonSerializer.Deserialize<TDest>(cachedBytes);
-            }
+            if (DistributedPayload.TryRead(cachedBytes, out TDest? hit)) return hit;
 
             var mapped = source.MapTo<TDest>();
             if (mapped is null) return default;
 
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(mapped);
+            var bytes = DistributedPayload.TryWrite(mapped);
+            if (bytes is null) return mapped;
+
             await cache.SetAsync(cacheKey, bytes, options ?? new DistributedCacheEntryOptions
             {
                 SlidingExpiration = TimeSpan.FromMinutes(5)
@@ -192,15 +220,14 @@ namespace Mapsicle.Caching
             if (source is null) return default;
 
             var cachedBytes = await cache.GetAsync(cacheKey, cancellationToken);
-            if (cachedBytes is not null)
-            {
-                return JsonSerializer.Deserialize<TDest>(cachedBytes);
-            }
+            if (DistributedPayload.TryRead(cachedBytes, out TDest? hit)) return hit;
 
             var mapped = mapper.Map<TDest>(source);
             if (mapped is null) return default;
 
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(mapped);
+            var bytes = DistributedPayload.TryWrite(mapped);
+            if (bytes is null) return mapped;
+
             await cache.SetAsync(cacheKey, bytes, options ?? new DistributedCacheEntryOptions
             {
                 SlidingExpiration = TimeSpan.FromMinutes(5)
@@ -296,11 +323,20 @@ namespace Mapsicle.Caching
         /// <param name="source">The source object.</param>
         /// <param name="destType">The destination type.</param>
         /// <returns>A unique cache key.</returns>
+        /// <remarks>
+        /// The key covers every public property and field of the source graph and the full
+        /// identity of both types. Cycles are allowed.
+        /// </remarks>
+        /// <exception cref="NotSupportedException">
+        /// The source graph cannot be described completely, for example because it is deeper than
+        /// 64 levels or a getter throws.
+        /// </exception>
         public static string GenerateCacheKey(object source, Type destType)
         {
-            var json = JsonSerializer.Serialize(source);
-            var hash = ComputeHash(json);
-            return $"mapsicle:{source.GetType().Name}:{destType.Name}:{hash}";
+            var fingerprint = Fingerprint.Create(source, destType, StaticLane)
+                ?? throw new NotSupportedException(
+                    $"A cache key cannot be generated for {source.GetType().FullName}: its public members could not be read completely.");
+            return KeyFor(source, destType, fingerprint);
         }
 
         /// <summary>
@@ -324,18 +360,6 @@ namespace Mapsicle.Caching
         public static string CreateEntityCacheKey<TEntity, TDto>(object id)
         {
             return $"mapsicle:{typeof(TEntity).Name}:{typeof(TDto).Name}:{id}";
-        }
-
-        private static string ComputeHash(string input)
-        {
-            var inputBytes = Encoding.UTF8.GetBytes(input);
-#if NET5_0_OR_GREATER
-            var bytes = SHA256.HashData(inputBytes);
-#else
-            using var sha256 = SHA256.Create();
-            var bytes = sha256.ComputeHash(inputBytes);
-#endif
-            return Convert.ToBase64String(bytes).Substring(0, 8);
         }
 
         #endregion
@@ -406,6 +430,7 @@ namespace Mapsicle.Caching
         private readonly IMapper _innerMapper;
         private readonly IMemoryCache _cache;
         private readonly CachedMappingOptions _options;
+        private readonly string _lane;
 
         // The keys this mapper has put into the cache. IMemoryCache cannot enumerate its own
         // contents, so invalidating what we added means remembering what we added.
@@ -423,6 +448,7 @@ namespace Mapsicle.Caching
             _innerMapper = innerMapper ?? throw new ArgumentNullException(nameof(innerMapper));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _options = options ?? new CachedMappingOptions();
+            _lane = LaneFor(_innerMapper);
         }
 
         /// <inheritdoc/>
@@ -430,8 +456,7 @@ namespace Mapsicle.Caching
         {
             if (source is null) return default;
 
-            var cacheKey = CachingExtensions.GenerateCacheKey(source, typeof(TDest));
-            return _innerMapper.MapToCached<TDest>(source, _cache, cacheKey, TrackedOptions(cacheKey));
+            return GetOrMap(source, typeof(TDest), _lane, () => _innerMapper.Map<TDest>(source));
         }
 
         /// <inheritdoc/>
@@ -439,14 +464,30 @@ namespace Mapsicle.Caching
         {
             if (source is null) return default;
 
-            var cacheKey = CachingExtensions.GenerateCacheKey(source, typeof(TDest));
-
-            return _cache.GetOrCreate(cacheKey, entry =>
-            {
-                entry.SetOptions(TrackedOptions(cacheKey));
-                return _innerMapper.Map<TSource, TDest>(source);
-            });
+            var lane = _lane + "|" + (typeof(TSource).AssemblyQualifiedName ?? typeof(TSource).Name);
+            return GetOrMap(source, typeof(TDest), lane, () => _innerMapper.Map<TSource, TDest>(source));
         }
+
+        private TDest? GetOrMap<TDest>(object source, Type destType, string lane, Func<TDest?> map)
+        {
+            var fingerprint = Fingerprint.Create(source, destType, lane);
+            if (fingerprint is null) return map();
+
+            var cacheKey = CachingExtensions.KeyFor(source, destType, fingerprint);
+            if (CachingExtensions.TryGetVerified(_cache, cacheKey, fingerprint, out TDest? hit)) return hit;
+
+            var mapped = map();
+            _cache.Set(cacheKey, new VerifiedEntry(fingerprint, mapped), TrackedOptions(cacheKey));
+            return mapped;
+        }
+
+        // Two CachedMappers over differently configured inner mappers can share one IMemoryCache,
+        // so the inner mapper's identity is part of every fingerprint this class makes.
+        private static readonly ConditionalWeakTable<IMapper, string> Lanes = new ConditionalWeakTable<IMapper, string>();
+        private static long _nextLane;
+
+        private static string LaneFor(IMapper mapper) =>
+            Lanes.GetValue(mapper, _ => "mapper:" + Interlocked.Increment(ref _nextLane).ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         /// <inheritdoc/>
         public TDest Map<TSource, TDest>(TSource source, TDest destination)
@@ -467,6 +508,7 @@ namespace Mapsicle.Caching
         private MemoryCacheEntryOptions TrackedOptions(string cacheKey)
         {
             var options = _options.ToMemoryCacheOptions();
+            options.Size ??= 1;
             _keys[cacheKey] = 0;
 
             options.RegisterPostEvictionCallback(
@@ -506,5 +548,18 @@ namespace Mapsicle.Caching
 
             _keys.Clear();
         }
+    }
+
+    internal sealed class VerifiedEntry
+    {
+        public VerifiedEntry(string fingerprint, object? value)
+        {
+            Fingerprint = fingerprint;
+            Value = value;
+        }
+
+        public string Fingerprint { get; }
+
+        public object? Value { get; }
     }
 }

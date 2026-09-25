@@ -24,6 +24,25 @@ generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback bel
 additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
 change a major version exists to signal.
 
+### Fixed
+
+- Mapsicle.Caching could return one caller's cached result to another. Auto keys named types by
+  `Type.Name`, so destinations with the same name in different namespaces shared a key (and the
+  second threw `InvalidCastException`), and the source hash was 48 bits of JSON that skipped
+  `[JsonIgnore]` members and public fields. Keys now carry the full type identity and a SHA-256 of
+  every public property and field of the source, and a hit is only returned when the stored
+  description of the source matches exactly. `CachedMapper` instances over different inner mappers
+  no longer share entries, and their keys are no longer the ones `GenerateCacheKey` returns, so
+  evict them with `InvalidateAll`.
+- `CachedMapper` and `MapToCachedAuto` no longer throw on a cyclic source or one deeper than 64
+  levels. A source too large or unreadable to describe is mapped without the cache.
+- `CachedMapper`, `MapToCachedAuto` and `MapToCached` without options work with a size limited
+  `MemoryCache`. Entries they create now have a size of 1.
+- A distributed cache hit could differ from the miss that stored it, since members the JSON
+  serializer skips came back empty, and an entry stored for one destination type deserialized into
+  another. A value is now stored only if it reads back identical, and a hit is accepted only for the
+  type it was written for. Entries written by earlier versions are treated as misses.
+
 ## [2.2.0] - 2026-09-01
 
 ### The licence is now MIT
