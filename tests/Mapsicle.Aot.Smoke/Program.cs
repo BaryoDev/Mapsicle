@@ -18,11 +18,15 @@ void Check(string name, Func<string?> actual, string expected)
     Console.WriteLine($"{(ok ? "ok  " : "FAIL")} {name}: {got}{(ok ? "" : $" (expected {expected})")}");
 }
 
-void Refused(string name, Func<object?> map)
+void Refused(string name, Func<object?> map, params string[] messageMustContain)
 {
     string got;
     try { got = $"returned {map() ?? "null"}"; }
-    catch (NotSupportedException) { got = "NotSupportedException"; }
+    catch (NotSupportedException e)
+    {
+        var missing = Array.Find(messageMustContain, part => !e.Message.Contains(part));
+        got = missing is null ? "NotSupportedException" : $"NotSupportedException without \"{missing}\": {e.Message}";
+    }
     catch (Exception e) { got = e.GetType().Name; }
     var ok = got == "NotSupportedException";
     if (!ok) failures++;
@@ -36,8 +40,11 @@ Check("declared untyped", () => ((object)order).MapTo<AotOrderDto>()?.Name, "Ana
 Check("declared list", () => new List<AotOrder> { order, order }.MapTo<AotOrderDto>()[1].Name, "Ana");
 Check("declared array", () => new[] { order }.MapTo<AotOrderDto>()[0].Name, "Ana");
 Check("scalar widening", () => ((object)5).MapTo<long>().ToString(), "5");
+Check("typed scalar widening", () => 5.MapTo<int, long>().ToString(), "5");
+Check("factory scalar widening", () => { using var f = MapperFactory.Create(); return f.MapTo<long>(5).ToString(); }, "5");
 
-Refused("undeclared MapTo", () => new AotPet { Name = "Rex" }.MapTo<AotPetDto>());
+Refused("undeclared MapTo", () => new AotPet { Name = "Rex" }.MapTo<AotPetDto>(),
+    "AotPet", "AotPetDto", "[assembly: MapsicleGenerate(typeof(AotPet), typeof(AotPetDto))]");
 Refused("undeclared Map(existing)", () => new AotPet { Name = "Rex" }.Map(new AotPetDto()));
 Refused("declared Map(existing)", () => order.Map(new AotOrderDto()));
 Refused("MapperFactory", () => { using var f = MapperFactory.Create(); return f.MapTo<AotOrderDto>(order); });

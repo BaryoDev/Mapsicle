@@ -1072,6 +1072,17 @@ namespace Mapsicle
             var destType = typeof(TDest);
             var sourceParam = Expression.Parameter(sourceType, "source");
 
+            // A value mapped on its own goes through the shared cascade, as the untyped path does.
+            // Without this, 5.MapTo<int, long>() fell through to member mapping and returned 0.
+            if (sourceType.IsValueType || sourceType == typeof(string))
+            {
+                var direct = PropertyConversion.TryBuild(sourceParam, sourceType, destType, BuildNestedMapCall);
+                if (direct is not null)
+                {
+                    return Expression.Lambda<Func<TSource, TDest>>(direct, sourceParam).Compile();
+                }
+            }
+
             var sourceProps = GetCachedReadableProperties(sourceType);
             var destProps = GetCachedWritableProperties(destType);
 
