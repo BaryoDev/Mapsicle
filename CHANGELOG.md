@@ -17,6 +17,10 @@ written down here.
   collection elements are now built by the same code as the top level, which also makes a
   second level of nesting and a `List<TDest>` collection member project instead of coming back
   empty, and applies a fluent `Ignore()` configured for the nested pair.
+- `Mapsicle.Json`: `MapFromJsonDocument` and `MapFromJsonElement` deserialize straight into the
+  destination, so `{"isAdmin":true}` set an `[IgnoreMap]` `IsAdmin`. Both now deserialize with a
+  copy of the options whose resolver drops the setter of every `[IgnoreMap]` member, nested ones
+  included. The caller's options instance is not changed.
 
 ### 3.0.0: extension points become configuration, not code
 
