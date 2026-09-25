@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AspNetCore**: `WithMappedRequest` and `WithValidatedMapping` overwrote the handler's typed
+  parameter in `context.Arguments` with the mapped `TDest`. Minimal API binds each parameter to
+  its declared type before the filter runs, so this threw `InvalidCastException` on every valid
+  request. The filters now leave the handler's parameter alone and store the mapped value on
+  `HttpContext.Items`; read it with the new `GetMappedRequest<TDest>()` (or
+  `TryGetMappedRequest<TDest>()`) extension on `HttpContext`.
+- **AspNetCore**: both filters resolved only `IMapper` from `RequestServices` and silently called
+  `next()` when it was missing. An app wired up through Mapsicle.DependencyInjection's
+  `AddMapsicle()` registers `IMapperInstance`, not `IMapper`, so validation never ran and invalid
+  bodies got a 200. Mapper resolution now checks `IMapper`, then `IMapperInstance`, then falls back
+  to the static `Mapper`, and validation always runs.
 - An acyclic chain about 2,200 deep crashed the process with a `StackOverflowException`, which cannot
   be caught, because the only guard was a fixed depth of 10,000. Past `MaxDepth` the mapper now also
   checks the stack the thread has left and stops the way it already did at the fixed depth.
