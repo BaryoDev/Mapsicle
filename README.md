@@ -102,7 +102,7 @@ is a supporting argument rather than the reason to switch.
 | **Warm map, measured** | **1.00x hand written** when the pair is declared, 1.80x when it is not | 2.48x | 1.08x | 1.09x |
 | **Compile-time Safety** | Partial. A pair it cannot emit warns and falls back | No | **Full. It will not compile** | Partial |
 | **AOT Compatible**   | Declared pairs yes, undeclared no | No | **Yes, with no fallback to get wrong** | With its codegen tool |
-| **Circular Refs**    | Stops on a repeated instance and returns a usable object, with no configuration | **Preserves the reference by default** (measured on 15.1.3 with a plain `CreateMap`) | Default settings **overflow the stack**; correct with `UseReferenceHandling` | Default settings **overflow the stack**; correct with `PreserveReference` |
+| **Circular Refs**    | Terminates and returns a usable object, with no configuration. The cycle is expanded to `MaxDepth` (32) copies before a repeated instance stops it | **Preserves the reference by default** (measured on 15.1.3 with a plain `CreateMap`) | Default settings **overflow the stack**; correct with `UseReferenceHandling` | Default settings **overflow the stack**; correct with `PreserveReference` |
 | **Memory Bounded**   | **LRU Option**   | No           | N/A          | No           |
 | **Cache Statistics** | **Yes**          | No           | N/A          | No           |
 | **Integrated Validation** | **Yes**     | No           | No           | No           |
@@ -236,7 +236,7 @@ loops side by side.
 | **The compiler must prove every pair maps** | **Mapperly** | A pair it cannot generate does not compile. Mapsicle warns and falls back, which is safer at run time and weaker as a guarantee |
 | **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs are AOT clean, but an undeclared one throws `NotSupportedException` at run time. Mapperly has no such path to leave open by accident |
 | **AOT, and you will declare every pair** | **Mapsicle** or **Mapperly** | Both work. Check the build for `MSG001` if you pick Mapsicle |
-| **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives intact. Mapsicle stops on a repeated instance and returns something usable. Mapperly and Mapster both abort the process on default settings, and both are correct with one line of configuration |
+| **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives intact. Mapsicle terminates and returns something usable, but expands the cycle to `MaxDepth` (32) nested copies before it stops. Mapperly and Mapster both abort the process on default settings, and both are correct with one line of configuration |
 | **Quick prototyping, zero setup** | **Mapsicle** or **Mapster** | Neither asks for configuration. Mapsicle additionally lets you add the generator later without touching a call site |
 | **A large graph you do not want to declare** | **Mapsicle** or **Mapster** | Neither needs a line of setup. An undeclared Mapsicle pair is 1.80x hand written and still 1.4x faster than AutoMapper; Mapster is 1.09x with no declaration at all |
 | **Need integrated validation** | **Mapsicle** | `Mapsicle.Validation`, no equivalent in any of the other three |
@@ -298,7 +298,7 @@ Features not found in AutoMapper or Mapperly:
 3. **Audit/diff tracking**: Track what changed during mapping with `MapWithAudit<T>()`
 4. **Caching integration**: Cache mapped results with `IMemoryCache`/`IDistributedCache`
 5. **ASP.NET Core IResult helpers**: `MapValidateAndReturn<T, TValidator>()`
-6. **JSON map-and-serialize**: `MapToJson<T>()`, `MapFromJson<T>()`
+6. **JSON map-and-serialize**: `MapToJson<TDest>()`, `MapFromJson<TIntermediate, TDest>()`
 7. **LRU cache option**: Memory-bounded cache for long-running applications
 
 ---
@@ -623,6 +623,15 @@ System.Collections.Generic.List<Shop.ItemDto>, which the engine performs and thi
 has no emitted rule for. The pair still maps through the runtime engine.
 ```
 
+With `TreatWarningsAsErrors` on, `MSG001` is an error and the build fails. If you would rather keep
+the fallback than fix the pair, exempt it:
+
+```xml
+<PropertyGroup>
+  <WarningsNotAsErrors>$(WarningsNotAsErrors);MSG001</WarningsNotAsErrors>
+</PropertyGroup>
+```
+
 Nothing is broken when you see it. It is the difference between 1.00x and 1.80x on that pair, and it
 names the member responsible.
 
@@ -720,7 +729,7 @@ declared still maps with no declaration at all.
 
 |  | setup | a pair you forget | a member it cannot emit |
 | :--- | :--- | :--- | :--- |
-| **Mapsicle** | none, or one line to bind it | nothing to forget | `MSG001` warning, engine handles it, build continues |
+| **Mapsicle** | none, or one line to bind it | nothing to forget | `MSG001` warning, engine handles it, build continues unless warnings are errors |
 | **Mapperly** | a partial method per mapping | `RMG020` warning | compile error |
 | **AutoMapper** | a `CreateMap` per pair in the graph | member is silently empty at run time | silently empty |
 
@@ -1245,7 +1254,7 @@ public class UserDto
 
 ## Package 6: Mapsicle.Serilog
 
-**Structured logging integration** for enterprise diagnostics and observability.
+**Structured logging** for mapping calls, with timing and an optional slow-mapping warning.
 
 ### Basic Setup
 
@@ -1253,50 +1262,62 @@ public class UserDto
 using Mapsicle.Serilog;
 using Serilog;
 
-// Configure Serilog logger
 var logger = new LoggerConfiguration()
     .WriteTo.Console()
     .MinimumLevel.Debug()
     .CreateLogger();
 
-// Enable Mapsicle logging
-MapsicleLogging.UseSerilog(logger);
+// Global: every MapWithLogging call writes to this logger
+SerilogExtensions.UseSerilog(logger);
 ```
+
+`UseSerilog` also sets `Mapper.Logger`, so the core's own diagnostics (depth limits, cycles) go to
+the same logger at Information level.
 
 ### Map with Logging
 
 ```csharp
-// Log individual mappings
-var dto = user.MapWithLogging<User, UserDto>(logger);
-// Output: [INF] Mapsicle: Mapped User -> UserDto in 0.5ms
+var dto = user.MapWithLogging<UserDto>();
+// [Mapsicle] Mapped {SourceType} -> {DestType} in {ElapsedMs:F2}ms (cached: {IsCached})
 
-// Log collection mappings
-var dtos = users.MapCollectionWithLogging<User, UserDto>(logger);
-// Output: [INF] Mapsicle: Mapped 100 User -> UserDto items in 5.2ms
+var dtos = users.MapCollectionWithLogging<UserDto>();
+// [Mapsicle] Mapped collection of {Count} items to {DestType} in {ElapsedMs:F2}ms
 ```
+
+The logger comes from `UseSerilog`, not from the call. A mapping that throws is logged at Error and
+rethrown.
 
 ### Slow Mapping Warnings
 
-```csharp
-// Configure slow mapping threshold (default: 100ms)
-MapsicleLogging.SlowMappingThreshold = TimeSpan.FromMilliseconds(50);
+Off by default. Turn it on when you call `UseSerilog`:
 
-// Slow mappings automatically log warnings
-var dto = largeObject.MapWithLogging<Large, LargeDto>(logger);
-// Output: [WRN] Mapsicle: Slow mapping detected Large -> LargeDto took 75ms
+```csharp
+SerilogExtensions.UseSerilog(logger, options =>
+{
+    options.SlowMappingThreshold = TimeSpan.FromMilliseconds(50);
+});
+
+var dto = largeObject.MapWithLogging<LargeDto>();
+// Over 50 ms, also logs at Warning: [Mapsicle] Slow mapping detected: ...
 ```
 
 ### Scoped Logging for Batch Operations
 
 ```csharp
-using (var scope = new MappingLoggingScope(logger, "OrderProcessing"))
+using (var scope = SerilogExtensions.BeginMappingScope("OrderProcessing"))
 {
-    // All mappings in this scope are logged with the operation context
-    var orderDto = order.MapWithLogging<Order, OrderDto>(logger);
-    var itemDtos = items.MapCollectionWithLogging<Item, ItemDto>(logger);
+    foreach (var order in orders)
+    {
+        order.MapWithLogging<OrderDto>();
+        scope.RecordMapping();
+    }
 }
-// Output includes: OperationName = "OrderProcessing"
+// On dispose: [Mapsicle] Completed OrderProcessing: {MappingCount} mappings in {ElapsedMs:F2}ms
 ```
+
+The scope counts only what you record with `RecordMapping()` and `RecordError()`. Mapping calls
+inside it are not counted or tagged automatically. It logs through the logger `UseSerilog` set, so
+call that first.
 
 ---
 
@@ -1413,6 +1434,116 @@ always runs regardless of which one is resolved.
 
 ---
 
+## Package 9: Mapsicle.Json
+
+**Map and serialize in one call**, with `System.Text.Json`.
+
+```csharp
+using Mapsicle.Json;
+
+// Map to UserDto, then serialize the DTO
+string? json = user.MapToJson<UserDto>();
+
+// Deserialize to the type the JSON describes, then map that to the destination
+UserDto? dto = json.MapFromJson<User, UserDto>();
+
+// Collections
+string? arrayJson = users.MapCollectionToJson<UserDto>();
+List<UserDto> dtos = arrayJson.MapCollectionFromJson<User, UserDto>();
+```
+
+`MapFromJson` takes two type arguments: the first is what the JSON deserializes into, the second is
+what that gets mapped to. There are also `MapToJsonBytes`, `MapToJsonAsync`, `MapFromJsonAsync`,
+`MapFromJsonBytes`, `MapFromJsonDocument` and `MapFromJsonElement`, and an `IMapper` overload for
+the fluent path. Every method takes optional `JsonSerializerOptions`; `JsonMappingOptions` has
+presets for camelCase, snake_case, kebab-case, indented and strict.
+
+---
+
+## Package 10: Mapsicle.Caching
+
+**Cache mapped results** in `IMemoryCache` or `IDistributedCache`.
+
+```csharp
+using Mapsicle.Caching;
+
+// You choose the key. A later call with the same key returns the cached DTO,
+// even if the source has changed since, until the entry expires (5 minute sliding by default).
+var dto = user.MapToCached<UserDto>(memoryCache, $"user:{user.Id}");
+
+memoryCache.InvalidateMappingCache($"user:{user.Id}");
+```
+
+`CachedMapper` wraps a fluent `IMapper` and keys each entry by the source's content, so a changed
+source is mapped again rather than served stale. `InvalidateAll()` removes only the entries that
+mapper created.
+
+```csharp
+var cached = new CachedMapper(mapper, memoryCache);
+var dto = cached.Map<UserDto>(user);
+```
+
+The async methods (`MapToCachedAsync`, `MapCollectionToCachedAsync`) work against
+`IDistributedCache` and store the mapped value as JSON.
+
+---
+
+## Package 11: Mapsicle.Audit
+
+**See what a mapping did, or what it would change.**
+
+```csharp
+using Mapsicle.Audit;
+
+var result = user.MapWithAudit<UserDto>();
+UserDto dto = result.GetValueOrThrow();
+IEnumerable<string> missed = result.Audit.UnmappedProperties;   // destination members nothing filled
+
+// Map, then compare against what you already have
+var detected = request.MapAndDetectChanges(existingDto);
+if (detected.HasChanges)
+{
+    foreach (var change in detected.Changes)
+    {
+        Console.WriteLine($"{change.PropertyName}: {change.OldValue} to {change.NewValue}");
+    }
+}
+
+// Compare any two instances of one type
+List<PropertyChange> diff = before.Diff(after);
+```
+
+`Diff` compares property values with `Equals`, so a collection property counts as changed whenever
+the two lists are different instances, even with the same contents ([#91](https://github.com/BaryoDev/Mapsicle/issues/91)).
+
+---
+
+## Package 12: Mapsicle.DataAnnotations
+
+**Map and validate against `System.ComponentModel.DataAnnotations` attributes**, with no extra
+validation library.
+
+```csharp
+using Mapsicle.DataAnnotations;
+
+var result = request.MapAndValidateAnnotations<User>();
+
+if (!result.IsValid)
+{
+    // { "Email": ["The Email field is required."] }
+    IDictionary<string, string[]> errors = result.ErrorsByProperty;
+}
+
+// Or validate something you already have
+bool ok = user.IsValidAnnotations();
+List<ValidationResult> problems = user.GetValidationErrors();
+```
+
+A null source is a failed result, not an exception. `Match`, `OnSuccess` and `OnFailure` are there
+if you prefer not to branch on `IsValid`.
+
+---
+
 ## Migration from AutoMapper
 
 ### API Compatibility
@@ -1424,7 +1555,7 @@ always runs regardless of which one is resolved.
 | `.Ignore()`                | Same.                                 |
 | `BeforeMap/AfterMap`       | Same.                                 |
 | `Include<Derived>()`       | Same.                                 |
-| `ConstructUsing()`         | Same.                                 |
+| `ConstructUsing()`         | Different: the factory's object is kept as built. Convention mapping does not run after it, so a member the factory does not set stays default. `ForMember` and `AfterMap` still apply. |
 | `services.AddAutoMapper()` | `services.AddMapsicle()`              |
 | `_mapper.Map<T>()`         | `mapper.Map<T>()` or `obj.MapTo<T>()` |
 
@@ -1774,13 +1905,12 @@ A failure there means one of these statements stopped being true.
 - Post-mapping validation → `Mapsicle.Validation`
 
 ⚠️ **Partial Support:**
-- Nested flattening limited to 1 level (`Address.City` ✅, `Address.Street.Line1` ❌)
-- Collection mapping is slower than AutoMapper: 2,428 ns against 1,823 ns for 100 items, while allocating about 19 percent less. Competitive again at 10K+.
+- Cycles are not preserved. A self-referencing object maps as nested copies down to `MaxDepth`, then stops at the repeated instance, where AutoMapper keeps the reference.
 - EF Core ProjectTo works with `ForMember` expressions, but not `ResolveUsing` delegates
 
 ### Behavioral Differences from AutoMapper
 
-- **Circular references**: Returns default value instead of throwing exception
+- **Circular references**: Expanded to `MaxDepth` nested copies, then the repeated member is left null. Nothing throws, and the reference is not preserved
 - **Null safety**: More aggressive null-safe navigation (fewer NullReferenceException). A null
   reference-typed source mapped to a `string` destination yields `null` rather than throwing.
 - **`Map(destination)` is not atomic**: it writes properties in order, so a setter that throws
@@ -1984,7 +2114,8 @@ var unmapped = Mapper.GetUnmappedProperties<User, UserDto>();
 Creates an isolated mapper instance with independent cache and depth tracking.
 
 **Parameters:**
-- `options` - Optional configuration (MaxDepth, Logger, UseLruCache, MaxCacheSize)
+- `options` - Optional configuration (MaxDepth, Logger, MaxCacheSize). An instance's caches are
+  always LRU and bounded by `MaxCacheSize`; `Mapper.UseLruCache` applies to the static mapper only.
 
 **Returns:**
 - `IDisposable` mapper instance
@@ -1994,7 +2125,6 @@ Creates an isolated mapper instance with independent cache and depth tracking.
 using var mapper = MapperFactory.Create(new MapperOptions
 {
     MaxDepth = 16,
-    UseLruCache = true,
     MaxCacheSize = 100,
     Logger = Console.WriteLine
 });
@@ -2159,60 +2289,49 @@ bool match = NamingConvention.NamesMatch("user_id", NamingConvention.SnakeCase, 
 
 ### Serilog Extensions (`using Mapsicle.Serilog`)
 
-#### `MapsicleLogging.UseSerilog(ILogger logger)`
+#### `SerilogExtensions.UseSerilog(ILogger logger, Action<LoggingOptions>? configure = null)`
 
-Enables global Serilog integration for Mapsicle mapping operations.
+Sets the logger every `MapWithLogging` call writes to, and routes `Mapper.Logger` to it.
 
-**Parameters:**
-- `logger` - Serilog ILogger instance
-
-**Example:**
 ```csharp
-MapsicleLogging.UseSerilog(Log.Logger);
+SerilogExtensions.UseSerilog(Log.Logger, o => o.SlowMappingThreshold = TimeSpan.FromMilliseconds(50));
 ```
 
 ---
 
-#### `MapWithLogging<TSource, TDest>(this TSource source, ILogger logger)`
+#### `MapWithLogging<TDest>(this object? source)`
 
-Maps source to destination with timing and structured logging.
+Maps with timing, logged at Information. A failure is logged at Error and rethrown. Returns `TDest?`.
 
-**Returns:**
-- `TDest?` - Mapped destination object
-
-**Example:**
 ```csharp
-var dto = user.MapWithLogging<User, UserDto>(logger);
-// Logs: Mapsicle: Mapped User -> UserDto in 0.5ms
+var dto = user.MapWithLogging<UserDto>();
 ```
 
 ---
 
-#### `MapCollectionWithLogging<TSource, TDest>(this IEnumerable<TSource> source, ILogger logger)`
+#### `MapCollectionWithLogging<TDest>(this IEnumerable? source)`
 
-Maps a collection with aggregated timing and logging.
+Maps a collection and logs the count and total time. Returns `List<TDest>`, empty for a null source.
 
-**Returns:**
-- `List<TDest>` - List of mapped destination objects
-
-**Example:**
 ```csharp
-var dtos = users.MapCollectionWithLogging<User, UserDto>(logger);
-// Logs: Mapsicle: Mapped 100 User -> UserDto items in 5.2ms
+var dtos = users.MapCollectionWithLogging<UserDto>();
 ```
 
 ---
 
-#### `MapsicleLogging.SlowMappingThreshold`
+#### `LoggingOptions.SlowMappingThreshold`
 
-Configures the threshold for slow mapping warnings.
+- **Type:** `TimeSpan?`
+- **Default:** `null` (no slow-mapping warnings)
 
-**Default:** 100ms
+Set through the `configure` action of `UseSerilog`.
 
-**Example:**
-```csharp
-MapsicleLogging.SlowMappingThreshold = TimeSpan.FromMilliseconds(50);
-```
+---
+
+#### `SerilogExtensions.BeginMappingScope(string operationName)`
+
+Returns a `MappingLoggingScope`. Call `RecordMapping()` and `RecordError()` on it; disposing logs
+the totals and elapsed time.
 
 ---
 
@@ -2363,7 +2482,7 @@ var dtos = users.MapTo<User, UserDto>(mapper);
 - ✅ MapWithLogging extension
 - ✅ MapCollectionWithLogging extension
 - ✅ Slow mapping warnings
-- ✅ MappingLoggingScope for batch operations
+- ✅ BeginMappingScope for batch totals
 - ✅ Structured logging with properties
 - ✅ Configurable thresholds
 
