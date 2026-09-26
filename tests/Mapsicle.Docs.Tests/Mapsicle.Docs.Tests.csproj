@@ -10,10 +10,17 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Mapsicle.DependencyInjection/Mapsicle.DependencyInjection.csproj" />
     <ProjectReference Include="../../src/Mapsicle.Fluent/Mapsicle.Fluent.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Serilog/Mapsicle.Serilog.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Json/Mapsicle.Json.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Caching/Mapsicle.Caching.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.Audit/Mapsicle.Audit.csproj" />
+    <ProjectReference Include="../../src/Mapsicle.DataAnnotations/Mapsicle.DataAnnotations.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
+    <PackageReference Include="Serilog.Sinks.InMemory" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="xunit" />
