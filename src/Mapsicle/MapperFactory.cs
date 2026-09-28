@@ -42,8 +42,7 @@ namespace Mapsicle
         /// Past this depth mapping stops when the same source instance repeats on the current path,
         /// or when the thread is close to running out of stack, which is the rule
         /// <see cref="Mapper.MaxDepth"/> follows. An acyclic graph deeper than this maps whole.
-        /// </remarks>
-        /// <remarks>
+        ///
         /// This used to accept 0, and 0 disables the mapper completely: the first depth check fails
         /// before any property is read, so every call returns the destination default with nothing
         /// logged and nothing thrown. A zeroed or defaulted configuration field silently turned the

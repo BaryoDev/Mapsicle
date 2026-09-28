@@ -766,10 +766,11 @@ namespace Mapsicle.Fluent
             // one object but not a list of them.
             if (source is System.Collections.IEnumerable sequence
                 && source is not string
-                && CollectionShapeFor<TDest>.Shape is { } shape
-                && shape.Map(this, sequence) is { } filled)
+                && CollectionShapeFor<TDest>.Shape is { } shape)
             {
-                return (TDest)filled;
+                // Null when the source is not one the shape fills, such as a list of key value
+                // pairs into a dictionary, which the core mapper does fill.
+                return shape.Map(this, sequence) is { } filled ? (TDest)filled : source.MapTo<TDest>();
             }
 
             return MapResolved<TDest>(source, plan);
@@ -1260,7 +1261,9 @@ namespace Mapsicle.Fluent
 
                 foreach (System.Collections.DictionaryEntry entry in source)
                 {
-                    var key = entry.Key is TKey same ? same : mapper.MapInternal<TKey>(entry.Key, entry.Key.GetType())!;
+                    var key = entry.Key is TKey same ? same : mapper.MapInternal<TKey>(entry.Key, entry.Key.GetType());
+                    if (key is null) continue;
+
                     result[key] = entry.Value is null
                         ? default!
                         : mapper.MapInternal<TValue>(entry.Value, entry.Value.GetType())!;

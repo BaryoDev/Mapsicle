@@ -42,9 +42,8 @@ namespace Mapsicle.Fluent
             // out the last registration, so a second call silently dropped the first call's maps,
             // including an Ignore keeping a password out of a DTO.
             var registrations = services
-                .Select(d => d.ImplementationInstance)
-                .OfType<FluentRegistrations>()
-                .FirstOrDefault();
+                .FirstOrDefault(d => d.ServiceType == typeof(FluentRegistrations))
+                ?.ImplementationInstance as FluentRegistrations;
 
             if (registrations is null)
             {

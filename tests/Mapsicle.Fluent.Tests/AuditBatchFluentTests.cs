@@ -72,6 +72,14 @@ namespace Mapsicle.Fluent.Tests
         }
 
         [Fact]
+        public void AListOfPairsFillsADictionary()
+        {
+            var pairs = new List<KeyValuePair<string, int>> { new("a", 1) };
+
+            Assert.Equal(1, Empty().Map<Dictionary<string, int>>(pairs)!["a"]);
+        }
+
+        [Fact]
         public void AnUnconfiguredStructFills()
         {
             var p = Empty().Map<AfPointStruct>(new AfPoint { X = 3, Y = 4 });
