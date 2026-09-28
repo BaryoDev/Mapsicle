@@ -170,12 +170,18 @@ namespace Mapsicle
         /// Whether both sides are sequences whose destination element is a scalar the source element
         /// cannot convert into.
         /// </summary>
+        /// <remarks>
+        /// An <c>object</c> element is converted per value at runtime, so its declared type says
+        /// nothing. Probing it anyway turned a <c>List&lt;object&gt;</c> of ints into a null
+        /// <c>List&lt;int&gt;</c>.
+        /// </remarks>
         private static bool HasUnconvertibleScalarElements(Type srcType, Type targetType)
         {
             var sourceItem = ElementTypeOf(srcType);
             var targetItem = ElementTypeOf(targetType);
 
             if (sourceItem is null || targetItem is null || !IsScalar(targetItem)) return false;
+            if (sourceItem == typeof(object)) return false;
 
             var probe = Expression.Parameter(sourceItem, "item");
             return TryBuild(probe, sourceItem, targetItem, (e, _) => e) is null;

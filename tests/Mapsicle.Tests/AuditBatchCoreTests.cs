@@ -214,6 +214,15 @@ namespace Mapsicle.Tests
             Assert.Equal(new long[] { 5, 6 }, Static<AbLongArrayDst>(new AbIntArray { Values = new[] { 5, 6 } }).Values);
         }
 
+        public class AbObjectList { public List<object> Values { get; set; } = new(); }
+
+        [Fact]
+        public void AnObjectListStillConvertsEachElementAtRuntime()
+        {
+            Assert.Equal(new[] { 5, 6 }, Static<AbIntList>(new AbObjectList { Values = { 5, 6 } }).Values);
+            Assert.Equal(new[] { 5, 6 }, Factory<AbIntList>(new AbObjectList { Values = { 5, 6 } }).Values);
+        }
+
         // ---- #83 flattening in Map(existing) --------------------------------------------------
 
         public class AbCustomer { public string Name { get; set; } = ""; }
