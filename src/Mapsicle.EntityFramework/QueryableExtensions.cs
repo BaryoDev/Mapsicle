@@ -159,7 +159,7 @@ namespace Mapsicle.EntityFramework
 
             var typeMap = configuration?.GetTypeMap(sourceType, destType);
             var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+                .Where(p => p.GetGetMethod() != null && p.GetIndexParameters().Length == 0)
                 .ToArray();
             var destProps = destType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanWrite);
@@ -388,7 +388,7 @@ namespace Mapsicle.EntityFramework
                 if (string.IsNullOrEmpty(remainder)) continue;
 
                 var nestedProps = sourceProp.PropertyType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead);
+                    .Where(p => p.GetIndexParameters().Length == 0 && p.GetGetMethod() != null);
 
                 var nestedProp = nestedProps.FirstOrDefault(p =>
                     p.Name.Equals(remainder, StringComparison.OrdinalIgnoreCase));

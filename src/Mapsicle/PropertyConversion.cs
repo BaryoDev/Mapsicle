@@ -60,6 +60,14 @@ namespace Mapsicle
             // declared type only has to be something that can hold a mappable instance.
             if (IsMappableSource(srcType) && targetType.IsClass && targetType != typeof(string))
             {
+                // A list of long into a list of int used to map every element to 0, and a list of
+                // strings into a list of Guid to the empty Guid: made up values where the same
+                // scalar pair outside a list is left unmapped. The element rule decides.
+                if (HasUnconvertibleScalarElements(srcType, targetType))
+                {
+                    return null;
+                }
+
                 return buildNestedMap(propExp, targetType);
             }
 
@@ -68,7 +76,7 @@ namespace Mapsicle
                 return BuildToString(propExp, srcType);
             }
 
-            if (srcType.IsEnum && (targetType == typeof(int) || targetType == typeof(long)))
+            if (srcType.IsEnum && IsEnumToIntegerAllowed(srcType, targetType))
             {
                 return Expression.Convert(propExp, targetType);
             }
@@ -123,8 +131,96 @@ namespace Mapsicle
         /// Whether a source member of this declared type can hold something worth mapping member by
         /// member: a class or an interface, and not a string.
         /// </summary>
-        private static bool IsMappableSource(Type srcType) =>
-            (srcType.IsClass || srcType.IsInterface) && srcType != typeof(string);
+        /// <remarks>
+        /// A struct that holds members counts too, bare or nullable. It used to be left out, so a
+        /// <c>Point</c> member into a <c>PointDto</c> member came back null even though the same
+        /// <c>Point</c> mapped fine at the top level.
+        /// </remarks>
+        internal static bool IsMappableSource(Type srcType) =>
+            ((srcType.IsClass || srcType.IsInterface) && srcType != typeof(string))
+            || IsComplexStruct(Nullable.GetUnderlyingType(srcType) ?? srcType);
+
+        /// <summary>
+        /// Whether the pair maps member by member through a nested map, rather than as a value.
+        /// </summary>
+        /// <remarks>
+        /// The entry points that map a value on its own ask this before asking the cascade. A
+        /// struct source into a class is a nested pair, and handing it to the cascade from the top
+        /// would build a nested map of itself, which calls back into the same entry point forever.
+        /// </remarks>
+        internal static bool IsNestedPair(Type srcType, Type targetType) =>
+            !targetType.IsAssignableFrom(srcType)
+            && IsMappableSource(srcType) && targetType.IsClass && targetType != typeof(string);
+
+        /// <summary>A value type mapped member by member rather than converted as a value.</summary>
+        internal static bool IsComplexStruct(Type type) =>
+            type.IsValueType && !IsScalar(type) && Nullable.GetUnderlyingType(type) is null;
+
+        /// <summary>A type that converts as one value: a primitive, enum, string or framework value.</summary>
+        internal static bool IsScalar(Type type)
+        {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+
+            return type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal)
+                || type == typeof(Guid) || type == typeof(DateTime) || type == typeof(DateTimeOffset)
+                || type == typeof(TimeSpan);
+        }
+
+        /// <summary>
+        /// Whether both sides are sequences whose destination element is a scalar the source element
+        /// cannot convert into.
+        /// </summary>
+        /// <remarks>
+        /// An <c>object</c> element is converted per value at runtime, so its declared type says
+        /// nothing. Probing it anyway turned a <c>List&lt;object&gt;</c> of ints into a null
+        /// <c>List&lt;int&gt;</c>.
+        /// </remarks>
+        private static bool HasUnconvertibleScalarElements(Type srcType, Type targetType)
+        {
+            var sourceItem = ElementTypeOf(srcType);
+            var targetItem = ElementTypeOf(targetType);
+
+            if (sourceItem is null || targetItem is null || !IsScalar(targetItem)) return false;
+            if (sourceItem == typeof(object)) return false;
+
+            var probe = Expression.Parameter(sourceItem, "item");
+            return TryBuild(probe, sourceItem, targetItem, (e, _) => e) is null;
+        }
+
+        internal static Type? ElementTypeOf(Type type)
+        {
+            if (type == typeof(string)) return null;
+            if (type.IsArray) return type.GetElementType();
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            {
+                return type.GetGenericArguments()[0];
+            }
+
+            foreach (var i in type.GetInterfaces())
+            {
+                if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    return i.GetGenericArguments()[0];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Whether an enum converts into an integer without losing its value.</summary>
+        /// <remarks>
+        /// Only when the integer holds every value of the enum's underlying type. This used to be
+        /// "int or long", whatever the enum, so an enum backed by long with a value past 2^31 went
+        /// into an int truncated, while a plain long into an int was left unmapped.
+        /// </remarks>
+        internal static bool IsEnumToIntegerAllowed(Type enumType, Type target)
+        {
+            if (target != typeof(int) && target != typeof(long)) return false;
+
+            var underlying = Enum.GetUnderlyingType(enumType);
+            return underlying == target || IsWidening(underlying, target);
+        }
 
         /// <summary>
         /// How many levels a flattened name may descend before the search gives up.
@@ -207,6 +303,7 @@ namespace Mapsicle
             var destNames = Enum.GetNames(dstEnum);
             var seen = new HashSet<object>();
             var cases = new List<SwitchCase>();
+            var fallback = Expression.Default(dstEnum);
 
             foreach (var name in Enum.GetNames(srcEnum))
             {
@@ -220,28 +317,37 @@ namespace Mapsicle
                 }
 
                 var match = Array.Find(destNames, n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
-                if (match is null)
-                {
-                    continue;
-                }
 
+                // A member the destination does not declare gives the destination's default, never
+                // a value it defines no member for, which would reach a switch with no case for it
+                // and a column that rejects it, far from the mapping that produced it.
                 cases.Add(Expression.SwitchCase(
-                    Expression.Constant(Enum.Parse(dstEnum, match), dstEnum),
+                    match is null ? fallback : Expression.Constant(Enum.Parse(dstEnum, match), dstEnum),
                     Expression.Constant(value, srcEnum)));
             }
-
-            // A name the destination does not declare gives the destination's default, never a value
-            // it defines no member for. An undefined member reaches a switch with no case for it and
-            // a column that rejects it, far from the mapping that produced it.
-            var fallback = Expression.Default(dstEnum);
 
             var sourceValue = Nullable.GetUnderlyingType(srcType) is null
                 ? propExp
                 : Expression.Property(propExp, "Value");
 
+            // A value the source enum does not define passes through as its number. It used to
+            // become the destination's zero member, while the same number as a string passed
+            // through Enum.TryParse unchanged, so one value arrived two ways depending on route.
+            // AutoMapper, Mapperly and Mapster all pass it through. When the destination's
+            // underlying type cannot hold the source's, the number would be truncated into one
+            // nobody sent, so it is the default instead.
+            Expression unmatched = fallback;
+            var srcUnderlying = Enum.GetUnderlyingType(srcEnum);
+            var dstUnderlying = Enum.GetUnderlyingType(dstEnum);
+            if (srcUnderlying == dstUnderlying || IsWidening(srcUnderlying, dstUnderlying))
+            {
+                unmatched = Expression.Convert(
+                    Expression.Convert(Expression.Convert(sourceValue, srcUnderlying), dstUnderlying), dstEnum);
+            }
+
             Expression mapped = cases.Count == 0
-                ? fallback
-                : Expression.Switch(dstEnum, sourceValue, fallback, comparison: null, cases);
+                ? unmatched
+                : Expression.Switch(dstEnum, sourceValue, unmatched, comparison: null, cases);
 
             if (Nullable.GetUnderlyingType(targetType) is not null)
             {
@@ -577,8 +683,10 @@ namespace Mapsicle
         /// The pairs where every source value survives the conversion.
         /// </summary>
         /// <remarks>
-        /// This is the C# implicit numeric conversion table, which is lossless and cannot throw, plus
-        /// one deliberate addition: <c>decimal</c> to <c>double</c>.
+        /// This is the C# implicit numeric conversion table minus the pairs that round, plus one
+        /// deliberate addition: <c>decimal</c> to <c>double</c>. C# calls <c>int</c> to <c>float</c>
+        /// and <c>long</c> to <c>double</c> implicit, but 16,777,217 arrives as 16,777,216 and
+        /// 2^53 + 1 as 2^53, so they are left unmapped like any other narrowing.
         ///
         /// Narrowing is deliberately absent. <c>long</c> to <c>int</c> and signed/unsigned
         /// reinterpretation lose or corrupt values, so those pairs stay unmapped and the destination
@@ -607,10 +715,10 @@ namespace Mapsicle
             [typeof(byte)] = new[] { typeof(short), typeof(ushort), typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double), typeof(decimal) },
             [typeof(short)] = new[] { typeof(int), typeof(long), typeof(float), typeof(double), typeof(decimal) },
             [typeof(ushort)] = new[] { typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double), typeof(decimal) },
-            [typeof(int)] = new[] { typeof(long), typeof(float), typeof(double), typeof(decimal) },
-            [typeof(uint)] = new[] { typeof(long), typeof(ulong), typeof(float), typeof(double), typeof(decimal) },
-            [typeof(long)] = new[] { typeof(float), typeof(double), typeof(decimal) },
-            [typeof(ulong)] = new[] { typeof(float), typeof(double), typeof(decimal) },
+            [typeof(int)] = new[] { typeof(long), typeof(double), typeof(decimal) },
+            [typeof(uint)] = new[] { typeof(long), typeof(ulong), typeof(double), typeof(decimal) },
+            [typeof(long)] = new[] { typeof(decimal) },
+            [typeof(ulong)] = new[] { typeof(decimal) },
             [typeof(char)] = new[] { typeof(ushort), typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double), typeof(decimal) },
             [typeof(float)] = new[] { typeof(double) },
             [typeof(decimal)] = new[] { typeof(double) },

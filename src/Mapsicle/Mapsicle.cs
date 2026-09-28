@@ -328,6 +328,11 @@ namespace Mapsicle
         /// <summary>
         /// Gets cached readable PropertyInfo array for a type (optimized for source types).
         /// </summary>
+        /// <remarks>
+        /// Readable means a public getter. This used to test <c>CanRead</c>, which is true for a
+        /// private getter too, so <c>Secret { private get; set; }</c> was copied into the DTO on
+        /// every lane: a member its own type says is not for reading.
+        /// </remarks>
         internal static PropertyInfo[] GetCachedReadableProperties(Type type)
         {
             return _readablePropertyCache.GetOrAdd(type, t =>
@@ -337,14 +342,14 @@ namespace Mapsicle
                 // Count first to avoid list allocation
                 for (int i = 0; i < props.Length; i++)
                 {
-                    if (props[i].GetIndexParameters().Length == 0 && props[i].CanRead)
+                    if (props[i].GetIndexParameters().Length == 0 && props[i].GetGetMethod() != null)
                         count++;
                 }
                 var result = new PropertyInfo[count];
                 var idx = 0;
                 for (int i = 0; i < props.Length; i++)
                 {
-                    if (props[i].GetIndexParameters().Length == 0 && props[i].CanRead)
+                    if (props[i].GetIndexParameters().Length == 0 && props[i].GetGetMethod() != null)
                         result[idx++] = props[i];
                 }
                 return result;
@@ -454,7 +459,7 @@ namespace Mapsicle
         /// A guard against exhausting the stack, not a cycle detector. A graph this deep would
         /// overflow hand written recursion too, so stopping is the only useful thing left.
         /// </remarks>
-        private const int StackGuardDepth = 10_000;
+        internal const int StackGuardDepth = 10_000;
 
         /// <summary>
         /// Enters one level of mapping, or refuses when the graph genuinely loops back on itself.
@@ -518,7 +523,7 @@ namespace Mapsicle
             return true;
         }
 
-        private static bool HasStackHeadroom()
+        internal static bool HasStackHeadroom()
         {
 #if NETSTANDARD2_0
             try
@@ -555,7 +560,7 @@ namespace Mapsicle
         /// <c>ReferenceEqualityComparer</c> arrived in .NET 5. A record, or anything else overriding
         /// Equals, would otherwise make two distinct instances look like a cycle.
         /// </remarks>
-        private sealed class ReferenceIdentity : IEqualityComparer<object>
+        internal sealed class ReferenceIdentity : IEqualityComparer<object>
         {
             internal static readonly ReferenceIdentity Instance = new();
 
@@ -1109,7 +1114,8 @@ namespace Mapsicle
 
             // A value mapped on its own goes through the shared cascade, as the untyped path does.
             // Without this, 5.MapTo<int, long>() fell through to member mapping and returned 0.
-            if (sourceType.IsValueType || sourceType == typeof(string))
+            if ((sourceType.IsValueType || sourceType == typeof(string))
+                && !PropertyConversion.IsNestedPair(sourceType, destType))
             {
                 var direct = PropertyConversion.TryBuild(sourceParam, sourceType, destType, BuildNestedMapCall);
                 if (direct is not null)
@@ -1357,7 +1363,8 @@ namespace Mapsicle
                 // silently lost every conversion the cascade performs: (object)42 into a long came
                 // back as 0, and so did an enum into an int. It is the same defect as in-place Map,
                 // one level up, and it also reached anything mapping dictionary values.
-                if (sourceType.IsValueType || sourceType == typeof(string))
+                if ((sourceType.IsValueType || sourceType == typeof(string))
+                    && !PropertyConversion.IsNestedPair(sourceType, destType))
                 {
                     var direct = PropertyConversion.TryBuild(typedSource, sourceType, destType, BuildNestedMapCall);
                     if (direct is not null)
@@ -1505,7 +1512,7 @@ namespace Mapsicle
                         PropertyInfo? sourceProp = null;
                         for (int j = 0; j < sourceProps.Length; j++)
                         {
-                            // CanRead check removed - sourceProps is already filtered
+                            // Readability check removed - sourceProps is already filtered
                             if (sourceProps[j].Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase))
                             {
                                 sourceProp = sourceProps[j];
@@ -1554,8 +1561,20 @@ namespace Mapsicle
             if (source is null || destination is null) return destination;
 
             var key = (source.GetType(), typeof(TDestination));
-            GetOrAddMapDelegate(key, k => BuildInPlaceMapper(k.Item1, k.Item2, null))(source, destination);
-            return destination;
+            var map = GetOrAddMapDelegate(key, k => BuildInPlaceMapper(k.Item1, k.Item2, null));
+
+            if (!typeof(TDestination).IsValueType)
+            {
+                map(source, destination);
+                return destination;
+            }
+
+            // A struct destination is copied into a box to be written, so the box is what holds the
+            // result. Returning the argument returned the untouched original: Map(new Point()) came
+            // back all zeros with nothing thrown.
+            object boxed = destination;
+            map(source, boxed);
+            return (TDestination)boxed;
         }
 
         /// <summary>
@@ -1599,18 +1618,34 @@ namespace Mapsicle
             return string.Join("\u001f", names);
         }
 
+        private static Action<object, object> BuildInPlaceMapper(
+            Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers) =>
+            BuildInPlaceMapper(sourceType, destType, excludedMembers, BuildNestedMapCall);
+
         /// <summary>
         /// Builds the in-place mapping delegate for one pair, optionally skipping named members.
         /// </summary>
-        private static Action<object, object> BuildInPlaceMapper(
-            Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers)
+        /// <remarks>
+        /// <c>MapperInstance</c> builds its in-place maps here too, passing its own nested map call.
+        /// It used to have its own copy, which had no flattening, no public fields and no getter-only
+        /// collections, so the same <c>Map(existing)</c> filled three fewer kinds of member through
+        /// the factory than through the static mapper.
+        /// </remarks>
+        internal static Action<object, object> BuildInPlaceMapper(
+            Type sourceType, Type destType, IReadOnlyCollection<string>? excludedMembers,
+            Func<Expression, Type, Expression> buildNestedMap)
         {
             DynamicCodeGuard.EnsureSupported(sourceType, destType);
             var sourceParam = Expression.Parameter(typeof(object), "source");
             var destParam = Expression.Parameter(typeof(object), "destination");
 
             var typedSource = Expression.Convert(sourceParam, sourceType);
-            var typedDest = Expression.Convert(destParam, destType);
+
+            // Unbox, not Convert, for a struct: Convert copies the value out of the box, so every
+            // assignment below wrote to a temporary and the caller's box never changed.
+            var typedDest = destType.IsValueType
+                ? Expression.Unbox(destParam, destType)
+                : (Expression)Expression.Convert(destParam, destType);
 
             var sourceProps = GetCachedReadableProperties(sourceType);
             var destProps = GetCachedWritableProperties(destType);
@@ -1634,12 +1669,19 @@ namespace Mapsicle
                     var destPropExp = Expression.Property(typedDest, destProp);
 
                     var value = PropertyConversion.TryBuild(
-                        propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
+                        propExp, sourceProp.PropertyType, destProp.PropertyType, buildNestedMap);
 
                     if (value != null)
                     {
                         assignments.Add(Expression.Assign(destPropExp, value));
                     }
+                }
+                else if (TryBindFlattenedPath(destProp, sourceProps, typedSource) is MemberAssignment flattened)
+                {
+                    // The constructing maps flattened and this one did not, so CustomerName filled
+                    // from Customer.Name on MapTo and stayed empty on Map(existing), which is the
+                    // call people use to update an entity from a request.
+                    assignments.Add(Expression.Assign(Expression.Property(typedDest, destProp), flattened.Expression));
                 }
             }
 
@@ -2230,7 +2272,7 @@ namespace Mapsicle
 
             var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             var props = GetCachedProperties(source.GetType())
-                .Where(p => p.CanRead);
+                .Where(p => p.GetGetMethod() != null);
 
             foreach (var prop in props)
             {
@@ -2321,7 +2363,7 @@ namespace Mapsicle
                 return true;
             }
 
-            if (valueType.IsEnum && (targetUnderlying == typeof(int) || targetUnderlying == typeof(long)))
+            if (valueType.IsEnum && PropertyConversion.IsEnumToIntegerAllowed(valueType, targetUnderlying))
             {
                 converted = Convert.ChangeType(value, targetUnderlying, CultureInfo.InvariantCulture);
                 return true;
@@ -2404,7 +2446,7 @@ namespace Mapsicle
             for (int i = 0; i < sourceProps.Length; i++)
             {
                 var prop = sourceProps[i];
-                // CanRead check removed - sourceProps is already filtered to readable
+                // Readability check removed - sourceProps is already filtered to readable
                 if (prop.Name.Equals(primaryName, StringComparison.OrdinalIgnoreCase))
                 {
                     return prop;
@@ -2449,7 +2491,7 @@ namespace Mapsicle
             const BindingFlags Public = BindingFlags.Public | BindingFlags.Instance;
 
             var sourceMembers = sourceType.GetFields(Public).Cast<MemberInfo>()
-                .Concat(sourceType.GetProperties(Public).Where(p => p.CanRead && p.GetIndexParameters().Length == 0))
+                .Concat(sourceType.GetProperties(Public).Where(p => p.GetGetMethod() != null && p.GetIndexParameters().Length == 0))
                 .ToList();
 
             var found = new List<(MemberInfo, MemberInfo)>();

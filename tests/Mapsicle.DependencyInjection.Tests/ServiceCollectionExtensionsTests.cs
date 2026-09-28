@@ -43,17 +43,16 @@ namespace Mapsicle.DependencyInjection.Tests
 
             var mapper = provider.GetRequiredService<IMapperInstance>();
 
+            // A cycle, because MaxDepth decides when the mapper starts checking for a repeat, not
+            // where it stops. An acyclic chain maps whole at any setting, as it does on the static
+            // mapper. With 2 the repeat is caught after four nodes; the default of 32 gives 34.
             var root = new Node { Name = "0" };
-            var current = root;
-            for (int i = 1; i <= 6; i++)
-            {
-                current.Child = new Node { Name = i.ToString() };
-                current = current.Child;
-            }
+            root.Child = new Node { Name = "1", Child = root };
 
             var result = mapper.MapTo<NodeDto>(root);
 
             Assert.NotNull(result);
+            Assert.NotNull(result!.Child?.Child?.Child);
             Assert.Null(result!.Child?.Child?.Child?.Child);
         }
 

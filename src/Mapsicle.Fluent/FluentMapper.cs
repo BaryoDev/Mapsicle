@@ -82,7 +82,7 @@ namespace Mapsicle.Fluent
                     .Where(p => p.CanWrite);
                 var sourceProps = new HashSet<string>(
                     typeMap.SourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                        .Where(p => p.CanRead)
+                        .Where(p => p.GetGetMethod() != null)
                         .Select(p => p.Name),
                     StringComparer.OrdinalIgnoreCase);
 
@@ -122,6 +122,8 @@ namespace Mapsicle.Fluent
             _typeMapLookup.TryGetValue((sourceType, destType), out var map);
             return map;
         }
+
+        internal bool HasTypeConverters => _typeConverters.Count > 0;
 
         internal Func<object, object>? GetTypeConverter(Type sourceType, Type destType)
         {
@@ -559,31 +561,22 @@ namespace Mapsicle.Fluent
         {
             if (source is null || destination is null) return destination;
 
-            var typeMap = _config.GetTypeMap(typeof(TSource), typeof(TDest));
-            var plan = InPlacePlan<TSource, TDest>.Get();
+            var plan = GetInPlacePlan(typeof(TSource), typeof(TDest));
+            var typeMap = plan.TypeMap;
 
             typeMap?.GetBeforeMap()?.Invoke(source, destination);
 
-            var steps = plan.Steps;
-            for (var i = 0; i < steps.Length; i++)
+            if (typeof(TDest).IsValueType)
             {
-                var step = steps[i];
-
-                if (typeMap?.IsIgnored(step.DestName) == true) continue;
-
-                var condition = typeMap?.GetCondition(step.DestName);
-                if (condition != null && !condition(source!)) continue;
-
-                var customMapping = typeMap?.GetCustomMapping(step.DestName);
-                if (customMapping != null)
-                {
-                    // Arbitrary Func<object, object> from configuration, so this one still goes
-                    // through reflection. It is the uncommon path.
-                    step.DestProp.SetValue(destination, customMapping(source!));
-                    continue;
-                }
-
-                step.Assign?.Invoke(source, destination);
+                object boxed = destination;
+                plan.Convention(source, boxed);
+                plan.Overrides?.Invoke(source, boxed);
+                destination = (TDest)boxed;
+            }
+            else
+            {
+                plan.Convention(source, destination);
+                plan.Overrides?.Invoke(source, destination);
             }
 
             typeMap?.GetAfterMap()?.Invoke(source, destination);
@@ -592,95 +585,165 @@ namespace Mapsicle.Fluent
         }
 
         /// <summary>
-        /// The property pairing for one source/destination pair, resolved once and compiled.
+        /// The in-place map for one pair: the core convention pass, then configuration.
         /// </summary>
         /// <remarks>
-        /// This method used to reflect over both types on every call: two
-        /// <c>GetProperties()</c> array allocations, a LINQ closure per destination property, and a
-        /// <c>PropertyInfo.SetValue</c> per assignment. Measured at 616 bytes and roughly 33 times
-        /// the cost of the core mapper's in-place <c>Map</c>, which allocates nothing.
-        ///
-        /// The pairing depends only on the two types, so it is resolved once per closed pair and the
-        /// assignment compiled to a delegate. Everything that depends on configuration rather than
-        /// on the types (ignores, conditions, custom mappings, before and after hooks) is still
-        /// evaluated per call, so behaviour is unchanged including for a configuration built after
-        /// the first map.
+        /// This used to be its own plan that copied a member only when the two types matched
+        /// exactly, so an int into a long and a nested object were both skipped here while the
+        /// constructing path mapped them. The convention pass is now the core one, skipping every
+        /// member configuration decides. In place, an ignored member and a failed condition leave
+        /// the destination's value alone rather than writing the default.
         /// </remarks>
-        private static class InPlacePlan<TSource, TDest>
+        private sealed class InPlacePlan
         {
-            // volatile because the Plan holds a Step[] whose elements hold compiled delegates. On a
-            // weak memory model such as arm64, a plain write can let another thread observe the
-            // Plan reference before the array element writes are visible, and read a default Step
-            // with a null Assign. That would silently skip properties rather than fail loudly,
-            // which is the worst shape a mapping bug can take.
-            private static volatile Plan? _plan;
+            internal readonly int Version;
+            internal readonly ITypeMapConfiguration? TypeMap;
+            internal readonly Action<object, object> Convention;
+            internal readonly Action<object, object>? Overrides;
 
-            internal static Plan Get() => _plan ??= Build();
-
-            internal sealed class Plan
+            internal InPlacePlan(int version, ITypeMapConfiguration? typeMap, Action<object, object> convention, Action<object, object>? overrides)
             {
-                internal readonly Step[] Steps;
-                internal Plan(Step[] steps) => Steps = steps;
+                Version = version;
+                TypeMap = typeMap;
+                Convention = convention;
+                Overrides = overrides;
+            }
+        }
+
+        private readonly ConcurrentDictionary<(Type, Type), InPlacePlan> _inPlacePlans = new();
+
+        private InPlacePlan GetInPlacePlan(Type sourceType, Type destType)
+        {
+            var key = (sourceType, destType);
+            var version = _config.Version;
+
+            if (_inPlacePlans.TryGetValue(key, out var existing) && existing.Version == version)
+            {
+                return existing;
             }
 
-            internal readonly struct Step
-            {
-                internal readonly string DestName;
-                internal readonly PropertyInfo DestProp;
-                internal readonly Action<TSource, TDest>? Assign;
+            var typeMap = _config.GetTypeMap(sourceType, destType);
+            var memberConverters = MemberConverters(sourceType, destType);
 
-                internal Step(PropertyInfo destProp, Action<TSource, TDest>? assign)
+            List<string>? skip = null;
+            var actions = new List<Action<object, object>>();
+
+            foreach (var destProp in destType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!destProp.CanWrite) continue;
+                var name = destProp.Name;
+
+                if (typeMap?.IsIgnored(name) == true)
                 {
-                    DestProp = destProp;
-                    DestName = destProp.Name;
-                    Assign = assign;
+                    (skip ??= new List<string>()).Add(name);
+                    continue;
+                }
+
+                var condition = typeMap?.GetCondition(name);
+                var resolve = ResolverFor(typeMap, memberConverters, name);
+                if (condition is null && resolve is null) continue;
+
+                (skip ??= new List<string>()).Add(name);
+
+                if (resolve != null)
+                {
+                    var set = CompileSetter(destType, destProp);
+                    actions.Add(condition is null
+                        ? (s, d) => set(d, resolve(s))
+                        : (s, d) => { if (condition(s)) set(d, resolve(s)); });
+                }
+                else
+                {
+                    var single = Mapper.GetInPlaceMapper(sourceType, destType, EveryMemberBut(destType, name));
+                    actions.Add((s, d) => { if (condition!(s)) single(s, d); });
                 }
             }
 
-            private static Plan Build()
+            var plan = new InPlacePlan(
+                version,
+                typeMap,
+                Mapper.GetInPlaceMapper(sourceType, destType, skip),
+                Combine(actions));
+
+            _inPlacePlans[key] = plan;
+            return plan;
+        }
+
+        private static string[] EveryMemberBut(Type destType, string name)
+        {
+            var names = new List<string>();
+            foreach (var member in destType.GetMembers(BindingFlags.Public | BindingFlags.Instance))
             {
-                var sourceProps = Mapper.GetCachedReadableProperties(typeof(TSource));
-                var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-                var steps = new List<Step>(destProps.Length);
-
-                foreach (var destProp in destProps)
+                if (member is PropertyInfo or FieldInfo
+                    && !string.Equals(member.Name, name, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!destProp.CanWrite) continue;
-
-                    // The same resolution the core lanes use. Matching on name alone here copied
-                    // an [IgnoreMap] IsAdmin across and read the wrong member under [MapFrom].
-                    MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp);
-
-                    Action<TSource, TDest>? assign = null;
-                    if (sourceProp != null && destProp.PropertyType.IsAssignableFrom(sourceProp.PropertyType))
-                    {
-                        assign = CompileAssign(sourceProp, destProp);
-                    }
-
-                    // Kept even with no standard assignment: configuration may supply a custom
-                    // mapping for this destination property, and dropping the step would silently
-                    // stop honouring it.
-                    steps.Add(new Step(destProp, assign));
+                    names.Add(member.Name);
                 }
+            }
+            return names.ToArray();
+        }
 
-                return new Plan(steps.ToArray());
+        private static Action<object, object>? Combine(List<Action<object, object>> actions)
+        {
+            if (actions.Count == 0) return null;
+            if (actions.Count == 1) return actions[0];
+
+            var steps = actions.ToArray();
+            return (s, d) =>
+            {
+                for (var i = 0; i < steps.Length; i++) steps[i](s, d);
+            };
+        }
+
+        /// <summary>
+        /// A member's configured resolver, or the registered converter between its source and
+        /// destination member types.
+        /// </summary>
+        private static Func<object, object?>? ResolverFor(
+            ITypeMapConfiguration? typeMap, Dictionary<string, Func<object, object?>>? memberConverters, string name)
+        {
+            var custom = typeMap?.GetCustomMapping(name);
+            if (custom != null) return custom;
+
+            return memberConverters != null && memberConverters.TryGetValue(name, out var convert) ? convert : null;
+        }
+
+        /// <summary>
+        /// The destination members whose source member has a registered converter, keyed by name.
+        /// </summary>
+        /// <remarks>
+        /// <c>CreateConverter</c> was consulted only for the top-level pair. A <c>Money</c> member
+        /// into a <c>decimal</c> stayed at its default, and into a <c>string</c> it got
+        /// <c>Money.ToString()</c>, with the converter never called.
+        /// </remarks>
+        private Dictionary<string, Func<object, object?>>? MemberConverters(Type sourceType, Type destType)
+        {
+            if (!_config.HasTypeConverters) return null;
+
+            Dictionary<string, Func<object, object?>>? result = null;
+            var sourceProps = Mapper.GetCachedReadableProperties(sourceType);
+
+            foreach (var destProp in destType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!destProp.CanWrite) continue;
+                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp) || sourceProp is null) continue;
+
+                var converter = _config.GetTypeConverter(sourceProp.PropertyType, destProp.PropertyType);
+                if (converter is null) continue;
+
+                var read = CompileGetter(sourceType, sourceProp);
+                (result ??= new Dictionary<string, Func<object, object?>>(StringComparer.OrdinalIgnoreCase))[destProp.Name] =
+                    s => read(s) is { } value ? converter(value) : null;
             }
 
-            private static Action<TSource, TDest> CompileAssign(PropertyInfo sourceProp, PropertyInfo destProp)
-            {
-                var src = Expression.Parameter(typeof(TSource), "source");
-                var dst = Expression.Parameter(typeof(TDest), "destination");
+            return result;
+        }
 
-                Expression value = Expression.Property(src, sourceProp);
-                if (destProp.PropertyType != sourceProp.PropertyType)
-                {
-                    value = Expression.Convert(value, destProp.PropertyType);
-                }
-
-                var body = Expression.Assign(Expression.Property(dst, destProp), value);
-                return Expression.Lambda<Action<TSource, TDest>>(body, src, dst).Compile();
-            }
+        private static Func<object, object?> CompileGetter(Type sourceType, PropertyInfo sourceProp)
+        {
+            var source = Expression.Parameter(typeof(object), "s");
+            var body = Expression.Convert(Expression.Property(Expression.Convert(source, sourceType), sourceProp), typeof(object));
+            return Expression.Lambda<Func<object, object?>>(body, source).Compile();
         }
 
         private TDest? MapInternal<TDest>(object source, Type sourceType)
@@ -705,7 +768,9 @@ namespace Mapsicle.Fluent
                 && source is not string
                 && CollectionShapeFor<TDest>.Shape is { } shape)
             {
-                return (TDest)shape.Map(this, sequence);
+                // Null when the source is not one the shape fills, such as a list of key value
+                // pairs into a dictionary, which the core mapper does fill.
+                return shape.Map(this, sequence) is { } filled ? (TDest)filled : source.MapTo<TDest>();
             }
 
             return MapResolved<TDest>(source, plan);
@@ -721,6 +786,19 @@ namespace Mapsicle.Fluent
         /// </remarks>
         private TDest? MapResolved<TDest>(object source, OverridePlan plan)
         {
+            if (plan.Derived != null)
+            {
+                return (TDest?)plan.Derived(source, source.GetType());
+            }
+
+            // A pair with no configuration at all is exactly what the core mapper does. This used to
+            // construct the destination and fill it in place, which returned 0 for a boxed 5 into an
+            // int, skipped flattening, and left a struct at its default.
+            if (plan.ByConvention)
+            {
+                return source.MapTo<TDest>();
+            }
+
             var typeMap = plan.TypeMap;
             // 1. Create destination
             var factory = typeMap?.GetConstructorFactory();
@@ -813,6 +891,12 @@ namespace Mapsicle.Fluent
             /// <summary>The type map for this pair, direct or polymorphic.</summary>
             internal ITypeMapConfiguration? TypeMap;
 
+            /// <summary>Maps through a derived pair registered with <c>Include</c>, or null.</summary>
+            internal Func<object, Type, object?>? Derived;
+
+            /// <summary>Nothing configured touches this pair, so the core mapper does all of it.</summary>
+            internal bool ByConvention;
+
             /// <summary>
             /// Members the override pass always writes, so the convention pass can skip them.
             /// </summary>
@@ -855,20 +939,36 @@ namespace Mapsicle.Fluent
             var typeMap = _config.GetTypeMap(sourceType, destType) ?? FindPolymorphicTypeMap(sourceType, destType);
 
             OverridePlan plan;
-            if (converter != null || typeMap is null || CollectionShape.Of(destType) != null)
+            if (converter != null || CollectionShape.Of(destType) != null)
             {
-                // Nothing for the convention and override passes to do, or the destination is a
-                // collection and the elements are what carry a plan.
+                // A converter replaces the whole mapping, or the destination is a collection and
+                // the elements are what carry a plan.
                 plan = new OverridePlan(version, null, null, null);
+            }
+            else if (typeMap != null && typeMap.DestinationType != destType && destType.IsAssignableFrom(typeMap.DestinationType))
+            {
+                // The source matched a pair registered with Include. The base destination used to be
+                // built and filled from the derived map, so a Dog came back as an AnimalDto, and a
+                // derived AfterMap threw InvalidCastException casting that AnimalDto to a DogDto.
+                plan = new OverridePlan(version, null, null, null) { Derived = DerivedDispatch(typeMap.DestinationType) };
             }
             else
             {
-                var skip = UnconditionallyOverwritten<TDest>(typeMap);
-                plan = new OverridePlan(
-                    version,
-                    BuildOverrideAction<TDest>(typeMap),
-                    skip,
-                    Mapper.GetInPlaceMapper(sourceType, destType, skip));
+                var memberConverters = MemberConverters(sourceType, destType);
+
+                if (typeMap is null && memberConverters is null)
+                {
+                    plan = new OverridePlan(version, null, null, null) { ByConvention = true };
+                }
+                else
+                {
+                    var skip = UnconditionallyOverwritten<TDest>(typeMap, memberConverters);
+                    plan = new OverridePlan(
+                        version,
+                        BuildOverrideAction<TDest>(typeMap, memberConverters),
+                        skip,
+                        Mapper.GetInPlaceMapper(sourceType, destType, skip));
+                }
             }
 
             plan.Converter = converter;
@@ -877,10 +977,22 @@ namespace Mapsicle.Fluent
             return plan;
         }
 
+        private Func<object, Type, object?> DerivedDispatch(Type derivedDest)
+        {
+            var method = typeof(FluentMapper)
+                .GetMethod(nameof(MapAs), BindingFlags.NonPublic | BindingFlags.Instance)!
+                .MakeGenericMethod(derivedDest);
+
+            return (Func<object, Type, object?>)Delegate.CreateDelegate(typeof(Func<object, Type, object?>), this, method);
+        }
+
+        private object? MapAs<TDerived>(object source, Type sourceType) => MapInternal<TDerived>(source, sourceType);
+
         /// <summary>
         /// The destination members the override pass writes no matter what the source says.
         /// </summary>
-        private static string[]? UnconditionallyOverwritten<TDest>(ITypeMapConfiguration typeMap)
+        private static string[]? UnconditionallyOverwritten<TDest>(
+            ITypeMapConfiguration? typeMap, Dictionary<string, Func<object, object?>>? memberConverters)
         {
             List<string>? names = null;
 
@@ -890,9 +1002,9 @@ namespace Mapsicle.Fluent
 
                 // A condition decides between the convention value and the default, so the
                 // convention value still has to exist.
-                if (typeMap.GetCondition(destProp.Name) != null) continue;
+                if (typeMap?.GetCondition(destProp.Name) != null) continue;
 
-                if (typeMap.IsIgnored(destProp.Name) || typeMap.GetCustomMapping(destProp.Name) != null)
+                if (typeMap?.IsIgnored(destProp.Name) == true || ResolverFor(typeMap, memberConverters, destProp.Name) != null)
                 {
                     (names ??= new List<string>()).Add(destProp.Name);
                 }
@@ -904,7 +1016,8 @@ namespace Mapsicle.Fluent
         /// <summary>
         /// Builds the override action, or null when no member on this pair has one.
         /// </summary>
-        private static Action<object, TDest>? BuildOverrideAction<TDest>(ITypeMapConfiguration typeMap)
+        private static Action<object, TDest>? BuildOverrideAction<TDest>(
+            ITypeMapConfiguration? typeMap, Dictionary<string, Func<object, object?>>? memberConverters)
         {
             var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance);
             var actions = new List<Action<object, TDest>>();
@@ -913,7 +1026,7 @@ namespace Mapsicle.Fluent
             {
                 if (!destProp.CanWrite) continue;
 
-                if (typeMap.IsIgnored(destProp.Name))
+                if (typeMap?.IsIgnored(destProp.Name) == true)
                 {
                     var setIgnored = CompileSetter<TDest>(destProp);
                     var ignoredDefault = GetDefault(destProp.PropertyType);
@@ -921,8 +1034,8 @@ namespace Mapsicle.Fluent
                     continue;
                 }
 
-                var condition = typeMap.GetCondition(destProp.Name);
-                var customMapping = typeMap.GetCustomMapping(destProp.Name);
+                var condition = typeMap?.GetCondition(destProp.Name);
+                var customMapping = ResolverFor(typeMap, memberConverters, destProp.Name);
 
                 if (condition is null && customMapping is null) continue;
 
@@ -981,6 +1094,29 @@ namespace Mapsicle.Fluent
             return Expression.Lambda<Action<TDest, object?>>(body, dest, value).Compile();
         }
 
+        /// <summary>The same setter as <see cref="CompileSetter{TDest}"/>, over an untyped destination.</summary>
+        private static Action<object, object?> CompileSetter(Type destType, PropertyInfo prop)
+        {
+            var dest = Expression.Parameter(typeof(object), "d");
+            var value = Expression.Parameter(typeof(object), "v");
+
+            Expression converted = Expression.Convert(value, prop.PropertyType);
+            if (prop.PropertyType.IsValueType && Nullable.GetUnderlyingType(prop.PropertyType) is null)
+            {
+                converted = Expression.Condition(
+                    Expression.ReferenceEqual(value, Expression.Constant(null, typeof(object))),
+                    Expression.Default(prop.PropertyType),
+                    converted);
+            }
+
+            var typedDest = destType.IsValueType
+                ? Expression.Unbox(dest, destType)
+                : (Expression)Expression.Convert(dest, destType);
+
+            var body = Expression.Assign(Expression.Property(typedDest, prop), converted);
+            return Expression.Lambda<Action<object, object?>>(body, dest, value).Compile();
+        }
+
         /// <summary>
         /// A compiled parameterless constructor, or null when the type has none.
         /// </summary>
@@ -1036,11 +1172,12 @@ namespace Mapsicle.Fluent
         {
             private static readonly ConcurrentDictionary<Type, CollectionShape?> Shapes = new();
 
-            private readonly Func<FluentMapper, System.Collections.IEnumerable, object> _map;
+            private readonly Func<FluentMapper, System.Collections.IEnumerable, object?> _map;
 
-            private CollectionShape(Func<FluentMapper, System.Collections.IEnumerable, object> map) => _map = map;
+            private CollectionShape(Func<FluentMapper, System.Collections.IEnumerable, object?> map) => _map = map;
 
-            internal object Map(FluentMapper mapper, System.Collections.IEnumerable source) => _map(mapper, source);
+            /// <summary>The filled collection, or null when the source is not a shape this fills.</summary>
+            internal object? Map(FluentMapper mapper, System.Collections.IEnumerable source) => _map(mapper, source);
 
             internal static CollectionShape? Of(Type destType) => Shapes.GetOrAdd(destType, Build);
 
@@ -1048,8 +1185,13 @@ namespace Mapsicle.Fluent
             {
                 if (destType == typeof(string)) return null;
 
+                // A HashSet or a Dictionary destination was not a shape here, so it went down the
+                // single-object path and came back empty. Sending it to the core mapper instead would
+                // fill it but skip this configuration, and an Ignore on the element pair would stop
+                // protecting anything, so both are filled element by element like a list.
                 Type? elementType = null;
                 var asArray = false;
+                var asSet = false;
 
                 if (destType.IsArray && destType.GetArrayRank() == 1)
                 {
@@ -1059,7 +1201,23 @@ namespace Mapsicle.Fluent
                 else if (destType.IsGenericType)
                 {
                     var definition = destType.GetGenericTypeDefinition();
-                    if (definition == typeof(List<>)
+                    if (definition == typeof(Dictionary<,>)
+                        || definition == typeof(IDictionary<,>)
+                        || definition == typeof(IReadOnlyDictionary<,>))
+                    {
+                        var dictionaryBuilder = typeof(CollectionShape)
+                            .GetMethod(nameof(BuildDictionaryFor), BindingFlags.NonPublic | BindingFlags.Static)!
+                            .MakeGenericMethod(destType.GetGenericArguments());
+
+                        return (CollectionShape)dictionaryBuilder.Invoke(null, null)!;
+                    }
+
+                    if (definition == typeof(HashSet<>) || definition == typeof(ISet<>))
+                    {
+                        elementType = destType.GetGenericArguments()[0];
+                        asSet = true;
+                    }
+                    else if (definition == typeof(List<>)
                         || definition == typeof(IEnumerable<>)
                         || definition == typeof(ICollection<>)
                         || definition == typeof(IList<>)
@@ -1076,16 +1234,42 @@ namespace Mapsicle.Fluent
                     .GetMethod(nameof(BuildFor), BindingFlags.NonPublic | BindingFlags.Static)!
                     .MakeGenericMethod(elementType);
 
-                return (CollectionShape)builder.Invoke(null, new object[] { asArray })!;
+                return (CollectionShape)builder.Invoke(null, new object[] { asArray, asSet })!;
             }
 
-            private static CollectionShape BuildFor<TElement>(bool asArray)
+            private static CollectionShape BuildFor<TElement>(bool asArray, bool asSet)
             {
                 if (asArray)
                 {
                     return new CollectionShape(static (mapper, source) => Collect<TElement>(mapper, source).ToArray());
                 }
+                if (asSet)
+                {
+                    return new CollectionShape(static (mapper, source) => new HashSet<TElement>(Collect<TElement>(mapper, source)));
+                }
                 return new CollectionShape(static (mapper, source) => Collect<TElement>(mapper, source));
+            }
+
+            private static CollectionShape BuildDictionaryFor<TKey, TValue>() where TKey : notnull =>
+                new CollectionShape(static (mapper, source) =>
+                    source is System.Collections.IDictionary dictionary ? Fill<TKey, TValue>(mapper, dictionary) : null);
+
+            private static Dictionary<TKey, TValue> Fill<TKey, TValue>(FluentMapper mapper, System.Collections.IDictionary source)
+                where TKey : notnull
+            {
+                var result = new Dictionary<TKey, TValue>(source.Count);
+
+                foreach (System.Collections.DictionaryEntry entry in source)
+                {
+                    var key = entry.Key is TKey same ? same : mapper.MapInternal<TKey>(entry.Key, entry.Key.GetType());
+                    if (key is null) continue;
+
+                    result[key] = entry.Value is null
+                        ? default!
+                        : mapper.MapInternal<TValue>(entry.Value, entry.Value.GetType())!;
+                }
+
+                return result;
             }
 
             private static List<TElement> Collect<TElement>(FluentMapper mapper, System.Collections.IEnumerable source)

@@ -143,17 +143,16 @@ namespace Mapsicle.Tests
             // The other half of the control: the guard must not have quietly disabled depth limits.
             using var mapper = MapperFactory.Create(new MapperOptions { MaxDepth = 2 });
 
+            // A cycle, because MaxDepth decides when the mapper starts checking for a repeat, not
+            // where it stops. An acyclic chain maps whole at any setting, as it does on the static
+            // mapper. With 2 the repeat is caught after four nodes; the default of 32 gives 34.
             var root = new DepthNode { Name = "0" };
-            var current = root;
-            for (int i = 1; i <= 6; i++)
-            {
-                current.Child = new DepthNode { Name = i.ToString() };
-                current = current.Child;
-            }
+            root.Child = new DepthNode { Name = "1", Child = root };
 
             var result = mapper.MapTo<DepthNodeDto>(root);
 
             Assert.NotNull(result);
+            Assert.NotNull(result!.Child?.Child?.Child);
             // Two levels of depth means the graph is not walked all the way down.
             Assert.Null(result!.Child?.Child?.Child?.Child);
         }

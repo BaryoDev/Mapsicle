@@ -42,7 +42,7 @@ namespace Mapsicle.NamingConventions
                 var sourceProp = sourceType.GetProperty(mapping.Key);
                 var destProp = destType.GetProperty(mapping.Value);
 
-                if (sourceProp?.CanRead == true && destProp?.CanWrite == true)
+                if (sourceProp?.GetGetMethod() != null && destProp?.CanWrite == true)
                 {
                     try
                     {
@@ -111,7 +111,7 @@ namespace Mapsicle.NamingConventions
                 var sourceProp = sourceType.GetProperty(mapping.Key);
                 var destProp = destType.GetProperty(mapping.Value);
 
-                if (sourceProp?.CanRead == true && destProp?.CanWrite == true)
+                if (sourceProp?.GetGetMethod() != null && destProp?.CanWrite == true)
                 {
                     // Only set if dest property is default/null (wasn't mapped by standard mapper)
                     var currentValue = destProp.GetValue(dest);
@@ -160,7 +160,7 @@ namespace Mapsicle.NamingConventions
             {
                 var mappings = new Dictionary<string, string>();
                 var sourceProps = typeof(TSource).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanRead)
+                    .Where(p => p.GetGetMethod() != null)
                     .ToList();
                 var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
                     .Where(p => p.CanWrite && p.GetCustomAttribute<IgnoreMapAttribute>() == null)

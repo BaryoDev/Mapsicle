@@ -24,6 +24,10 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfControlled), typeof(Mapsicle.SourceGen.Tests.ConfControlledDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCovariant), typeof(Mapsicle.SourceGen.Tests.ConfCovariantDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfShielded), typeof(Mapsicle.SourceGen.Tests.ConfShieldedDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfEnumFit), typeof(Mapsicle.SourceGen.Tests.ConfEnumFitDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyEnum), typeof(Mapsicle.SourceGen.Tests.LossyEnumDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyFloat), typeof(Mapsicle.SourceGen.Tests.LossyFloatDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyDouble), typeof(Mapsicle.SourceGen.Tests.LossyDoubleDto))]
 
 namespace Mapsicle.SourceGen.Tests
 {
@@ -86,6 +90,23 @@ namespace Mapsicle.SourceGen.Tests
     public enum ConfRight { Unset = 0, Amber = 2, Teal = 5 }
     public class ConfCrossEnum { public ConfLeft Colour { get; set; } public ConfLeft? Maybe { get; set; } }
     public class ConfCrossEnumDto { public ConfRight Colour { get; set; } public ConfRight? Maybe { get; set; } }
+
+    // Small's byte backing fits an int. Narrowed goes from a long backing into an int backing,
+    // so an undefined value cannot pass through and must come out as the default.
+    public enum ConfWide : long { Unset = 0, Huge = 5_000_000_000 }
+    public enum ConfSmall : byte { Unset = 0, One = 1 }
+    public enum ConfNarrow { Unset = 0, Huge = 1 }
+    public class ConfEnumFit { public ConfSmall Small { get; set; } public ConfWide Narrowed { get; set; } }
+    public class ConfEnumFitDto { public int Small { get; set; } = -1; public ConfNarrow Narrowed { get; set; } = ConfNarrow.Huge; }
+
+    // Each of these loses information, so the engine leaves it unmapped and the generator must
+    // refuse the pair rather than emit a cast.
+    public class LossyEnum { public ConfWide Value { get; set; } }
+    public class LossyEnumDto { public int Value { get; set; } = -1; }
+    public class LossyFloat { public int Value { get; set; } }
+    public class LossyFloatDto { public float Value { get; set; } = -1; }
+    public class LossyDouble { public long Value { get; set; } }
+    public class LossyDoubleDto { public double Value { get; set; } = -1; }
 
     public class ConfStamp { public DateTime At { get; set; } public DateTime? Maybe { get; set; } }
     public class ConfStampDto { public DateTimeOffset At { get; set; } public DateTimeOffset? Maybe { get; set; } }
@@ -320,6 +341,50 @@ namespace Mapsicle.SourceGen.Tests
                 d => d.Colour, d => d.Maybe);
 
         [Fact]
+        public void AnUndefinedCrossEnumValueAgrees() =>
+            LanesAgree<ConfCrossEnum, ConfCrossEnumDto>(
+                new ConfCrossEnum { Colour = (ConfLeft)99, Maybe = (ConfLeft)42 },
+                d => d.Colour, d => d.Maybe);
+
+        [Fact]
+        public void AnEnumThatFitsAgrees() =>
+            LanesAgree<ConfEnumFit, ConfEnumFitDto>(
+                new ConfEnumFit { Small = ConfSmall.One, Narrowed = (ConfWide)6_000_000_000 },
+                d => d.Small, d => d.Narrowed);
+
+        [Fact]
+        public void ANarrowedUndefinedEnumComesOutAsTheDefault()
+        {
+            var dto = ((object)new ConfEnumFit { Small = ConfSmall.One, Narrowed = (ConfWide)6_000_000_000 }).MapTo<ConfEnumFitDto>();
+
+            Assert.Equal(1, dto!.Small);
+            Assert.Equal(ConfNarrow.Unset, dto.Narrowed);
+        }
+
+        [Fact]
+        public void LossyPairsAreRefusedAndLeftUnmapped()
+        {
+            var registry = typeof(Mapper)
+                .GetField("_generatedPairs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                !.GetValue(null)!;
+            var keys = ((System.Collections.IEnumerable)registry.GetType().GetProperty("Keys")!.GetValue(registry)!)
+                .Cast<object>()
+                .Select(k => k.ToString() ?? "")
+                .ToArray();
+
+            // The generator cast these, while the engine refuses them, so the lanes returned
+            // different numbers for 5_000_000_000 as an enum, 16_777_217 and 2^53 + 1.
+            foreach (var name in new[] { nameof(LossyEnum), nameof(LossyFloat), nameof(LossyDouble) })
+            {
+                Assert.DoesNotContain(keys, k => k.Contains(name + ",", StringComparison.Ordinal) || k.Contains(name + ")", StringComparison.Ordinal));
+            }
+
+            Assert.Equal(-1, ((object)new LossyEnum { Value = ConfWide.Huge }).MapTo<LossyEnumDto>()!.Value);
+            Assert.Equal(-1f, ((object)new LossyFloat { Value = 16_777_217 }).MapTo<LossyFloatDto>()!.Value);
+            Assert.Equal(-1d, ((object)new LossyDouble { Value = 9_007_199_254_740_993 }).MapTo<LossyDoubleDto>()!.Value);
+        }
+
+        [Fact]
         public void ANullCrossEnumAgrees() =>
             LanesAgree<ConfCrossEnum, ConfCrossEnumDto>(
                 new ConfCrossEnum { Colour = ConfLeft.Unset, Maybe = null },
@@ -509,7 +574,7 @@ namespace Mapsicle.SourceGen.Tests
             var covered = new[]
             {
                 nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCovariant),
-                nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
+                nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumFit), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
                 nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfNest),
                 nameof(ConfNullable), nameof(ConfPartial), nameof(ConfShielded), nameof(ConfStamp), nameof(ConfWiden),
             };
