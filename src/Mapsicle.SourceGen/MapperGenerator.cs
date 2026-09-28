@@ -567,7 +567,8 @@ namespace Mapsicle.SourceGen
             var toEnum = toNullable ?? to;
 
             if (fromEnum.TypeKind == TypeKind.Enum && toEnum.TypeKind != TypeKind.Enum
-                && IsIntOrLong(toEnum) && fromNullable is null && toNullable is null)
+                && IsIntOrLong(toEnum) && fromNullable is null && toNullable is null
+                && EnumFits(fromEnum, toEnum))
             {
                 return $"({Full(to)}){expression}";
             }
@@ -763,6 +764,13 @@ namespace Mapsicle.SourceGen
                 helper = context.Begin(key, HelperKind.Enum, Full(fromEnum), Full(toEnum));
                 context.End(key);
 
+                var fromUnderlying = ((INamedTypeSymbol)fromEnum).EnumUnderlyingType!;
+                var toUnderlying = ((INamedTypeSymbol)toEnum).EnumUnderlyingType!;
+                if (SymbolEqualityComparer.Default.Equals(fromUnderlying, toUnderlying) || Widening(fromUnderlying, toUnderlying))
+                {
+                    helper.PassThrough = $"({Full(toEnum)})({Full(toUnderlying)})({Full(fromUnderlying)})value";
+                }
+
                 // Ordered by value, because the engine matches against Enum.GetNames and that is
                 // sorted by value, not by declaration. With two destination names differing only by
                 // case the two lanes picked different members: BRAVO = 2 declared first won here
@@ -786,7 +794,19 @@ namespace Mapsicle.SourceGen
                     var match = destFields.FirstOrDefault(
                         f => string.Equals(f.Name, member.Name, StringComparison.OrdinalIgnoreCase));
 
-                    if (match is null) continue;
+                    // A defined value with no counterpart gets its own arm returning the default,
+                    // because the default arm passes undefined values through.
+                    if (match is null)
+                    {
+                        if (IsObsoleteAsError(member))
+                        {
+                            helper.HasBlockedMember = true;
+                            return null;
+                        }
+
+                        helper.Assignments.Add(new Assignment(null!, member.Name, member.Name));
+                        continue;
+                    }
 
                     // A switch arm names both enum members, so both have to be referenceable. An
                     // obsolete-as-error member here breaks the consumer's build the same way a
@@ -1119,6 +1139,15 @@ namespace Mapsicle.SourceGen
         private static bool IsIntOrLong(ITypeSymbol type) =>
             type.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64;
 
+        /// <summary>Whether every value of the enum's underlying type fits, matching <c>IsEnumToIntegerAllowed</c>.</summary>
+        private static bool EnumFits(ITypeSymbol enumType, ITypeSymbol target)
+        {
+            var underlying = (enumType as INamedTypeSymbol)?.EnumUnderlyingType;
+            if (underlying is null) return false;
+
+            return SymbolEqualityComparer.Default.Equals(underlying, target) || Widening(underlying, target);
+        }
+
         private static bool IsEnumerable(ITypeSymbol type) =>
             type.SpecialType == SpecialType.System_String
             || type.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable)
@@ -1157,10 +1186,10 @@ namespace Mapsicle.SourceGen
             [SpecialType.System_Byte] = new[] { SpecialType.System_Int16, SpecialType.System_UInt16, SpecialType.System_Int32, SpecialType.System_UInt32, SpecialType.System_Int64, SpecialType.System_UInt64, SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
             [SpecialType.System_Int16] = new[] { SpecialType.System_Int32, SpecialType.System_Int64, SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
             [SpecialType.System_UInt16] = new[] { SpecialType.System_Int32, SpecialType.System_UInt32, SpecialType.System_Int64, SpecialType.System_UInt64, SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
-            [SpecialType.System_Int32] = new[] { SpecialType.System_Int64, SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
-            [SpecialType.System_UInt32] = new[] { SpecialType.System_Int64, SpecialType.System_UInt64, SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
-            [SpecialType.System_Int64] = new[] { SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
-            [SpecialType.System_UInt64] = new[] { SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
+            [SpecialType.System_Int32] = new[] { SpecialType.System_Int64, SpecialType.System_Double, SpecialType.System_Decimal },
+            [SpecialType.System_UInt32] = new[] { SpecialType.System_Int64, SpecialType.System_UInt64, SpecialType.System_Double, SpecialType.System_Decimal },
+            [SpecialType.System_Int64] = new[] { SpecialType.System_Decimal },
+            [SpecialType.System_UInt64] = new[] { SpecialType.System_Decimal },
             [SpecialType.System_Char] = new[] { SpecialType.System_UInt16, SpecialType.System_Int32, SpecialType.System_UInt32, SpecialType.System_Int64, SpecialType.System_UInt64, SpecialType.System_Single, SpecialType.System_Double, SpecialType.System_Decimal },
             [SpecialType.System_Single] = new[] { SpecialType.System_Double },
             [SpecialType.System_Decimal] = new[] { SpecialType.System_Double },
@@ -1258,6 +1287,9 @@ namespace Mapsicle.SourceGen
             internal string SourceType { get; }
             internal string DestinationType { get; }
             internal List<Assignment> Assignments { get; }
+
+            /// <summary>The enum switch's default arm when the number fits the destination.</summary>
+            internal string? PassThrough { get; set; }
 
             internal string? ElementExpression { get; set; }
             /// <summary>Set when a member this helper must emit cannot be referenced.</summary>
@@ -1496,10 +1528,15 @@ namespace Mapsicle.SourceGen
 
             foreach (var arm in helper.Assignments)
             {
-                sb.AppendLine($"                case {helper.SourceType}.@{arm.SourceName}: return {helper.DestinationType}.@{arm.DestinationName};");
+                var result = arm.DestinationName is null
+                    ? $"default({helper.DestinationType})"
+                    : $"{helper.DestinationType}.@{arm.DestinationName}";
+                sb.AppendLine($"                case {helper.SourceType}.@{arm.SourceName}: return {result};");
             }
 
-            sb.AppendLine($"                default: return default({helper.DestinationType});");
+            // An undefined value passes through as its number, as the engine does, unless the
+            // destination's underlying type cannot hold it.
+            sb.AppendLine($"                default: return {helper.PassThrough ?? $"default({helper.DestinationType})"};");
             sb.AppendLine("            }");
             sb.AppendLine("        }");
         }

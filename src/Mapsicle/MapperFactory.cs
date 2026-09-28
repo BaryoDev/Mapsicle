@@ -35,9 +35,14 @@ namespace Mapsicle
         private int _maxDepth = 32;
 
         /// <summary>
-        /// Maximum mapping depth to prevent stack overflow on circular references. Default: 32.
+        /// The depth past which the mapper checks for circular references. Default: 32.
         /// A value below 1 is rejected and the default is kept.
         /// </summary>
+        /// <remarks>
+        /// Past this depth mapping stops when the same source instance repeats on the current path,
+        /// or when the thread is close to running out of stack, which is the rule
+        /// <see cref="Mapper.MaxDepth"/> follows. An acyclic graph deeper than this maps whole.
+        /// </remarks>
         /// <remarks>
         /// This used to accept 0, and 0 disables the mapper completely: the first depth check fails
         /// before any property is read, so every call returns the destination default with nothing
@@ -87,6 +92,7 @@ namespace Mapsicle
         private readonly LruCache<(Type, Type), Action<object, object>> _mapCache;
         private readonly MapperOptions _options;
         private readonly AsyncLocal<int> _currentDepth = new();
+        private readonly AsyncLocal<HashSet<object>?> _onPath = new();
         private bool _disposed;
 
         // PropertyInfo cache for this instance
@@ -116,13 +122,8 @@ namespace Mapsicle
                 }
             }
 
-            // Depth check for cycle detection
             var depth = _currentDepth.Value;
-            if (depth >= _options.MaxDepth)
-            {
-                _options.Logger?.Invoke($"[Mapsicle] Max depth {_options.MaxDepth} reached, returning default for {typeof(T).Name}");
-                return default;
-            }
+            if (!TryEnter(source, depth)) return default;
 
             _currentDepth.Value = depth + 1;
             try
@@ -134,7 +135,50 @@ namespace Mapsicle
             finally
             {
                 _currentDepth.Value = depth;
+                Leave(source, depth);
             }
+        }
+
+        /// <summary>The static mapper's depth rule: past MaxDepth, stop on a repeat, not a number.</summary>
+        /// <remarks>
+        /// This used to stop at MaxDepth outright, so an acyclic chain of 40 came back holding 32
+        /// while the static mapper returned all 40. The factory is the oracle the generator's
+        /// conformance suite compares against, so a lane that truncates here hides a lane that
+        /// does not.
+        /// </remarks>
+        private bool TryEnter(object source, int depth)
+        {
+            if (depth < _options.MaxDepth) return true;
+
+            if (depth >= Mapper.StackGuardDepth)
+            {
+                _options.Logger?.Invoke($"[Mapsicle] Depth {Mapper.StackGuardDepth} reached, stopping to protect the stack");
+                return false;
+            }
+
+            if (!Mapper.HasStackHeadroom())
+            {
+                _options.Logger?.Invoke($"[Mapsicle] Stack nearly exhausted at depth {depth}, stopping to protect the process");
+                return false;
+            }
+
+            var path = _onPath.Value ??= new HashSet<object>(Mapper.ReferenceIdentity.Instance);
+            if (!path.Add(source))
+            {
+                _options.Logger?.Invoke("[Mapsicle] Circular reference reached, the same instance is already being mapped");
+                return false;
+            }
+
+            return true;
+        }
+
+        private void Leave(object source, int depth)
+        {
+            var path = _onPath.Value;
+            if (path is null) return;
+
+            if (depth >= _options.MaxDepth) path.Remove(source);
+            if (depth == 0) path.Clear();
         }
 
         public List<T> MapTo<T>(System.Collections.IEnumerable? source)
@@ -195,9 +239,19 @@ namespace Mapsicle
 
             var key = (source.GetType(), typeof(TDest));
 
-            var mapAction = _mapCache.GetOrAdd(key, k => BuildMapAction<TDest>(k.Item1, k.Item2));
-            mapAction(source, destination!);
-            return destination;
+            var mapAction = _mapCache.GetOrAdd(
+                key, k => Mapper.BuildInPlaceMapper(k.Item1, k.Item2, null, BuildNestedMapCall));
+
+            if (!typeof(TDest).IsValueType)
+            {
+                mapAction(source, destination!);
+                return destination;
+            }
+
+            // Written through a box, so the box is the result. See Mapper.Map.
+            object boxed = destination!;
+            mapAction(source, boxed);
+            return (TDest)boxed;
         }
 
         public void ClearCache()
@@ -249,7 +303,8 @@ namespace Mapsicle
 
             // Direct Primitive/Value Mapping, through the shared cascade. The reduced copy that was
             // here covered assignable types and ToString only, so MapTo<long>(5) returned 0.
-            if (sourceType.IsValueType || sourceType == typeof(string))
+            if ((sourceType.IsValueType || sourceType == typeof(string))
+                && !PropertyConversion.IsNestedPair(sourceType, destType))
             {
                 var direct = PropertyConversion.TryBuild(typedSource, sourceType, destType, BuildNestedMapCall);
                 if (direct is not null)
@@ -267,7 +322,7 @@ namespace Mapsicle
             }
 
             var bindings = new List<MemberBinding>();
-            var sourceProps = GetProperties(sourceType).Where(p => p.CanRead).ToArray();
+            var sourceProps = GetProperties(sourceType).Where(p => p.GetGetMethod() != null).ToArray();
             var destProps = GetProperties(destType);
 
             // Parameterless Constructor Path
@@ -305,7 +360,7 @@ namespace Mapsicle
                 foreach (var param in ctor.GetParameters())
                 {
                     var sourceProp = sourceProps.FirstOrDefault(p =>
-                        p.Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase) && p.CanRead);
+                        p.Name.Equals(param.Name, StringComparison.OrdinalIgnoreCase) && p.GetGetMethod() != null);
 
                     if (sourceProp != null)
                     {
@@ -368,67 +423,85 @@ namespace Mapsicle
                 return Expression.Lambda<Func<object, T>>(Expression.Convert(call, destType), sourceParam).Compile();
             }
 
+            // Keys and values mapped separately, as the static path does. Mapping each
+            // KeyValuePair as an object gave a default pair with a null key, and the dictionary
+            // constructor threw ArgumentNullException on the first one.
+            if (targetItemType.IsGenericType
+                && targetItemType.GetGenericTypeDefinition() == typeof(KeyValuePair<,>)
+                && typeof(System.Collections.IDictionary).IsAssignableFrom(sourceType))
+            {
+                var pairArgs = targetItemType.GetGenericArguments();
+
+                if (destType.IsAssignableFrom(typeof(Dictionary<,>).MakeGenericType(pairArgs)))
+                {
+                    var buildDictionary = typeof(MapperInstance)
+                        .GetMethod(nameof(BuildMappedDictionary), BindingFlags.NonPublic | BindingFlags.Instance)!
+                        .MakeGenericMethod(pairArgs);
+
+                    var dictionary = Expression.Call(Expression.Constant(this), buildDictionary, sourceParam);
+                    return Expression.Lambda<Func<object, T>>(Expression.Convert(dictionary, destType), sourceParam).Compile();
+                }
+            }
+
             // Same materialisation the static path uses: a collection that is not assignable from
             // List<T> is built through its IEnumerable<T> constructor rather than being left at
-            // default, which is what silently emptied a HashSet destination.
+            // default, which is what silently emptied a HashSet destination. Guarded the same way
+            // too: a SortedSet of items with no ordering threw from the factory and not from the
+            // static mapper.
             var fromEnumerable = destType.GetConstructor(
                 new[] { typeof(IEnumerable<>).MakeGenericType(targetItemType) });
 
             if (fromEnumerable != null)
             {
-                var built = Expression.New(fromEnumerable, call);
-                return Expression.Lambda<Func<object, T>>(Expression.Convert(built, destType), sourceParam).Compile();
+                var exception = Expression.Parameter(typeof(Exception), "ex");
+                var built = Expression.Convert(Expression.New(fromEnumerable, call), destType);
+
+                var guarded = Expression.TryCatch(
+                    built,
+                    Expression.Catch(
+                        exception,
+                        Expression.Call(
+                            Expression.Constant(this),
+                            typeof(MapperInstance)
+                                .GetMethod(nameof(LogCollectionFallback), BindingFlags.NonPublic | BindingFlags.Instance)!
+                                .MakeGenericMethod(destType),
+                            exception)));
+
+                return Expression.Lambda<Func<object, T>>(guarded, sourceParam).Compile();
             }
 
             return Expression.Lambda<Func<object, T>>(Expression.Default(destType), sourceParam).Compile();
         }
 
-        private Action<object, object> BuildMapAction<TDest>(Type sourceType, Type destType)
+        private TCollection LogCollectionFallback<TCollection>(Exception ex)
         {
-            DynamicCodeGuard.EnsureSupported(sourceType, destType);
-            var sourceParam = Expression.Parameter(typeof(object), "source");
-            var destParam = Expression.Parameter(typeof(object), "destination");
+            _options.Logger?.Invoke(
+                $"[Mapsicle] Could not build {typeof(TCollection).Name} from the mapped items: {ex.Message}. " +
+                "The destination was left at its default.");
+            return default!;
+        }
 
-            var typedSource = Expression.Convert(sourceParam, sourceType);
-            var typedDest = Expression.Convert(destParam, destType);
+        private Dictionary<TKey, TValue> BuildMappedDictionary<TKey, TValue>(object? source)
+            where TKey : notnull
+        {
+            var result = new Dictionary<TKey, TValue>();
+            if (source is not System.Collections.IDictionary dictionary) return result;
 
-            var assignments = new List<Expression>();
-            var sourceProps = GetProperties(sourceType).Where(p => p.CanRead).ToArray();
-            var destProps = GetProperties(destType);
-
-            foreach (var destProp in destProps)
+            foreach (System.Collections.DictionaryEntry entry in dictionary)
             {
-                if (!destProp.CanWrite) continue;
-                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
+                var key = MapTo<TKey>(entry.Key);
+                if (key is null) continue;
 
-                if (sourceProp != null)
-                {
-                    var propExp = Expression.Property(typedSource, sourceProp);
-                    var destPropExp = Expression.Property(typedDest, destProp);
-
-                    var value = PropertyConversion.TryBuild(
-                        propExp, sourceProp.PropertyType, destProp.PropertyType, BuildNestedMapCall);
-
-                    if (value != null)
-                    {
-                        assignments.Add(Expression.Assign(destPropExp, value));
-                    }
-                }
+                result[key] = entry.Value is null ? default! : MapTo<TValue>(entry.Value)!;
             }
 
-            if (assignments.Count == 0)
-            {
-                return (s, d) => { };
-            }
-
-            var block = Expression.Block(assignments);
-            return Expression.Lambda<Action<object, object>>(block, sourceParam, destParam).Compile();
+            return result;
         }
 
         private static PropertyInfo? FindSourceProperty(PropertyInfo[] sourceProps, string primaryName, string fallbackName)
         {
-            return sourceProps.FirstOrDefault(p => p.Name.Equals(primaryName, StringComparison.OrdinalIgnoreCase) && p.CanRead)
-                ?? sourceProps.FirstOrDefault(p => p.Name.Equals(fallbackName, StringComparison.OrdinalIgnoreCase) && p.CanRead);
+            return sourceProps.FirstOrDefault(p => p.Name.Equals(primaryName, StringComparison.OrdinalIgnoreCase) && p.GetGetMethod() != null)
+                ?? sourceProps.FirstOrDefault(p => p.Name.Equals(fallbackName, StringComparison.OrdinalIgnoreCase) && p.GetGetMethod() != null);
         }
 
         private MemberBinding? CreatePropertyBinding(PropertyInfo destProp, PropertyInfo sourceProp,
@@ -481,7 +554,7 @@ namespace Mapsicle
                 if (string.IsNullOrEmpty(remainder)) continue;
 
                 var nestedProps = sourceProp.PropertyType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead);
+                    .Where(p => p.GetIndexParameters().Length == 0 && p.GetGetMethod() != null);
 
                 var nestedProp = nestedProps.FirstOrDefault(p => p.Name.Equals(remainder, StringComparison.OrdinalIgnoreCase));
                 if (nestedProp != null && destProp.PropertyType.IsAssignableFrom(nestedProp.PropertyType))
