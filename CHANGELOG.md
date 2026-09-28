@@ -23,6 +23,52 @@ generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback bel
 additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
 change a major version exists to signal.
 
+## [2.4.0] - 2026-09-28
+
+### Changed
+
+- An enum value with no named member now passes through as its number when mapping into another
+  enum, on every lane including the generator, the way `"999"` already did from a string. It used
+  to become member 0. A defined member with no counterpart in the destination still maps to the
+  default, and so does an undefined value too wide for the destination's underlying type.
+- Lossy conversions are no longer treated as widening: `int` or `long` into `float`, `long` into
+  `double`, and an enum whose underlying type does not fit into `int` or `long`. Those members are
+  now left unmapped, like any other narrowing. `int` into `double` and `decimal` still map.
+- A collection member whose elements cannot convert (a `List<long>` into `List<int>`, or text that
+  does not parse) is now left unmapped. It used to be filled with a default for every element.
+- `MapperOptions.MaxDepth` on `MapperFactory` now means what it means on the static mapper: the
+  depth past which circular references are checked. It used to truncate every chain at that depth,
+  cycle or not.
+
+### Fixed
+
+- A property with a private getter (`public string Secret { private get; set; }`) was read and
+  copied by every runtime lane and written into `ToDictionary`. Only a public getter is read now.
+- Flattening (`CustomerName` from `Customer.Name`) now works in `Map(existing)`, static and factory.
+  A path through a null writes the default.
+- `MapperFactory` mapped an acyclic chain deeper than `MaxDepth` as truncated, never mapped a
+  dictionary member, threw on a collection type it could not build, and skipped getter-only
+  collections, fields and flattening in `Map(existing)`. It now follows the static mapper's rules
+  for all of them.
+- A struct member now maps into a class member, and `Map(existing)` into a struct returns the mapped
+  copy instead of the unmapped one.
+- **Fluent**: a pair with no `CreateMap` now maps exactly as the core mapper does. A boxed `5` into
+  `int` gave 0, flattening was skipped, and a `HashSet`, a `Dictionary` or a struct destination came
+  back empty. `HashSet`, `ISet`, `Dictionary`, `IDictionary` and `IReadOnlyDictionary` destinations
+  are filled element by element through the configuration, so an `Ignore` on the element pair holds.
+- **Fluent**: in-place `Map(source, destination)` copied a member only when both types matched
+  exactly, so an `int` into a `long` and nested objects were skipped. It now uses the core
+  conversion rules. An ignored member and a failed condition leave the destination's value alone.
+- **Fluent**: `Include<TDerivedSource, TDerivedDest>()` now returns the derived destination. A
+  `Dog` mapped to `AnimalDto` came back as a plain `AnimalDto`, and a derived `AfterMap` threw
+  `InvalidCastException`. List elements dispatch the same way.
+- **Fluent**: `CreateConverter` now applies to members, not only to the top-level pair, on the
+  constructing and in-place paths. A `Money` member into a `decimal` stayed at its default, and into
+  a `string` got `Money.ToString()`.
+- **Fluent**: calling `AddMapsicle` more than once replaced the earlier configuration, dropping its
+  maps and ignores. The calls now merge into one `MapperConfiguration`, and validation covers the
+  merged result.
+
 ## [2.3.0] - 2026-09-25
 
 ### Added
