@@ -159,7 +159,7 @@ namespace Mapsicle.Audit.Tests
 
             Assert.Empty(changes);
         }
-    
+
         [Fact]
         public void MapWithAudit_MemberFilledByAFluentConverter_ReportsMapped()
         {
