@@ -462,5 +462,63 @@ namespace Mapsicle.Dapper.Tests
         }
 
         #endregion
+
+        #region Untyped Row Tests
+
+        public class UntypedRowDto
+        {
+            public long Id { get; set; }
+            public string? FirstName { get; set; }
+        }
+
+        [Fact]
+        public void MapTo_UntypedQueryRows_MapsColumns()
+        {
+            IEnumerable<object> rows = _connection.Query("SELECT Id, FirstName FROM Users WHERE Id = 1");
+
+            var dto = rows.MapTo<UntypedRowDto>().Single();
+
+            Assert.Equal(1, dto.Id);
+            Assert.Equal("John", dto.FirstName);
+        }
+
+        [Fact]
+        public void QueryAndMap_DynamicSource_MapsColumns()
+        {
+            var dto = _connection.QueryAndMap<dynamic, UntypedRowDto>("SELECT Id, FirstName FROM Users WHERE Id = 2").Single();
+
+            Assert.Equal(2, dto.Id);
+            Assert.Equal("Jane", dto.FirstName);
+        }
+
+        [Fact]
+        public async Task QueryAndMapAsync_DynamicSource_MapsColumns()
+        {
+            var dto = (await _connection.QueryAndMapAsync<dynamic, UntypedRowDto>("SELECT Id, FirstName FROM Users WHERE Id = 3")).Single();
+
+            Assert.Equal(3, dto.Id);
+            Assert.Equal("Bob", dto.FirstName);
+        }
+
+        [Fact]
+        public void QuerySingleAndMap_DynamicSource_MapsColumns()
+        {
+            var dto = _connection.QuerySingleAndMap<dynamic, UntypedRowDto>("SELECT Id, FirstName FROM Users WHERE Id = 1");
+
+            Assert.NotNull(dto);
+            Assert.Equal(1, dto!.Id);
+            Assert.Equal("John", dto.FirstName);
+        }
+
+        [Fact]
+        public void QueryAndMap_TypedSource_StillMapsByProperty()
+        {
+            var dto = _connection.QueryAndMap<User, UntypedRowDto>("SELECT * FROM Users WHERE Id = 1").Single();
+
+            Assert.Equal(1, dto.Id);
+            Assert.Equal("John", dto.FirstName);
+        }
+
+        #endregion
     }
 }
