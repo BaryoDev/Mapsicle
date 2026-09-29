@@ -251,11 +251,19 @@ namespace Mapsicle.Docs.Tests
         }
 
         [Fact]
-        public void Audit_Diff_ComparesCollectionsByReference_AsTheReadmeWarns()
+        public void Audit_Diff_ComparesCollectionsByElement_AsTheReadmeSays()
         {
-            // Pins the documented caveat. When #91 is fixed this fails, and the README sentence goes.
             var before = new DocTagged { Tags = new List<string> { "a" } };
-            var after = new DocTagged { Tags = new List<string> { "a" } };
+
+            Assert.Empty(before.Diff(new DocTagged { Tags = new List<string> { "a" } }));
+            Assert.Single(before.Diff(new DocTagged { Tags = new List<string> { "b" } }));
+        }
+
+        [Fact]
+        public void Audit_Diff_ComparesANestedClassByReference_AsTheReadmeWarns()
+        {
+            var before = new DocHome { Address = new DocAddress { City = "Koronadal" } };
+            var after = new DocHome { Address = new DocAddress { City = "Koronadal" } };
 
             Assert.Single(before.Diff(after));
         }
@@ -306,6 +314,9 @@ namespace Mapsicle.Docs.Tests
         public class DocFlatDto { public string? MiddleLeafValue { get; set; } }
 
         public class DocTagged { public List<string>? Tags { get; set; } }
+
+        public class DocAddress { public string? City { get; set; } }
+        public class DocHome { public DocAddress? Address { get; set; } }
 
         public class DocSignup { public string? Email { get; set; } }
         public class DocAccount { [Required] public string? Email { get; set; } }

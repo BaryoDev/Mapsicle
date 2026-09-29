@@ -50,29 +50,35 @@ namespace Mapsicle.Serilog
         /// <returns>The mapped object.</returns>
         public static TDest? MapWithLogging<TDest>(this object? source)
         {
+            var logger = _logger;
             if (source is null)
             {
-                _logger?.Debug("[Mapsicle] Mapping skipped: source is null");
+                logger?.Debug("[Mapsicle] Mapping skipped: source is null");
                 return default;
             }
 
+            // With no logger this cost 40 B a call more than MapTo, a Stopwatch; with a logger above
+            // Information it cost 144 B more, a params array and boxed values built for an event
+            // Serilog then discarded. Nothing is timed or built unless something will be written.
+            if (logger is null)
+            {
+                return source.MapTo<TDest>();
+            }
+
+            var options = _options;
             var sourceType = source.GetType();
             var destType = typeof(TDest);
-            var stopwatch = Stopwatch.StartNew();
+            var start = Stopwatch.GetTimestamp();
 
             try
             {
                 var result = source.MapTo<TDest>();
-                stopwatch.Stop();
-
-                LogMappingSuccess(sourceType, destType, stopwatch.Elapsed);
-
+                LogMappingSuccess(logger, options, sourceType, destType, ElapsedSince(start));
                 return result;
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
-                LogMappingError(sourceType, destType, ex, stopwatch.Elapsed);
+                LogMappingError(logger, sourceType, destType, ex, ElapsedSince(start));
                 throw;
             }
         }
@@ -86,42 +92,48 @@ namespace Mapsicle.Serilog
         public static System.Collections.Generic.List<TDest> MapCollectionWithLogging<TDest>(
             this System.Collections.IEnumerable? source)
         {
+            var logger = _logger;
             if (source is null)
             {
-                _logger?.Debug("[Mapsicle] Collection mapping skipped: source is null");
+                logger?.Debug("[Mapsicle] Collection mapping skipped: source is null");
                 return new System.Collections.Generic.List<TDest>();
             }
 
-            var stopwatch = Stopwatch.StartNew();
-            var count = 0;
+            if (logger is null)
+            {
+                return source.MapTo<TDest>();
+            }
+
+            var options = _options;
+            var start = Stopwatch.GetTimestamp();
 
             try
             {
                 var result = source.MapTo<TDest>();
-                stopwatch.Stop();
-                count = result.Count;
+                var elapsed = ElapsedSince(start);
 
-                _logger?.Information(
-                    "[Mapsicle] Mapped collection of {Count} items to {DestType} in {ElapsedMs:F2}ms",
-                    count, typeof(TDest).Name, stopwatch.Elapsed.TotalMilliseconds);
-
-                if (_options.SlowMappingThreshold.HasValue &&
-                    stopwatch.Elapsed > _options.SlowMappingThreshold.Value)
+                if (ShouldLogSuccess(logger, options))
                 {
-                    _logger?.Warning(
+                    logger.Information(
+                        "[Mapsicle] Mapped collection of {Count} items to {DestType} in {ElapsedMs:F2}ms",
+                        result.Count, typeof(TDest).Name, elapsed.TotalMilliseconds);
+                }
+
+                if (IsSlow(logger, options, elapsed))
+                {
+                    logger.Warning(
                         "[Mapsicle] Slow collection mapping detected: {Count} items to {DestType} took {ElapsedMs:F2}ms (threshold: {ThresholdMs}ms)",
-                        count, typeof(TDest).Name, stopwatch.Elapsed.TotalMilliseconds,
-                        _options.SlowMappingThreshold.Value.TotalMilliseconds);
+                        result.Count, typeof(TDest).Name, elapsed.TotalMilliseconds,
+                        options.SlowMappingThreshold.Value.TotalMilliseconds);
                 }
 
                 return result;
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
-                _logger?.Error(ex,
+                logger.Error(ex,
                     "[Mapsicle] Collection mapping failed to {DestType} after {ElapsedMs:F2}ms: {ErrorMessage}",
-                    typeof(TDest).Name, stopwatch.Elapsed.TotalMilliseconds, ex.Message);
+                    typeof(TDest).Name, ElapsedSince(start).TotalMilliseconds, ex.Message);
                 throw;
             }
         }
@@ -138,31 +150,54 @@ namespace Mapsicle.Serilog
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, Type), bool> _mappedTypes = new();
 
-        private static void LogMappingSuccess(Type sourceType, Type destType, TimeSpan elapsed)
+        private static TimeSpan ElapsedSince(long start) =>
+            TimeSpan.FromTicks((long)((Stopwatch.GetTimestamp() - start) * TicksPerTimestamp));
+
+        private static readonly double TicksPerTimestamp = (double)TimeSpan.TicksPerSecond / Stopwatch.Frequency;
+
+        private static bool ShouldLogSuccess(ILogger logger, LoggingOptions options) =>
+            options.LogLevel <= LogEventLevel.Information && logger.IsEnabled(LogEventLevel.Information);
+
+        // The slow warning has four values, so Serilog takes a params array and boxes them before it
+        // checks the level. With Warning filtered that was 95 B a call for an event nobody receives.
+        private static bool IsSlow(ILogger logger, LoggingOptions options, TimeSpan elapsed) =>
+            options.SlowMappingThreshold.HasValue
+            && elapsed > options.SlowMappingThreshold.Value
+            && logger.IsEnabled(LogEventLevel.Warning);
+
+        private static void LogMappingSuccess(ILogger logger, LoggingOptions options, Type sourceType, Type destType, TimeSpan elapsed)
         {
             // Track if we've seen this type pair before (indicates caching)
             var wasCached = !_mappedTypes.TryAdd((sourceType, destType), true);
 
-            if (_options.LogLevel <= LogEventLevel.Information)
+            if (ShouldLogSuccess(logger, options))
             {
-                _logger?.Information(
-                    "[Mapsicle] Mapped {SourceType} -> {DestType} in {ElapsedMs:F2}ms (cached: {IsCached})",
-                    sourceType.Name, destType.Name, elapsed.TotalMilliseconds, wasCached);
+                if (options.LogCacheStatus)
+                {
+                    logger.Information(
+                        "[Mapsicle] Mapped {SourceType} -> {DestType} in {ElapsedMs:F2}ms (cached: {IsCached})",
+                        new object[] { sourceType.Name, destType.Name, elapsed.TotalMilliseconds, wasCached });
+                }
+                else
+                {
+                    logger.Information(
+                        "[Mapsicle] Mapped {SourceType} -> {DestType} in {ElapsedMs:F2}ms",
+                        sourceType.Name, destType.Name, elapsed.TotalMilliseconds);
+                }
             }
 
-            if (_options.SlowMappingThreshold.HasValue &&
-                elapsed > _options.SlowMappingThreshold.Value)
+            if (IsSlow(logger, options, elapsed))
             {
-                _logger?.Warning(
+                logger.Warning(
                     "[Mapsicle] Slow mapping detected: {SourceType} -> {DestType} took {ElapsedMs:F2}ms (threshold: {ThresholdMs}ms)",
                     sourceType.Name, destType.Name, elapsed.TotalMilliseconds,
-                    _options.SlowMappingThreshold.Value.TotalMilliseconds);
+                    options.SlowMappingThreshold.Value.TotalMilliseconds);
             }
         }
 
-        private static void LogMappingError(Type sourceType, Type destType, Exception ex, TimeSpan elapsed)
+        private static void LogMappingError(ILogger logger, Type sourceType, Type destType, Exception ex, TimeSpan elapsed)
         {
-            _logger?.Error(ex,
+            logger.Error(ex,
                 "[Mapsicle] Mapping failed {SourceType} -> {DestType} after {ElapsedMs:F2}ms: {ErrorMessage}",
                 sourceType.Name, destType.Name, elapsed.TotalMilliseconds, ex.Message);
         }

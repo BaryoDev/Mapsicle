@@ -254,6 +254,34 @@ public class JsonMappingTests
     }
 
     [Fact]
+    public void MapCollectionFromJson_NullElement_KeepsItsPosition()
+    {
+        var json = "[{\"id\":1},null,{\"id\":3}]";
+
+        var dtos = json.MapCollectionFromJson<User, UserDto>();
+
+        Assert.Equal(3, dtos.Count);
+        Assert.Equal(1, dtos[0].Id);
+        Assert.Null(dtos[1]);
+        Assert.Equal(3, dtos[2].Id);
+    }
+
+    [Fact]
+    public void MapCollectionToJson_NullElement_KeepsItsPosition()
+    {
+        var users = new List<object> { new User { Id = 1 }, null!, new User { Id = 3 } };
+
+        var json = users.MapCollectionToJson<UserDto>()!;
+
+        using var document = JsonDocument.Parse(json);
+        var items = document.RootElement.EnumerateArray().ToList();
+        Assert.Equal(3, items.Count);
+        Assert.Equal(1, items[0].GetProperty("id").GetInt32());
+        Assert.Equal(JsonValueKind.Null, items[1].ValueKind);
+        Assert.Equal(3, items[2].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
     public void MapCollectionToJson_NullSource_ReturnsNull()
     {
         List<object>? users = null;

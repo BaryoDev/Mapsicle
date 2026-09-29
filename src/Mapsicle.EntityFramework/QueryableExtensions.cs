@@ -258,6 +258,14 @@ namespace Mapsicle.EntityFramework
                 return Expression.Coalesce(sourceAccess, Expression.Default(destProp.PropertyType));
             }
 
+            // int into long was left out of the Select, so the column projected as 0 where MapTo
+            // gave the value. The widening table is the core's, so both lanes allow the same pairs.
+            var widened = PropertyConversion.TryBuildNumericWidening(sourceAccess, sourceProp.PropertyType, destProp.PropertyType);
+            if (widened != null)
+            {
+                return widened;
+            }
+
             var collection = BuildCollectionProjection(sourceAccess, sourceProp.PropertyType, destProp.PropertyType, configuration, path);
             if (collection != null)
             {

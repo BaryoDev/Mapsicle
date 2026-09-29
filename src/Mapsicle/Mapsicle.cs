@@ -404,36 +404,17 @@ namespace Mapsicle
         /// </summary>
         public static List<string> GetUnmappedProperties<TSource, TDest>()
         {
+            // Asks the mapper's own per-member decision rather than keeping matching rules here. The
+            // rules kept here drifted twice: flattening stopped at one level, so a deep
+            // OuterMiddleLeafIso the mapper filled was reported unmapped, and a name match was
+            // enough, so a long into an int the mapper dropped was reported mapped.
             var unmapped = new List<string>();
-            var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanWrite);
+            var bound = GetBoundMembers(typeof(TSource), typeof(TDest));
 
-            var readableSourceProps = GetCachedReadableProperties(typeof(TSource));
-
-            foreach (var destProp in destProps)
+            foreach (var destProp in GetCachedWritableProperties(typeof(TDest)))
             {
-                // Resolved by exactly the helper the mapper uses, rather than by re-deciding here.
-                // The two used to differ over [MapFrom] naming a property that does not exist: the
-                // mapper falls back to the destination member's own name and fills it, while this
-                // checked only the named property and reported the member unmapped. So
-                // AssertMappingValid threw for a mapping that demonstrably works, which is the same
-                // class of defect as certifying one that does not.
-                if (!MemberResolution.TryResolveSource(destProp, readableSourceProps, out var resolved)) continue;
-
-                if (resolved != null) continue;
-
-                // Flattening, decided by exactly the rule the mapper uses. Asking the same helper
-                // is the point: this check answering "mapped" where TryCreateFlattenedBinding
-                // answers "skip" is a validator that certifies a property the mapper will leave at
-                // its default.
-                // The same readable-property set the mapper flattens over. An unfiltered
-                // GetProperties() also returns write-only and indexed properties, which the mapper
-                // never considers, so the validator could call a destination mapped from a source
-                // property the mapper will not read.
-                bool hasFlattening = GetCachedReadableProperties(typeof(TSource))
-                    .Any(sp => PropertyConversion.TryFindFlattenedSource(
-                        destProp, sp, GetCachedReadableProperties(sp.PropertyType), out _));
-                if (hasFlattening) continue;
+                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+                if (bound.ContainsKey(destProp.Name)) continue;
 
                 unmapped.Add(destProp.Name);
             }
@@ -2637,22 +2618,73 @@ namespace Mapsicle
 
             for (int i = 0; i < destProps.Length; i++)
             {
-                var destProp = destProps[i];
-                if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) continue;
-
-                if (sourceProp != null)
-                {
-                    var binding = CreatePropertyBinding(destProp, sourceProp, typedSource, sourceAsObject, isSourceVisible);
-                    if (binding != null) bindings.Add(binding);
-                }
-                else
-                {
-                    var flattenedBinding = TryBindFlattenedPath(destProp, sourceProps, typedSource);
-                    if (flattenedBinding != null) bindings.Add(flattenedBinding);
-                }
+                var binding = TryBindMember(destProps[i], sourceProps, typedSource, sourceAsObject, isSourceVisible, out _);
+                if (binding != null) bindings.Add(binding);
             }
 
             return Expression.MemberInit(Expression.New(destType), bindings);
+        }
+
+        /// <summary>
+        /// The constructing map's decision for one writable destination member, with the source path
+        /// it reads: one property for a direct match, several for a flattened one.
+        /// </summary>
+        private static MemberBinding? TryBindMember(
+            PropertyInfo destProp, PropertyInfo[] sourceProps, Expression typedSource, Expression sourceAsObject,
+            bool isSourceVisible, out List<PropertyInfo>? sourcePath)
+        {
+            sourcePath = null;
+            if (!MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)) return null;
+
+            if (sourceProp != null)
+            {
+                var binding = CreatePropertyBinding(destProp, sourceProp, typedSource, sourceAsObject, isSourceVisible);
+                if (binding != null) sourcePath = new List<PropertyInfo> { sourceProp };
+                return binding;
+            }
+
+            return TryBindFlattenedPath(destProp, sourceProps, typedSource, out sourcePath);
+        }
+
+        /// <summary>
+        /// The destination members the mapper fills for this pair, each with the source path it
+        /// reads, keyed case-insensitively by member name.
+        /// </summary>
+        /// <remarks>
+        /// For callers that report on a mapping rather than perform one: the validators and the
+        /// audit. They each kept their own matching rules, matching by name or by prefix, and so
+        /// reported a flattened <c>CustomerName</c> as unmapped when it was filled and a
+        /// <c>long</c> into an <c>int</c> as mapped when it was dropped. This asks the same
+        /// per-member decision the compiled map makes, so the two cannot disagree.
+        /// </remarks>
+        internal static Dictionary<string, IReadOnlyList<MemberInfo>> GetBoundMembers(Type sourceType, Type destType)
+        {
+            var bound = new Dictionary<string, IReadOnlyList<MemberInfo>>(StringComparer.OrdinalIgnoreCase);
+            var sourceProps = GetCachedReadableProperties(sourceType);
+            var typedSource = Expression.Parameter(sourceType, "source");
+            var sourceAsObject = Expression.Convert(typedSource, typeof(object));
+
+            foreach (var destProp in GetCachedWritableProperties(destType))
+            {
+                if (TryBindMember(destProp, sourceProps, typedSource, sourceAsObject, true, out var path) != null)
+                {
+                    bound[destProp.Name] = path!;
+                }
+            }
+
+            foreach (var (destProp, sourceProp, _, _) in FindFillableCollections(sourceType, destType))
+            {
+                bound[destProp.Name] = new MemberInfo[] { sourceProp };
+            }
+
+            // A property filled from a public source field is bound by a separate pass, so leaving it
+            // out here reported a member unmapped that the mapper fills.
+            foreach (var (dest, source) in FindFieldMembers(sourceType, destType))
+            {
+                if (dest is PropertyInfo && !bound.ContainsKey(dest.Name)) bound[dest.Name] = new[] { source };
+            }
+
+            return bound;
         }
 
         private static MemberBinding? CreatePropertyBinding(PropertyInfo destProp, PropertyInfo sourceProp,
@@ -2809,11 +2841,16 @@ namespace Mapsicle
         /// neither is.
         /// </remarks>
         internal static MemberBinding? TryBindFlattenedPath(
-            PropertyInfo destProp, PropertyInfo[] sourceProps, Expression source)
+            PropertyInfo destProp, PropertyInfo[] sourceProps, Expression source) =>
+            TryBindFlattenedPath(destProp, sourceProps, source, out _);
+
+        internal static MemberBinding? TryBindFlattenedPath(
+            PropertyInfo destProp, PropertyInfo[] sourceProps, Expression source, out List<PropertyInfo>? path)
         {
             if (!PropertyConversion.TryFindFlattenedPath(
-                    destProp, sourceProps, GetCachedReadableProperties, out var path))
+                    destProp, sourceProps, GetCachedReadableProperties, out path))
             {
+                path = null;
                 return null;
             }
 
@@ -2845,6 +2882,7 @@ namespace Mapsicle
             {
                 // The names lined up and the types do not. Leaving the member unmapped is what the
                 // engine does everywhere else for a pair it cannot convert.
+                path = null;
                 return null;
             }
 

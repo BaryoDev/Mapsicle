@@ -25,7 +25,7 @@ namespace Mapsicle.Dapper
         public static List<TDest> MapTo<TDest>(this IEnumerable<object> source)
         {
             if (source is null) return new List<TDest>();
-            return source.Select(item => item.MapTo<TDest>()!).ToList();
+            return source.Select(item => MapRow<TDest>(item)).ToList();
         }
 
         /// <summary>
@@ -69,7 +69,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => item!.MapTo<TDest>()!).ToList();
+            return results.Select(item => MapRow<TDest>(item)).ToList();
         }
 
         /// <summary>
@@ -154,7 +154,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = await connection.QueryAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return results.Select(item => item!.MapTo<TDest>()!).ToList();
+            return results.Select(item => MapRow<TDest>(item)).ToList();
         }
 
         /// <summary>
@@ -208,7 +208,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var result = connection.QuerySingleOrDefault<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return result is null ? default : result.MapTo<TDest>();
+            return result is null ? default : MapRow<TDest>(result);
         }
 
         /// <summary>
@@ -258,7 +258,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var result = connection.QueryFirstOrDefault<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return result is null ? default : result.MapTo<TDest>();
+            return result is null ? default : MapRow<TDest>(result);
         }
 
         #endregion
@@ -286,7 +286,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var result = await connection.QuerySingleOrDefaultAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return result is null ? default : result.MapTo<TDest>();
+            return result is null ? default : MapRow<TDest>(result);
         }
 
         /// <summary>
@@ -336,7 +336,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var result = await connection.QueryFirstOrDefaultAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return result is null ? default : result.MapTo<TDest>();
+            return result is null ? default : MapRow<TDest>(result);
         }
 
         #endregion
@@ -363,7 +363,7 @@ namespace Mapsicle.Dapper
         {
             var results = connection.Query<TSource>(
                 procedureName, param, transaction, true, commandTimeout, CommandType.StoredProcedure);
-            return results.Select(item => item!.MapTo<TDest>()!).ToList();
+            return results.Select(item => MapRow<TDest>(item)).ToList();
         }
 
         /// <summary>
@@ -386,7 +386,45 @@ namespace Mapsicle.Dapper
         {
             var results = await connection.QueryAsync<TSource>(
                 procedureName, param, transaction, commandTimeout, CommandType.StoredProcedure);
-            return results.Select(item => item!.MapTo<TDest>()!).ToList();
+            return results.Select(item => MapRow<TDest>(item)).ToList();
+        }
+
+        #endregion
+
+        #region Row Mapping
+
+        // An untyped Dapper row is a DapperRow, whose columns live behind IDictionary<string, object>
+        // and not in properties. The object path found no properties on it, so every column was
+        // dropped and the DTO came back empty. Rows go through the dictionary overload instead.
+        private static TDest MapRow<TDest>(object? item)
+        {
+            if (item is IDictionary<string, object?> row && RowMapper<TDest>.Map is { } map)
+            {
+                return map(row)!;
+            }
+            return item.MapTo<TDest>()!;
+        }
+
+        private static class RowMapper<TDest>
+        {
+            internal static readonly Func<IDictionary<string, object?>, TDest?>? Map = Create();
+
+            private static Func<IDictionary<string, object?>, TDest?>? Create()
+            {
+                var type = typeof(TDest);
+                if (type.IsAbstract || (!type.IsValueType && type.GetConstructor(Type.EmptyTypes) is null))
+                {
+                    return null;
+                }
+
+                var method = typeof(Mapper).GetMethods()
+                    .Single(m => m.Name == nameof(Mapper.MapTo)
+                        && m.IsGenericMethodDefinition
+                        && m.GetParameters()[0].ParameterType == typeof(IDictionary<string, object?>))
+                    .MakeGenericMethod(type);
+                return (Func<IDictionary<string, object?>, TDest?>)method.CreateDelegate(
+                    typeof(Func<IDictionary<string, object?>, TDest?>));
+            }
         }
 
         #endregion

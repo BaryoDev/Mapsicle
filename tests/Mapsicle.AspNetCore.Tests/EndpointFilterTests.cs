@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using FluentValidation;
 using Mapsicle.Fluent;
+using Mapsicle.Validation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -164,6 +165,37 @@ public class EndpointFilterTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("from-instance", await response.Content.ReadFromJsonAsync<string>());
+    }
+
+    private static void MapProblemDetailsEndpoint(WebApplication app)
+        => app.MapPost("/problem", (EfRequest req, IMapper mapper) =>
+            mapper.MapAndValidate<EfRequest, EfCommand, EfCommandValidator>(req).ToProblemDetails());
+
+    [Fact]
+    public async Task ToProblemDetails_InvalidBody_RespondsWithProblemJsonContentType()
+    {
+        var (app, client) = await Start(MapperRegistration.FluentIMapper, MapProblemDetailsEndpoint);
+        await using var appScope = app;
+
+        var response = await client.PostAsJsonAsync("/problem", new EfRequest { Name = "" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(400, body.RootElement.GetProperty("status").GetInt32());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Name", out _));
+    }
+
+    [Fact]
+    public async Task ToProblemDetails_ValidBody_RespondsWithPlainJson()
+    {
+        var (app, client) = await Start(MapperRegistration.FluentIMapper, MapProblemDetailsEndpoint);
+        await using var appScope = app;
+
+        var response = await client.PostAsJsonAsync("/problem", new EfRequest { Name = "ok" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
     }
 
     [Fact]

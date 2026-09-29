@@ -16,9 +16,11 @@ namespace Mapsicle.Audit
 
         private static PropertyInfo[] GetCachedProperties(Type type)
         {
+            // CanRead is true for a private getter and for an indexer, so Diff read values the type
+            // did not expose and threw TargetParameterCountException on any type with an indexer.
             return _propertyCache.GetOrAdd(type, t =>
                 t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanRead)
+                    .Where(p => p.GetGetMethod() != null && p.GetIndexParameters().Length == 0)
                     .ToArray());
         }
 
@@ -61,10 +63,7 @@ namespace Mapsicle.Audit
             // Collect property mappings
             if (mapped is not null)
             {
-                var sourceProps = GetCachedProperties(source.GetType());
-                var destProps = GetCachedProperties(typeof(TDest));
-
-                RecordPropertyMappings(audit, source, mapped, sourceProps, destProps, typeMap: null);
+                RecordPropertyMappings(audit, source, mapped, GetCachedProperties(typeof(TDest)), typeMap: null, configuration: null);
             }
 
             return new AuditedMappingResult<TDest>(mapped, audit);
@@ -111,11 +110,9 @@ namespace Mapsicle.Audit
             // Collect property mappings
             if (mapped is not null)
             {
-                var sourceProps = GetCachedProperties(typeof(TSource));
-                var destProps = GetCachedProperties(typeof(TDest));
-
-                var typeMap = (mapper as FluentMapper)?.Configuration.GetTypeMap(typeof(TSource), typeof(TDest));
-                RecordPropertyMappings(audit, source, mapped, sourceProps, destProps, typeMap);
+                var configuration = (mapper as FluentMapper)?.Configuration;
+                var typeMap = configuration?.GetTypeMap(typeof(TSource), typeof(TDest));
+                RecordPropertyMappings(audit, source, mapped, GetCachedProperties(typeof(TDest)), typeMap, configuration);
             }
 
             return new AuditedMappingResult<TDest>(mapped, audit);
@@ -124,14 +121,21 @@ namespace Mapsicle.Audit
         // An ignored member used to be matched by name like any other, so it was reported as
         // mapped and the audit carried the source value the mapper had refused to copy, a
         // password for example.
+        //
+        // Every other member was matched by name too, so a flattened CustomerName or a [MapFrom]
+        // member was reported unmapped though it was filled, and a long into an int was reported
+        // mapped though it was dropped. The mapper's own binding decides now.
         private static void RecordPropertyMappings(
             MappingAudit audit,
             object source,
             object mapped,
-            PropertyInfo[] sourceProps,
             PropertyInfo[] destProps,
-            ITypeMapConfiguration? typeMap)
+            ITypeMapConfiguration? typeMap,
+            MapperConfiguration? configuration)
         {
+            var bound = Mapper.GetBoundMembers(source.GetType(), mapped.GetType());
+            var sourceProps = Mapper.GetCachedReadableProperties(source.GetType());
+
             foreach (var destProp in destProps)
             {
                 var destValue = destProp.GetValue(mapped);
@@ -149,23 +153,54 @@ namespace Mapsicle.Audit
                     continue;
                 }
 
-                var sourceProp = sourceProps.FirstOrDefault(p =>
-                    p.Name.Equals(destProp.Name, StringComparison.OrdinalIgnoreCase));
+                if (typeMap?.HasCustomMapping(destProp.Name) == true)
+                {
+                    audit.PropertyMappings.Add(new PropertyMappingInfo
+                    {
+                        PropertyName = destProp.Name,
+                        DestinationValue = destValue,
+                        WasMapped = true,
+                        DestinationType = destProp.PropertyType
+                    });
+                    continue;
+                }
 
-                var sourceValue = sourceProp?.GetValue(source);
+                if (!bound.TryGetValue(destProp.Name, out var path)
+                    && configuration != null
+                    && MemberResolution.TryResolveSource(destProp, sourceProps, out var converted)
+                    && converted != null
+                    && configuration.GetTypeConverter(converted.PropertyType, destProp.PropertyType) != null)
+                {
+                    // A CreateConverter member is filled by the fluent mapper, not by the engine's
+                    // binding, so asking the binding alone reported it unmapped.
+                    path = new MemberInfo[] { converted };
+                }
 
                 audit.PropertyMappings.Add(new PropertyMappingInfo
                 {
                     PropertyName = destProp.Name,
-                    SourcePropertyName = sourceProp?.Name,
-                    SourceValue = sourceValue,
+                    SourcePropertyName = path is null ? null : string.Join(".", path.Select(p => p.Name)),
+                    SourceValue = path is null ? null : ReadPath(source, path),
                     DestinationValue = destValue,
-                    WasMapped = sourceProp is not null,
-                    SourceType = sourceProp?.PropertyType,
+                    WasMapped = path is not null,
+                    SourceType = path is null ? null : MemberType(path[path.Count - 1]),
                     DestinationType = destProp.PropertyType
                 });
             }
         }
+
+        private static object? ReadPath(object source, IReadOnlyList<MemberInfo> path)
+        {
+            object? value = source;
+            for (var i = 0; i < path.Count && value is not null; i++)
+            {
+                value = path[i] is PropertyInfo property ? property.GetValue(value) : ((FieldInfo)path[i]).GetValue(value);
+            }
+            return value;
+        }
+
+        private static Type MemberType(MemberInfo member) =>
+            member is PropertyInfo property ? property.PropertyType : ((FieldInfo)member).FieldType;
 
         #endregion
 
@@ -213,7 +248,7 @@ namespace Mapsicle.Audit
                 var oldValue = prop.GetValue(original);
                 var newValue = prop.GetValue(modified);
 
-                if (!EqualityComparer<object>.Default.Equals(oldValue, newValue))
+                if (!ValuesEqual(oldValue, newValue))
                 {
                     changes.Add(new PropertyChange
                     {
@@ -227,6 +262,26 @@ namespace Mapsicle.Audit
             }
 
             return changes;
+        }
+
+        // Collections were compared by reference, so a freshly mapped list always differed from the
+        // existing one and WouldChangeOnMap reported a change for two equal lists.
+        private static bool ValuesEqual(object? left, object? right)
+        {
+            if (EqualityComparer<object>.Default.Equals(left, right)) return true;
+            if (left is string || right is string) return false;
+            if (left is not System.Collections.IEnumerable a || right is not System.Collections.IEnumerable b) return false;
+
+            var ea = a.GetEnumerator();
+            var eb = b.GetEnumerator();
+            while (true)
+            {
+                var hasA = ea.MoveNext();
+                var hasB = eb.MoveNext();
+                if (hasA != hasB) return false;
+                if (!hasA) return true;
+                if (!ValuesEqual(ea.Current, eb.Current)) return false;
+            }
         }
 
         /// <summary>

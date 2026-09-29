@@ -216,21 +216,22 @@ namespace Mapsicle.Json
         /// <typeparam name="TDest">The destination type for each item.</typeparam>
         /// <param name="source">The source collection.</param>
         /// <param name="options">Optional JSON serializer options.</param>
-        /// <returns>JSON array string.</returns>
+        /// <returns>
+        /// JSON array string with one element per source element. A null element stays null, or
+        /// becomes <c>default</c> when <typeparamref name="TDest"/> is a non-nullable value type.
+        /// </returns>
         public static string? MapCollectionToJson<TDest>(
             this IEnumerable<object>? source,
             JsonSerializerOptions? options = null)
         {
             if (source is null) return null;
 
+            // Null elements are kept as null so positions line up with the source; dropping them
+            // shifted every later element and broke callers that zip the output with the input.
             var mapped = new List<TDest>();
             foreach (var item in source)
             {
-                var mappedItem = item.MapTo<TDest>();
-                if (mappedItem is not null)
-                {
-                    mapped.Add(mappedItem);
-                }
+                mapped.Add(item is null ? default! : item.MapTo<TDest>()!);
             }
 
             return JsonSerializer.Serialize(mapped, options ?? DefaultOptions);
@@ -243,7 +244,10 @@ namespace Mapsicle.Json
         /// <typeparam name="TDest">The final destination type to map to.</typeparam>
         /// <param name="json">The JSON array string.</param>
         /// <param name="options">Optional JSON serializer options.</param>
-        /// <returns>List of mapped destination objects.</returns>
+        /// <returns>
+        /// List of mapped destination objects, one per array element. A null element stays null, or
+        /// becomes <c>default</c> when <typeparamref name="TDest"/> is a non-nullable value type.
+        /// </returns>
         public static List<TDest> MapCollectionFromJson<TIntermediate, TDest>(
             this string? json,
             JsonSerializerOptions? options = null)
@@ -257,14 +261,7 @@ namespace Mapsicle.Json
             var result = new List<TDest>(intermediates.Count);
             foreach (var item in intermediates)
             {
-                if (item is not null)
-                {
-                    var mapped = item.MapTo<TDest>();
-                    if (mapped is not null)
-                    {
-                        result.Add(mapped);
-                    }
-                }
+                result.Add(item is null ? default! : item.MapTo<TDest>()!);
             }
 
             return result;

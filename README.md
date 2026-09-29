@@ -1513,8 +1513,9 @@ if (detected.HasChanges)
 List<PropertyChange> diff = before.Diff(after);
 ```
 
-`Diff` compares property values with `Equals`, so a collection property counts as changed whenever
-the two lists are different instances, even with the same contents ([#91](https://github.com/BaryoDev/Mapsicle/issues/91)).
+`Diff` compares a collection property element by element, so two lists with the same contents in
+the same order are not a change. Any other property is compared with `Equals`, which for a nested
+class without its own `Equals` means by reference: two equal `Address` instances count as a change.
 
 ---
 
