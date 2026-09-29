@@ -63,7 +63,7 @@ namespace Mapsicle.Audit
             // Collect property mappings
             if (mapped is not null)
             {
-                RecordPropertyMappings(audit, source, mapped, GetCachedProperties(typeof(TDest)), typeMap: null);
+                RecordPropertyMappings(audit, source, mapped, GetCachedProperties(typeof(TDest)), typeMap: null, configuration: null);
             }
 
             return new AuditedMappingResult<TDest>(mapped, audit);
@@ -110,8 +110,9 @@ namespace Mapsicle.Audit
             // Collect property mappings
             if (mapped is not null)
             {
-                var typeMap = (mapper as FluentMapper)?.Configuration.GetTypeMap(typeof(TSource), typeof(TDest));
-                RecordPropertyMappings(audit, source, mapped, GetCachedProperties(typeof(TDest)), typeMap);
+                var configuration = (mapper as FluentMapper)?.Configuration;
+                var typeMap = configuration?.GetTypeMap(typeof(TSource), typeof(TDest));
+                RecordPropertyMappings(audit, source, mapped, GetCachedProperties(typeof(TDest)), typeMap, configuration);
             }
 
             return new AuditedMappingResult<TDest>(mapped, audit);
@@ -129,9 +130,11 @@ namespace Mapsicle.Audit
             object source,
             object mapped,
             PropertyInfo[] destProps,
-            ITypeMapConfiguration? typeMap)
+            ITypeMapConfiguration? typeMap,
+            MapperConfiguration? configuration)
         {
             var bound = Mapper.GetBoundMembers(source.GetType(), mapped.GetType());
+            var sourceProps = Mapper.GetCachedReadableProperties(source.GetType());
 
             foreach (var destProp in destProps)
             {
@@ -162,7 +165,16 @@ namespace Mapsicle.Audit
                     continue;
                 }
 
-                bound.TryGetValue(destProp.Name, out var path);
+                if (!bound.TryGetValue(destProp.Name, out var path)
+                    && configuration != null
+                    && MemberResolution.TryResolveSource(destProp, sourceProps, out var converted)
+                    && converted != null
+                    && configuration.GetTypeConverter(converted.PropertyType, destProp.PropertyType) != null)
+                {
+                    // A CreateConverter member is filled by the fluent mapper, not by the engine's
+                    // binding, so asking the binding alone reported it unmapped.
+                    path = new[] { converted };
+                }
 
                 audit.PropertyMappings.Add(new PropertyMappingInfo
                 {

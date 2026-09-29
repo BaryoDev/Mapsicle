@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Mapsicle;
 using Mapsicle.Audit;
+using Mapsicle.Fluent;
 using Xunit;
 
 namespace Mapsicle.Audit.Tests
@@ -56,6 +57,21 @@ namespace Mapsicle.Audit.Tests
         private string _pin = "";
         public int Id { get; set; }
         public string Pin { private get => _pin; set => _pin = value; }
+    }
+
+    public class AuBdMoney
+    {
+        public decimal Amount { get; set; }
+    }
+
+    public class AuBdPriced
+    {
+        public AuBdMoney? Price { get; set; }
+    }
+
+    public class AuBdPricedDto
+    {
+        public decimal Price { get; set; }
     }
 
     [Collection("StaticMapperTests")]
@@ -142,6 +158,34 @@ namespace Mapsicle.Audit.Tests
             var changes = new AuBdSecret { Id = 1, Pin = "1111" }.Diff(new AuBdSecret { Id = 1, Pin = "2222" });
 
             Assert.Empty(changes);
+        }
+    
+        [Fact]
+        public void MapWithAudit_MemberFilledByAFluentConverter_ReportsMapped()
+        {
+            var mapper = new MapperConfiguration(c =>
+            {
+                c.CreateConverter<AuBdMoney, decimal>(m => m.Amount);
+                c.CreateMap<AuBdPriced, AuBdPricedDto>();
+            }).CreateMapper();
+
+            var result = mapper.MapWithAudit<AuBdPriced, AuBdPricedDto>(new AuBdPriced { Price = new AuBdMoney { Amount = 9.5m } });
+
+            Assert.Equal(9.5m, result.Value!.Price);
+            var member = result.Audit.PropertyMappings.Single(p => p.PropertyName == "Price");
+            Assert.True(member.WasMapped);
+            Assert.Equal("Price", member.SourcePropertyName);
+        }
+
+        [Fact]
+        public void MapWithAudit_WithoutTheConverter_ReportsTheSameMemberUnmapped()
+        {
+            var mapper = new MapperConfiguration(c => c.CreateMap<AuBdPriced, AuBdPricedDto>()).CreateMapper();
+
+            var result = mapper.MapWithAudit<AuBdPriced, AuBdPricedDto>(new AuBdPriced { Price = new AuBdMoney { Amount = 9.5m } });
+
+            Assert.Equal(0m, result.Value!.Price);
+            Assert.False(result.Audit.PropertyMappings.Single(p => p.PropertyName == "Price").WasMapped);
         }
     }
 }
