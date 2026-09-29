@@ -2657,9 +2657,9 @@ namespace Mapsicle
         /// <c>long</c> into an <c>int</c> as mapped when it was dropped. This asks the same
         /// per-member decision the compiled map makes, so the two cannot disagree.
         /// </remarks>
-        internal static Dictionary<string, IReadOnlyList<PropertyInfo>> GetBoundMembers(Type sourceType, Type destType)
+        internal static Dictionary<string, IReadOnlyList<MemberInfo>> GetBoundMembers(Type sourceType, Type destType)
         {
-            var bound = new Dictionary<string, IReadOnlyList<PropertyInfo>>(StringComparer.OrdinalIgnoreCase);
+            var bound = new Dictionary<string, IReadOnlyList<MemberInfo>>(StringComparer.OrdinalIgnoreCase);
             var sourceProps = GetCachedReadableProperties(sourceType);
             var typedSource = Expression.Parameter(sourceType, "source");
             var sourceAsObject = Expression.Convert(typedSource, typeof(object));
@@ -2674,7 +2674,14 @@ namespace Mapsicle
 
             foreach (var (destProp, sourceProp, _, _) in FindFillableCollections(sourceType, destType))
             {
-                bound[destProp.Name] = new[] { sourceProp };
+                bound[destProp.Name] = new MemberInfo[] { sourceProp };
+            }
+
+            // A property filled from a public source field is bound by a separate pass, so leaving it
+            // out here reported a member unmapped that the mapper fills.
+            foreach (var (dest, source) in FindFieldMembers(sourceType, destType))
+            {
+                if (dest is PropertyInfo && !bound.ContainsKey(dest.Name)) bound[dest.Name] = new[] { source };
             }
 
             return bound;

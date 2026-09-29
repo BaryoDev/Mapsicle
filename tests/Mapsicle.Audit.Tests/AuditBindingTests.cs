@@ -59,6 +59,16 @@ namespace Mapsicle.Audit.Tests
         public string Pin { private get => _pin; set => _pin = value; }
     }
 
+    public class AuBdFieldSource
+    {
+        public string Code = "";
+    }
+
+    public class AuBdFieldDto
+    {
+        public string Code { get; set; } = "";
+    }
+
     public class AuBdMoney
     {
         public decimal Amount { get; set; }
@@ -186,6 +196,19 @@ namespace Mapsicle.Audit.Tests
 
             Assert.Equal(0m, result.Value!.Price);
             Assert.False(result.Audit.PropertyMappings.Single(p => p.PropertyName == "Price").WasMapped);
+        }
+
+        [Fact]
+        public void MapWithAudit_PropertyFilledFromASourceField_ReportsMappedWithTheValue()
+        {
+            var result = new AuBdFieldSource { Code = "X" }.MapWithAudit<AuBdFieldDto>();
+
+            Assert.Equal("X", result.Value!.Code);
+            var member = result.Audit.PropertyMappings.Single(p => p.PropertyName == "Code");
+            Assert.True(member.WasMapped);
+            Assert.Equal("Code", member.SourcePropertyName);
+            Assert.Equal("X", member.SourceValue);
+            Assert.Equal(typeof(string), member.SourceType);
         }
     }
 }

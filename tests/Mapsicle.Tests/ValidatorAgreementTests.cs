@@ -12,6 +12,9 @@ namespace Mapsicle.Tests
     public class VaIntDst { public int Count { get; set; } }
     public class VaLongDst { public long Count { get; set; } }
 
+    public class VaFieldSrc { public string Code = ""; }
+    public class VaFieldDst { public string Code { get; set; } = ""; }
+
     /// <summary>
     /// AssertMappingValid has to agree with the mapper in both directions: it may not reject a member
     /// the mapper fills, and it may not accept one the mapper drops.
@@ -43,6 +46,15 @@ namespace Mapsicle.Tests
         public void AssertMappingValid_WideningMember_Passes()
         {
             Mapper.AssertMappingValid<VaIntDst, VaLongDst>();
+        }
+
+        [Fact]
+        public void AssertMappingValid_PropertyFilledFromASourceField_Passes()
+        {
+            Assert.Equal("X", new VaFieldSrc { Code = "X" }.MapTo<VaFieldDst>()!.Code);
+
+            Assert.Empty(Mapper.GetUnmappedProperties<VaFieldSrc, VaFieldDst>());
+            Mapper.AssertMappingValid<VaFieldSrc, VaFieldDst>();
         }
     }
 }

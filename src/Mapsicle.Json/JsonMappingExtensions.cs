@@ -216,7 +216,10 @@ namespace Mapsicle.Json
         /// <typeparam name="TDest">The destination type for each item.</typeparam>
         /// <param name="source">The source collection.</param>
         /// <param name="options">Optional JSON serializer options.</param>
-        /// <returns>JSON array string, with a null in place of each null element.</returns>
+        /// <returns>
+        /// JSON array string with one element per source element. A null element stays null, or
+        /// becomes <c>default</c> when <typeparamref name="TDest"/> is a non-nullable value type.
+        /// </returns>
         public static string? MapCollectionToJson<TDest>(
             this IEnumerable<object>? source,
             JsonSerializerOptions? options = null)
@@ -241,7 +244,10 @@ namespace Mapsicle.Json
         /// <typeparam name="TDest">The final destination type to map to.</typeparam>
         /// <param name="json">The JSON array string.</param>
         /// <param name="options">Optional JSON serializer options.</param>
-        /// <returns>List of mapped destination objects, one per array element, with a null element kept as null.</returns>
+        /// <returns>
+        /// List of mapped destination objects, one per array element. A null element stays null, or
+        /// becomes <c>default</c> when <typeparamref name="TDest"/> is a non-nullable value type.
+        /// </returns>
         public static List<TDest> MapCollectionFromJson<TIntermediate, TDest>(
             this string? json,
             JsonSerializerOptions? options = null)

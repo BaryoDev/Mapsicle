@@ -119,8 +119,7 @@ namespace Mapsicle.Serilog
                         result.Count, typeof(TDest).Name, elapsed.TotalMilliseconds);
                 }
 
-                if (options.SlowMappingThreshold.HasValue &&
-                    elapsed > options.SlowMappingThreshold.Value)
+                if (IsSlow(logger, options, elapsed))
                 {
                     logger.Warning(
                         "[Mapsicle] Slow collection mapping detected: {Count} items to {DestType} took {ElapsedMs:F2}ms (threshold: {ThresholdMs}ms)",
@@ -159,6 +158,13 @@ namespace Mapsicle.Serilog
         private static bool ShouldLogSuccess(ILogger logger, LoggingOptions options) =>
             options.LogLevel <= LogEventLevel.Information && logger.IsEnabled(LogEventLevel.Information);
 
+        // The slow warning has four values, so Serilog takes a params array and boxes them before it
+        // checks the level. With Warning filtered that was 95 B a call for an event nobody receives.
+        private static bool IsSlow(ILogger logger, LoggingOptions options, TimeSpan elapsed) =>
+            options.SlowMappingThreshold.HasValue
+            && elapsed > options.SlowMappingThreshold.Value
+            && logger.IsEnabled(LogEventLevel.Warning);
+
         private static void LogMappingSuccess(ILogger logger, LoggingOptions options, Type sourceType, Type destType, TimeSpan elapsed)
         {
             // Track if we've seen this type pair before (indicates caching)
@@ -180,8 +186,7 @@ namespace Mapsicle.Serilog
                 }
             }
 
-            if (options.SlowMappingThreshold.HasValue &&
-                elapsed > options.SlowMappingThreshold.Value)
+            if (IsSlow(logger, options, elapsed))
             {
                 logger.Warning(
                     "[Mapsicle] Slow mapping detected: {SourceType} -> {DestType} took {ElapsedMs:F2}ms (threshold: {ThresholdMs}ms)",

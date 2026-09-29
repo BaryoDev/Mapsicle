@@ -173,7 +173,7 @@ namespace Mapsicle.Audit
                 {
                     // A CreateConverter member is filled by the fluent mapper, not by the engine's
                     // binding, so asking the binding alone reported it unmapped.
-                    path = new[] { converted };
+                    path = new MemberInfo[] { converted };
                 }
 
                 audit.PropertyMappings.Add(new PropertyMappingInfo
@@ -183,21 +183,24 @@ namespace Mapsicle.Audit
                     SourceValue = path is null ? null : ReadPath(source, path),
                     DestinationValue = destValue,
                     WasMapped = path is not null,
-                    SourceType = path?[path.Count - 1].PropertyType,
+                    SourceType = path is null ? null : MemberType(path[path.Count - 1]),
                     DestinationType = destProp.PropertyType
                 });
             }
         }
 
-        private static object? ReadPath(object source, IReadOnlyList<PropertyInfo> path)
+        private static object? ReadPath(object source, IReadOnlyList<MemberInfo> path)
         {
             object? value = source;
             for (var i = 0; i < path.Count && value is not null; i++)
             {
-                value = path[i].GetValue(value);
+                value = path[i] is PropertyInfo property ? property.GetValue(value) : ((FieldInfo)path[i]).GetValue(value);
             }
             return value;
         }
+
+        private static Type MemberType(MemberInfo member) =>
+            member is PropertyInfo property ? property.PropertyType : ((FieldInfo)member).FieldType;
 
         #endregion
 

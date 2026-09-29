@@ -152,6 +152,20 @@ namespace Mapsicle.Serilog.Tests
             Assert.Empty(_sink.LogEvents);
         }
 
+        [Fact]
+        public void MapWithLogging_SlowMappingWithWarningFiltered_AllocatesNoMoreThanMapTo()
+        {
+            var quiet = new LoggerConfiguration().MinimumLevel.Error().WriteTo.Sink(_sink).CreateLogger();
+            SerilogExtensions.UseSerilog(quiet, o => o.SlowMappingThreshold = TimeSpan.Zero);
+            object source = new SourceModel { Id = 1, Name = "a" };
+
+            var baseline = BytesPerCall(() => source.MapTo<DestModel>());
+            var logged = BytesPerCall(() => source.MapWithLogging<DestModel>());
+
+            Assert.True(logged <= baseline, $"MapWithLogging allocated {logged} B/call with Warning filtered, MapTo {baseline} B/call");
+            Assert.Empty(_sink.LogEvents);
+        }
+
         #endregion
 
         #region UseSerilog Tests
