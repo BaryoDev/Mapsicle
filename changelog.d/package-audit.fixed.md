@@ -10,3 +10,6 @@
 - EntityFramework: `ProjectTo` widens numbers the way `MapTo` does, so an `int` column into a `long`
   member projects the value instead of `0`. It uses the core's widening table, including the
   nullable forms, and still leaves narrowing unmapped.
+- Serilog: `LogCacheStatus = false` leaves `IsCached` off the event, and `MapCollectionWithLogging`
+  respects `LogLevel`. `MapWithLogging` no longer allocates more than `MapTo` when there is nothing
+  to write: it cost 40 B a call more with no logger and 144 B more with a logger above Information.

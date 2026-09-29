@@ -63,6 +63,97 @@ namespace Mapsicle.Serilog.Tests
 
         #endregion
 
+        #region Option and Allocation Tests
+
+        private static long BytesPerCall(Action action, int iterations = 10_000)
+        {
+            action();
+            action();
+
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < iterations; i++)
+            {
+                action();
+            }
+            var after = GC.GetAllocatedBytesForCurrentThread();
+
+            return (after - before) / iterations;
+        }
+
+        [Fact]
+        public void MapWithLogging_LogCacheStatusFalse_OmitsIsCached()
+        {
+            SerilogExtensions.UseSerilog(_logger, o => o.LogCacheStatus = false);
+
+            new SourceModel { Id = 1 }.MapWithLogging<DestModel>();
+
+            var mapped = _sink.LogEvents.Single(e => e.MessageTemplate.Text.Contains("Mapped"));
+            Assert.False(mapped.Properties.ContainsKey("IsCached"));
+        }
+
+        [Fact]
+        public void MapWithLogging_LogCacheStatusTrue_IncludesIsCached()
+        {
+            SerilogExtensions.UseSerilog(_logger, o => o.LogCacheStatus = true);
+
+            new SourceModel { Id = 1 }.MapWithLogging<DestModel>();
+
+            var mapped = _sink.LogEvents.Single(e => e.MessageTemplate.Text.Contains("Mapped"));
+            Assert.True(mapped.Properties.ContainsKey("IsCached"));
+        }
+
+        [Fact]
+        public void MapCollectionWithLogging_LogLevelWarning_LogsNothingAtInformation()
+        {
+            SerilogExtensions.UseSerilog(_logger, o => o.LogLevel = LogEventLevel.Warning);
+
+            new[] { new SourceModel { Id = 1 } }.MapCollectionWithLogging<DestModel>();
+
+            Assert.DoesNotContain(_sink.LogEvents, e => e.Level == LogEventLevel.Information);
+        }
+
+        [Fact]
+        public void MapCollectionWithLogging_DefaultLogLevel_LogsAtInformation()
+        {
+            SerilogExtensions.UseSerilog(_logger);
+
+            new[] { new SourceModel { Id = 1 } }.MapCollectionWithLogging<DestModel>();
+
+            Assert.Contains(_sink.LogEvents, e => e.Level == LogEventLevel.Information);
+        }
+
+        [Fact]
+        public void MapWithLogging_NoLogger_AllocatesNoMoreThanMapTo()
+        {
+            SerilogExtensions.Reset();
+            object source = new SourceModel { Id = 1, Name = "a" };
+
+            var baseline = BytesPerCall(() => source.MapTo<DestModel>());
+            var logged = BytesPerCall(() => source.MapWithLogging<DestModel>());
+
+            Assert.True(logged <= baseline, $"MapWithLogging allocated {logged} B/call with no logger, MapTo {baseline} B/call");
+        }
+
+        [Fact]
+        public void MapWithLogging_LoggerAboveInformation_AllocatesNoMoreThanMapTo()
+        {
+            var quiet = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Sink(_sink).CreateLogger();
+            SerilogExtensions.UseSerilog(quiet);
+            object source = new SourceModel { Id = 1, Name = "a" };
+
+            var baseline = BytesPerCall(() => source.MapTo<DestModel>());
+            var logged = BytesPerCall(() => source.MapWithLogging<DestModel>());
+
+            Assert.True(logged <= baseline, $"MapWithLogging allocated {logged} B/call with nothing to log, MapTo {baseline} B/call");
+            Assert.Empty(_sink.LogEvents);
+        }
+
+        #endregion
+
         #region UseSerilog Tests
 
         [Fact]
