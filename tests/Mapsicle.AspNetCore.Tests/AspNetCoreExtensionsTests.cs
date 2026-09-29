@@ -309,7 +309,9 @@ public class AspNetCoreExtensionsTests
         var validationResult = mapper.MapAndValidate<UserDto, UserDtoValidator>(user);
         var result = validationResult.ToProblemDetails("Validation Error", "/api/users");
 
-        Assert.IsType<BadRequest<Microsoft.AspNetCore.Mvc.ValidationProblemDetails>>(result);
+        var problem = Assert.IsType<ProblemHttpResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, problem.StatusCode);
+        Assert.IsType<Microsoft.AspNetCore.Mvc.ValidationProblemDetails>(problem.ProblemDetails);
     }
 
     #endregion

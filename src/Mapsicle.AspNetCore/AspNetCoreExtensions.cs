@@ -268,7 +268,9 @@ namespace Mapsicle.AspNetCore
                 Instance = instance
             };
 
-            return Results.BadRequest(problemDetails);
+            // Results.BadRequest wrote the body as application/json, so clients that switch on
+            // application/problem+json (RFC 9457) did not recognise it as problem details.
+            return Results.Problem(problemDetails);
         }
 
         #endregion
