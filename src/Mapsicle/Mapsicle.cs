@@ -404,36 +404,17 @@ namespace Mapsicle
         /// </summary>
         public static List<string> GetUnmappedProperties<TSource, TDest>()
         {
+            // Asks the mapper's own per-member decision rather than keeping matching rules here. The
+            // rules kept here drifted twice: flattening stopped at one level, so a deep
+            // OuterMiddleLeafIso the mapper filled was reported unmapped, and a name match was
+            // enough, so a long into an int the mapper dropped was reported mapped.
             var unmapped = new List<string>();
-            var destProps = typeof(TDest).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanWrite);
+            var bound = GetBoundMembers(typeof(TSource), typeof(TDest));
 
-            var readableSourceProps = GetCachedReadableProperties(typeof(TSource));
-
-            foreach (var destProp in destProps)
+            foreach (var destProp in GetCachedWritableProperties(typeof(TDest)))
             {
-                // Resolved by exactly the helper the mapper uses, rather than by re-deciding here.
-                // The two used to differ over [MapFrom] naming a property that does not exist: the
-                // mapper falls back to the destination member's own name and fills it, while this
-                // checked only the named property and reported the member unmapped. So
-                // AssertMappingValid threw for a mapping that demonstrably works, which is the same
-                // class of defect as certifying one that does not.
-                if (!MemberResolution.TryResolveSource(destProp, readableSourceProps, out var resolved)) continue;
-
-                if (resolved != null) continue;
-
-                // Flattening, decided by exactly the rule the mapper uses. Asking the same helper
-                // is the point: this check answering "mapped" where TryCreateFlattenedBinding
-                // answers "skip" is a validator that certifies a property the mapper will leave at
-                // its default.
-                // The same readable-property set the mapper flattens over. An unfiltered
-                // GetProperties() also returns write-only and indexed properties, which the mapper
-                // never considers, so the validator could call a destination mapped from a source
-                // property the mapper will not read.
-                bool hasFlattening = GetCachedReadableProperties(typeof(TSource))
-                    .Any(sp => PropertyConversion.TryFindFlattenedSource(
-                        destProp, sp, GetCachedReadableProperties(sp.PropertyType), out _));
-                if (hasFlattening) continue;
+                if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+                if (bound.ContainsKey(destProp.Name)) continue;
 
                 unmapped.Add(destProp.Name);
             }

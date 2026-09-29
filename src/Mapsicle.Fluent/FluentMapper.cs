@@ -78,24 +78,21 @@ namespace Mapsicle.Fluent
 
             foreach (var typeMap in _typeMaps)
             {
-                var destProps = typeMap.DestinationType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.CanWrite);
-                var sourceProps = new HashSet<string>(
-                    typeMap.SourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                        .Where(p => p.GetGetMethod() != null)
-                        .Select(p => p.Name),
-                    StringComparer.OrdinalIgnoreCase);
+                // A member counted as mapped when any source property was a prefix of its name, so
+                // IdentityNumber passed next to an int Id and stayed empty, and a long into an int
+                // passed on its name and was dropped. The engine's own binding decides now.
+                var bound = Mapper.GetBoundMembers(typeMap.SourceType, typeMap.DestinationType);
+                var sourceProps = Mapper.GetCachedReadableProperties(typeMap.SourceType);
 
-                foreach (var destProp in destProps)
+                foreach (var destProp in Mapper.GetCachedWritableProperties(typeMap.DestinationType))
                 {
                     if (typeMap.IsIgnored(destProp.Name)) continue;
+                    if (destProp.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
                     if (typeMap.HasCustomMapping(destProp.Name)) continue;
-                    if (sourceProps.Contains(destProp.Name)) continue;
-
-                    // Check for flattening match
-                    bool hasFlattening = typeMap.SourceType.GetProperties()
-                        .Any(sp => destProp.Name.StartsWith(sp.Name, StringComparison.OrdinalIgnoreCase));
-                    if (hasFlattening) continue;
+                    if (bound.ContainsKey(destProp.Name)) continue;
+                    if (MemberResolution.TryResolveSource(destProp, sourceProps, out var sourceProp)
+                        && sourceProp != null
+                        && GetTypeConverter(sourceProp.PropertyType, destProp.PropertyType) != null) continue;
 
                     errors.Add($"Unmapped member '{destProp.Name}' on '{typeMap.DestinationType.Name}' from '{typeMap.SourceType.Name}'");
                 }

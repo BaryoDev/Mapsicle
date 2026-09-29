@@ -17,3 +17,8 @@
   `CustomerName` or a `[MapFrom]` member reads as mapped with its source path, and a `long` into an
   `int` reads as unmapped. `Diff` and `WouldChangeOnMap` compare collections by their elements, skip
   indexers instead of throwing `TargetParameterCountException`, and no longer read private getters.
+- `AssertMappingValid`, `GetUnmappedProperties` and Fluent's `AssertConfigurationIsValid` ask the
+  mapper's own per-member binding instead of keeping their own matching rules. They accept a
+  flattened member at any depth the mapper fills (`OuterMiddleLeafIso`), and reject a member the
+  mapper drops: a narrowing `long` into `int`, or a name that only shares a prefix with a source
+  member (`IdentityNumber` next to `Id`).
