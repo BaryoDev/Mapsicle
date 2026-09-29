@@ -13,3 +13,7 @@
 - Serilog: `LogCacheStatus = false` leaves `IsCached` off the event, and `MapCollectionWithLogging`
   respects `LogLevel`. `MapWithLogging` no longer allocates more than `MapTo` when there is nothing
   to write: it cost 40 B a call more with no logger and 144 B more with a logger above Information.
+- Audit: `MapWithAudit` reports a member as mapped exactly when the mapper fills it, so a flattened
+  `CustomerName` or a `[MapFrom]` member reads as mapped with its source path, and a `long` into an
+  `int` reads as unmapped. `Diff` and `WouldChangeOnMap` compare collections by their elements, skip
+  indexers instead of throwing `TargetParameterCountException`, and no longer read private getters.

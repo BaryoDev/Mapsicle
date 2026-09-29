@@ -12,6 +12,7 @@
     <InternalsVisibleTo Include="Mapsicle.Tests" />
     <InternalsVisibleTo Include="Mapsicle.Fluent" />
     <InternalsVisibleTo Include="Mapsicle.EntityFramework" />
+    <InternalsVisibleTo Include="Mapsicle.Audit" />
     <InternalsVisibleTo Include="Mapsicle.SourceGen.Tests" />
   </ItemGroup>
 
