@@ -640,7 +640,7 @@ namespace Mapsicle
         /// <summary>
         /// Emits a conversion for a widening numeric pair, including the nullable forms, or null.
         /// </summary>
-        private static Expression? TryBuildNumericWidening(Expression propExp, Type srcType, Type targetType)
+        internal static Expression? TryBuildNumericWidening(Expression propExp, Type srcType, Type targetType)
         {
             var sourceUnderlying = Nullable.GetUnderlyingType(srcType) ?? srcType;
             var targetUnderlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
