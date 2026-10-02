@@ -1200,8 +1200,10 @@ var dto = mapper.MapWithConvention<ApiResponse, UserDto>(
     NamingConvention.PascalCase);
 ```
 
-The convention pass only fills a member that still holds the value a new `UserDto` starts with, so
-anything the mapper or its configuration set is kept.
+The convention pass skips a member the mapper binds, or the configuration ignores or resolves with
+`MapFrom`. Any other member is filled while it still holds the value a new `UserDto` starts with, so
+what an `AfterMap` set is kept. A member initialised to a new instance, such as `Tags = new()`, is
+always filled, because every destination starts with a different instance.
 
 ### Check Name Matching
 

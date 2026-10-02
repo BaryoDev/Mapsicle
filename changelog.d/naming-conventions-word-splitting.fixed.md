@@ -5,4 +5,7 @@
   fills `StraßeName`.
 - `Mapsicle.NamingConventions`: the `IMapper` overload of `MapWithConvention` fills a member that
   still holds its initial value. It used to test for `default(T)`, so a `string` initialised to
-  `""` or a `bool` initialised to `true` was never filled.
+  `""`, a `bool` initialised to `true` or a list initialised to `new()` was never filled.
+- `Mapsicle.NamingConventions`: the same overload leaves a member the mapper binds or a `MapFrom`
+  resolves. A `MapFrom` that returned the default value used to be overwritten by the convention
+  match.

@@ -33,6 +33,18 @@ namespace Mapsicle.NamingConventions.Tests
         public bool IsActive { get; set; } = true;
     }
 
+#pragma warning disable IDE1006
+    public class WsSnakeTags
+    {
+        public System.Collections.Generic.List<string> tag_names { get; set; } = new();
+    }
+#pragma warning restore IDE1006
+
+    public class WsPascalTags
+    {
+        public System.Collections.Generic.List<string> TagNames { get; set; } = new();
+    }
+
     public class WsUnrelated
     {
         public int UserKey { get; set; }
@@ -153,6 +165,43 @@ namespace Mapsicle.NamingConventions.Tests
             var dto = mapper.MapWithConvention<WsSnake, WsInitialised>(Snake(), NamingConvention.SnakeCase, NamingConvention.PascalCase)!;
 
             Assert.Equal("from config", dto.DisplayName);
+        }
+
+        [Fact]
+        public void MapperOverload_KeepsAConfiguredValueThatEqualsTheInitialValue()
+        {
+            var mapper = new MapperConfiguration(cfg =>
+                cfg.CreateMap<WsSnake, WsInitialised>()
+                    .ForMember(d => d.DisplayName, o => o.MapFrom(s => ""))).CreateMapper();
+
+            var dto = mapper.MapWithConvention<WsSnake, WsInitialised>(Snake(), NamingConvention.SnakeCase, NamingConvention.PascalCase)!;
+
+            Assert.Equal("", dto.DisplayName);
+            Assert.False(dto.IsActive);
+        }
+
+        [Fact]
+        public void Control_MapperOverload_KeepsWhatAnAfterMapSet()
+        {
+            var mapper = new MapperConfiguration(cfg =>
+                cfg.CreateMap<WsSnake, WsInitialised>()
+                    .AfterMap((s, d) => d.DisplayName = "from hook")).CreateMapper();
+
+            var dto = mapper.MapWithConvention<WsSnake, WsInitialised>(Snake(), NamingConvention.SnakeCase, NamingConvention.PascalCase)!;
+
+            Assert.Equal("from hook", dto.DisplayName);
+            Assert.False(dto.IsActive);
+        }
+
+        [Fact]
+        public void MapperOverload_FillsAMemberInitialisedToANewInstance()
+        {
+            var mapper = new MapperConfiguration(cfg => cfg.CreateMap<WsSnakeTags, WsPascalTags>()).CreateMapper();
+            var source = new WsSnakeTags { tag_names = { "a", "b" } };
+
+            var dto = mapper.MapWithConvention<WsSnakeTags, WsPascalTags>(source, NamingConvention.SnakeCase, NamingConvention.PascalCase)!;
+
+            Assert.Equal(new[] { "a", "b" }, dto.TagNames);
         }
     }
 }
