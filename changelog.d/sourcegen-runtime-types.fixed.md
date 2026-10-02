@@ -8,3 +8,6 @@
   `List<Tag>` put the source instances in the list, where the engine builds a new `Tag` for each. A
   pair whose element class cannot be generated is now refused with `MSG001` and maps through the
   engine.
+- **A collection whose destination element is an interface is refused.** An `IThing[]` into a
+  `List<IThing>` put the source instances in the list, where the engine leaves each element null.
+  The pair now gets `MSG001` and maps through the engine.

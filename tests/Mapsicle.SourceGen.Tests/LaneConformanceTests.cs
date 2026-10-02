@@ -28,6 +28,8 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfOwner), typeof(Mapsicle.SourceGen.Tests.ConfOwnerDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfKennel), typeof(Mapsicle.SourceGen.Tests.ConfKennelDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfTagged), typeof(Mapsicle.SourceGen.Tests.ConfTaggedDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.FaceArray), typeof(Mapsicle.SourceGen.Tests.FaceArrayDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.FaceImplArray), typeof(Mapsicle.SourceGen.Tests.FaceImplArrayDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfRoot), typeof(Mapsicle.SourceGen.Tests.ConfRootDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfLoopOwner), typeof(Mapsicle.SourceGen.Tests.ConfLoopOwnerDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyEnum), typeof(Mapsicle.SourceGen.Tests.LossyEnumDto))]
@@ -205,6 +207,16 @@ namespace Mapsicle.SourceGen.Tests
     public class ConfTag { public string Label { get; set; } = ""; }
     public class ConfTagged { public ConfTag[] Tags { get; set; } = System.Array.Empty<ConfTag>(); }
     public class ConfTaggedDto { public List<ConfTag> Tags { get; set; } = new(); }
+
+    // Elements typed as an interface. The engine cannot construct one and leaves each element
+    // null, where the emitter put the source instance in the list. Named outside the Conf prefix
+    // because the pairs are refused, as the Lossy ones are.
+    public interface IFaceNamed { string Label { get; set; } }
+    public class FaceNamed : IFaceNamed { public string Label { get; set; } = ""; }
+    public class FaceArray { public IFaceNamed[] Items { get; set; } = System.Array.Empty<IFaceNamed>(); }
+    public class FaceArrayDto { public List<IFaceNamed> Items { get; set; } = new(); }
+    public class FaceImplArray { public FaceNamed[] Items { get; set; } = System.Array.Empty<FaceNamed>(); }
+    public class FaceImplArrayDto { public List<IFaceNamed> Items { get; set; } = new(); }
 
     // A cycle the declared types do not have and a derived type adds. The planner sees no cycle,
     // so the pair is generated, and the data can still loop.
@@ -585,6 +597,34 @@ namespace Mapsicle.SourceGen.Tests
             Assert.False(ReferenceEquals(generated!.Tags[0], source.Tags[0]), "the generated lane aliased the source element");
             Assert.Equal(new[] { "a", "b" }, generated.Tags.Select(t => t.Label).ToArray());
             Assert.Equal(new[] { "a", "b" }, interpreted.Tags.Select(t => t.Label).ToArray());
+        }
+
+        [Fact]
+        public void InterfaceElementPairsAreRefusedAndMapAsTheEngineDoes()
+        {
+            var registry = typeof(Mapper)
+                .GetField("_generatedPairs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                !.GetValue(null)!;
+            var keys = ((System.Collections.IEnumerable)registry.GetType().GetProperty("Keys")!.GetValue(registry)!)
+                .Cast<object>()
+                .Select(k => k.ToString() ?? "")
+                .ToArray();
+
+            foreach (var name in new[] { nameof(FaceArray), nameof(FaceImplArray) })
+            {
+                Assert.DoesNotContain(keys, k => k.Contains(name + ",", StringComparison.Ordinal) || k.Contains(name + ")", StringComparison.Ordinal));
+            }
+
+            var one = new FaceNamed { Label = "a" };
+            using var runtime = MapperFactory.Create();
+
+            var faces = new FaceArray { Items = new IFaceNamed[] { one } };
+            Assert.Equal(new IFaceNamed?[] { null }, runtime.MapTo<FaceArrayDto>(faces)!.Items);
+            Assert.Equal(new IFaceNamed?[] { null }, ((object)faces).MapTo<FaceArrayDto>()!.Items);
+
+            var impls = new FaceImplArray { Items = new[] { one } };
+            Assert.Equal(new IFaceNamed?[] { null }, runtime.MapTo<FaceImplArrayDto>(impls)!.Items);
+            Assert.Equal(new IFaceNamed?[] { null }, ((object)impls).MapTo<FaceImplArrayDto>()!.Items);
         }
 
         [Fact]

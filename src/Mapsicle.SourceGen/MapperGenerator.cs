@@ -723,6 +723,11 @@ namespace Mapsicle.SourceGen
         /// </remarks>
         private static string? ElementConvert(ITypeSymbol from, ITypeSymbol to, string expression, PlanContext context)
         {
+            // The engine maps each element into the destination element type, cannot construct an
+            // interface, and leaves the element null. Passing the source instance through gave an
+            // IThing[] into a List<IThing> its elements on the generated lane and nulls on the other.
+            if (to.TypeKind == TypeKind.Interface) return null;
+
             // A mappable element is never passed through, identical type included. A List<Dog> into
             // a List<Animal> handed back the same Dog instances on the generated lane, and so did a
             // Tag[] into a List<Tag>, so mutating the DTO mutated the entity. The engine builds a
