@@ -807,6 +807,12 @@ Numeric widening, enum into a string, enum into a different enum by name, `DateT
 `DateTimeOffset`, nullable lifting, nested objects, `List<T>` and array collections, and flattened
 paths up to four levels deep.
 
+A generated mapper is planned from the declared types. Where the source, a member or a collection
+element is declared as a type that can be derived from and holds an instance of a derived type, that
+one instance goes to the engine, which maps by the runtime type as it does without the generator. A
+sealed type has no such check. Under NativeAOT the engine cannot build a pair at run time, so declare
+the derived pair as well, or the call throws `NotSupportedException` naming it.
+
 These are refused on purpose, and each is a refusal rather than a gap. A refused pair reports
 `MSG001`, keeps mapping through the engine, and the call site does not change:
 
