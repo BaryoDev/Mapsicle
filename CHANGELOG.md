@@ -23,6 +23,41 @@ generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback bel
 additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
 change a major version exists to signal.
 
+## [2.4.2] - 2026-10-02
+
+### Fixed
+
+- `Mapsicle.NamingConventions`: an acronym is one word, so `HTTPServerID` converts to
+  `http_server_id` instead of `h_t_t_p_server_i_d`, and `user_id` fills `UserID`.
+- `Mapsicle.NamingConventions`: names match on their letters and digits wherever the words break,
+  so `address_line_1` fills `AddressLine1`. Non-ASCII letters are part of a word, so `straße_name`
+  fills `StraßeName`.
+- `Mapsicle.NamingConventions`: the `IMapper` overload of `MapWithConvention` fills a member that
+  still holds its initial value. It used to test for `default(T)`, so a `string` initialised to
+  `""`, a `bool` initialised to `true` or a list initialised to `new()` was never filled.
+- `Mapsicle.NamingConventions`: the same overload leaves a member the mapper binds or a `MapFrom`
+  resolves. A `MapFrom` that returned the default value used to be overwritten by the convention
+  match.
+- **A netstandard2.0 or .NET Framework project with `Mapsicle.SourceGen` installed builds again.**
+  The generated file referenced `ModuleInitializerAttribute`, which those targets do not have, so the
+  build failed with CS0234. The generator now declares an internal copy when the target has none.
+  Below C# 9, which is where those targets start, the generated code failed with CS8370 and CS8627.
+  The generator now emits nothing there, reports the new `MSG003` warning once, and every pair maps
+  through the engine. Set `<LangVersion>9.0</LangVersion>` or later to generate.
+- **A generated mapper now maps a derived instance the way the engine does.** A member declared
+  `Animal` and holding a `Dog`, a `List<Animal>` or `Animal[]` element holding one, and a `Dog` behind
+  a variable typed `Animal` were all mapped as `Animal`, so `Breed` came back empty where the engine
+  fills it. Generated code now checks the runtime type and hands anything that is not exactly the
+  declared type to the engine. A sealed type gets no check. Under NativeAOT, declare the derived pair
+  too, or the call throws `NotSupportedException` instead of returning the base members only.
+- **An array into a `List<T>` of the same class no longer shares the elements.** `Tag[]` into
+  `List<Tag>` put the source instances in the list, where the engine builds a new `Tag` for each. A
+  pair whose element class cannot be generated is now refused with `MSG001` and maps through the
+  engine.
+- **A collection whose destination element is an interface is refused.** An `IThing[]` into a
+  `List<IThing>` put the source instances in the list, where the engine leaves each element null.
+  The pair now gets `MSG001` and maps through the engine.
+
 ## [2.4.1] - 2026-09-29
 
 ### Fixed
