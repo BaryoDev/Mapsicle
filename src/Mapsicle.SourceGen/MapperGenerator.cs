@@ -645,6 +645,7 @@ namespace Mapsicle.SourceGen
             }
 
             var helper = context.Begin(key, HelperKind.Object, Full(source), Full(destination));
+            helper.SourceCanBeDerived = CanBeDerived(source);
             var assignments = PlanMembers(source, destination, context, out _);
             context.End(key);
 
@@ -722,18 +723,17 @@ namespace Mapsicle.SourceGen
         /// </remarks>
         private static string? ElementConvert(ITypeSymbol from, ITypeSymbol to, string expression, PlanContext context)
         {
-            // Identical element type passes straight through, which is what the engine does: a
-            // List<Tag> into a List<Tag> hands back the same Tag instances on both lanes.
-            if (SymbolEqualityComparer.Default.Equals(from, to)) return expression;
-
-            // A reference-assignable element is NOT passed through, and that is the difference that
-            // matters. A List<Dog> into a List<Animal> handed back the same Dog instances on the
-            // generated lane, so mutating the DTO mutated the entity and the runtime type leaked
-            // through a contract that said Animal. The engine builds a fresh Animal, so this maps.
+            // A mappable element is never passed through, identical type included. A List<Dog> into
+            // a List<Animal> handed back the same Dog instances on the generated lane, and so did a
+            // Tag[] into a List<Tag>, so mutating the DTO mutated the entity. The engine builds a
+            // fresh element for both. A List<Tag> into a List<Tag> never gets here: the member is
+            // assignable as it stands and both lanes hand over the same list.
             if (IsMappable(from) && to.TypeKind == TypeKind.Class && !IsString(to))
             {
                 return NestedCall(from, to, expression, context);
             }
+
+            if (SymbolEqualityComparer.Default.Equals(from, to)) return expression;
 
             if (IsReferenceAssignable(from, to)) return expression;
 
@@ -1157,6 +1157,10 @@ namespace Mapsicle.SourceGen
         private static bool IsMappable(ITypeSymbol type) =>
             type.TypeKind is TypeKind.Class or TypeKind.Interface && !IsString(type) && !IsEnumerable(type);
 
+        /// <summary>Whether a variable of this type can hold an instance of some other type.</summary>
+        private static bool CanBeDerived(ITypeSymbol type) =>
+            type.TypeKind == TypeKind.Interface || (type.TypeKind == TypeKind.Class && !type.IsSealed);
+
         private static bool IsReferenceAssignable(ITypeSymbol from, ITypeSymbol to)
         {
             if (to.TypeKind == TypeKind.Interface)
@@ -1298,6 +1302,9 @@ namespace Mapsicle.SourceGen
             internal string? ElementSourceType { get; set; }
             internal string? ElementDestinationType { get; set; }
             internal bool SourceIsArray { get; set; }
+
+            /// <summary>Set when the source is a type an instance of a derived type can stand in for.</summary>
+            internal bool SourceCanBeDerived { get; set; }
         }
 
         /// <summary>
@@ -1451,12 +1458,21 @@ namespace Mapsicle.SourceGen
 
         private static void EmitBody(
             StringBuilder sb, string name, string sourceType, string destType,
-            List<Assignment> assignments, bool nullable)
+            List<Assignment> assignments, bool nullable, bool guardRuntimeType = false)
         {
             var question = nullable ? "?" : "";
             sb.AppendLine($"        internal static {destType}{question} {name}({sourceType}{question} source)");
             sb.AppendLine("        {");
             if (nullable) sb.AppendLine("            if (source is null) return null;");
+
+            // The members below were planned from the declared type. A member declared Animal and
+            // holding a Dog came out with Breed empty, where the engine maps by the runtime type and
+            // fills it. Anything that is not exactly the declared type goes to the engine.
+            if (guardRuntimeType)
+            {
+                sb.AppendLine($"            if (source.GetType() != typeof({sourceType})) return global::Mapsicle.Mapper.MapTo<{destType}>((object)source);");
+            }
+
             sb.AppendLine($"            return new {destType}");
             sb.AppendLine("            {");
 
@@ -1491,7 +1507,9 @@ namespace Mapsicle.SourceGen
 
             if (helper.Kind == HelperKind.Object)
             {
-                EmitBody(sb, helper.Name, helper.SourceType, helper.DestinationType, helper.Assignments, nullable: true);
+                EmitBody(
+                    sb, helper.Name, helper.SourceType, helper.DestinationType, helper.Assignments,
+                    nullable: true, guardRuntimeType: helper.SourceCanBeDerived);
                 return;
             }
 
@@ -1615,6 +1633,15 @@ namespace Mapsicle.SourceGen
                 sb.AppendLine($"{indent}    public static TDest? MapTo<TDest>(this {src}{(isValueType ? "" : "?")} source)");
                 sb.AppendLine($"{indent}    {{");
                 if (!isValueType) sb.AppendLine($"{indent}        if (source is null) return default;");
+
+                // A derived instance behind a variable of the declared type bound here and was
+                // mapped as the declared type, so a member only the derived type has stayed at its
+                // default. The same call without the generator maps by the runtime type.
+                if (CanBeDerived(group.First().Source))
+                {
+                    sb.AppendLine($"{indent}        if (source.GetType() != typeof({src})) return global::Mapsicle.Mapper.MapTo<TDest>((object)source);");
+                }
+
                 sb.AppendLine();
 
                 foreach (var plan in group)

@@ -25,6 +25,11 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfCovariant), typeof(Mapsicle.SourceGen.Tests.ConfCovariantDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfShielded), typeof(Mapsicle.SourceGen.Tests.ConfShieldedDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfEnumFit), typeof(Mapsicle.SourceGen.Tests.ConfEnumFitDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfOwner), typeof(Mapsicle.SourceGen.Tests.ConfOwnerDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfKennel), typeof(Mapsicle.SourceGen.Tests.ConfKennelDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfTagged), typeof(Mapsicle.SourceGen.Tests.ConfTaggedDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfRoot), typeof(Mapsicle.SourceGen.Tests.ConfRootDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfLoopOwner), typeof(Mapsicle.SourceGen.Tests.ConfLoopOwnerDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyEnum), typeof(Mapsicle.SourceGen.Tests.LossyEnumDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyFloat), typeof(Mapsicle.SourceGen.Tests.LossyFloatDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.LossyDouble), typeof(Mapsicle.SourceGen.Tests.LossyDoubleDto))]
@@ -183,6 +188,36 @@ namespace Mapsicle.SourceGen.Tests
         [IgnoreMap] public List<string> Roles { get; } = new();
         [IgnoreMap] public bool IsAdmin { get; set; }
     }
+
+    // A member or an element declared as the base and holding a derived instance. The engine maps
+    // by the runtime type, so the derived members arrive. The emitter planned the declared type and
+    // left them at their defaults.
+    public class ConfPet { public string Name { get; set; } = ""; }
+    public class ConfCollie : ConfPet { public string Breed { get; set; } = ""; }
+    public class ConfPetDto { public string Name { get; set; } = ""; public string Breed { get; set; } = ""; }
+    public class ConfOwner { public ConfPet? Pet { get; set; } }
+    public class ConfOwnerDto { public ConfPetDto? Pet { get; set; } }
+    public class ConfKennel { public List<ConfPet> Pets { get; set; } = new(); public ConfPet[] Boarders { get; set; } = System.Array.Empty<ConfPet>(); }
+    public class ConfKennelDto { public List<ConfPetDto> Pets { get; set; } = new(); public List<ConfPetDto> Boarders { get; set; } = new(); }
+
+    // An array into a list of the same element type. The engine builds a new element for each one,
+    // and the emitter put the source instances in the list.
+    public class ConfTag { public string Label { get; set; } = ""; }
+    public class ConfTagged { public ConfTag[] Tags { get; set; } = System.Array.Empty<ConfTag>(); }
+    public class ConfTaggedDto { public List<ConfTag> Tags { get; set; } = new(); }
+
+    // A cycle the declared types do not have and a derived type adds. The planner sees no cycle,
+    // so the pair is generated, and the data can still loop.
+    public class ConfLoopPet { public string Name { get; set; } = ""; }
+    public class ConfLoopBack : ConfLoopPet { public ConfLoopOwner? Owner { get; set; } }
+    public class ConfLoopOwner { public ConfLoopPet? Pet { get; set; } }
+    public class ConfLoopPetDto { public string Name { get; set; } = ""; public ConfLoopOwnerDto? Owner { get; set; } }
+    public class ConfLoopOwnerDto { public ConfLoopPetDto? Pet { get; set; } }
+
+    // The declared pair itself, reached through a variable typed as the base.
+    public class ConfRoot { public string Name { get; set; } = ""; }
+    public class ConfRootSpecial : ConfRoot { public string Extra { get; set; } = ""; }
+    public class ConfRootDto { public string Name { get; set; } = ""; public string Extra { get; set; } = ""; }
 
     /// <summary>
     /// One table of cases, run through the runtime lane and the generated lane, asserting they agree.
@@ -509,6 +544,98 @@ namespace Mapsicle.SourceGen.Tests
             Assert.Equal(interpreted.Pets[0].Name, generated.Pets[0].Name);
         }
 
+        [Fact]
+        public void ANestedMemberHoldingADerivedInstanceAgrees() =>
+            LanesAgree<ConfOwner, ConfOwnerDto>(
+                new ConfOwner { Pet = new ConfCollie { Name = "Rex", Breed = "collie" } },
+                d => d.Pet!.Name, d => d.Pet!.Breed);
+
+        [Fact]
+        public void ANestedMemberHoldingTheDeclaredTypeAgrees() =>
+            LanesAgree<ConfOwner, ConfOwnerDto>(
+                new ConfOwner { Pet = new ConfPet { Name = "Rex" } },
+                d => d.Pet!.Name, d => d.Pet!.Breed);
+
+        [Fact]
+        public void ANullNestedMemberOfAnOpenTypeAgrees() =>
+            LanesAgree<ConfOwner, ConfOwnerDto>(new ConfOwner { Pet = null }, d => d.Pet);
+
+        [Fact]
+        public void CollectionElementsHoldingDerivedInstancesAgree() =>
+            LanesAgree<ConfKennel, ConfKennelDto>(
+                new ConfKennel
+                {
+                    Pets = { new ConfPet { Name = "Tom" }, new ConfCollie { Name = "Rex", Breed = "collie" } },
+                    Boarders = new ConfPet[] { new ConfCollie { Name = "Fly", Breed = "border" }, new ConfPet { Name = "Sam" } },
+                },
+                d => d.Pets.Count, d => d.Pets[0].Name, d => d.Pets[0].Breed, d => d.Pets[1].Name, d => d.Pets[1].Breed,
+                d => d.Boarders.Count, d => d.Boarders[0].Name, d => d.Boarders[0].Breed, d => d.Boarders[1].Breed);
+
+        [Fact]
+        public void AnArrayIntoAListOfTheSameElementCopiesInBothLanes()
+        {
+            var source = new ConfTagged { Tags = new[] { new ConfTag { Label = "a" }, new ConfTag { Label = "b" } } };
+
+            var generated = ((object)source).MapTo<ConfTaggedDto>();
+
+            using var runtime = MapperFactory.Create();
+            var interpreted = runtime.MapTo<ConfTaggedDto>(source);
+
+            Assert.False(ReferenceEquals(interpreted!.Tags[0], source.Tags[0]), "the engine aliased the source element");
+            Assert.False(ReferenceEquals(generated!.Tags[0], source.Tags[0]), "the generated lane aliased the source element");
+            Assert.Equal(new[] { "a", "b" }, generated.Tags.Select(t => t.Label).ToArray());
+            Assert.Equal(new[] { "a", "b" }, interpreted.Tags.Select(t => t.Label).ToArray());
+        }
+
+        [Fact]
+        public void ADerivedInstanceBehindTheDeclaredTypeAgrees()
+        {
+            ConfRoot source = new ConfRootSpecial { Name = "n", Extra = "x" };
+
+            // Bound at compile time to the generated extension for ConfRoot, which is the door the
+            // declared type opens. The registry door is keyed by runtime type and never sees this.
+            var generated = source.MapTo<ConfRootDto>();
+
+            using var runtime = MapperFactory.Create();
+            var interpreted = runtime.MapTo<ConfRootDto>(source);
+
+            Assert.Equal("x", interpreted!.Extra);
+            Assert.Equal("n", generated!.Name);
+            Assert.Equal(interpreted.Extra, generated.Extra);
+        }
+
+        [Fact]
+        public void ACycleThroughADerivedInstanceEndsInBothLanes()
+        {
+            var owner = new ConfLoopOwner();
+            owner.Pet = new ConfLoopBack { Name = "Rex", Owner = owner };
+
+            var generated = ((object)owner).MapTo<ConfLoopOwnerDto>();
+
+            using var runtime = MapperFactory.Create();
+            var interpreted = runtime.MapTo<ConfLoopOwnerDto>(owner);
+
+            Assert.Equal(Depth(interpreted), Depth(generated));
+            Assert.Equal("Rex", generated!.Pet!.Name);
+            Assert.Equal("Rex", generated.Pet.Owner!.Pet!.Name);
+
+            static int Depth(ConfLoopOwnerDto? dto)
+            {
+                var depth = 0;
+                for (var current = dto; current is not null; current = current.Pet?.Owner) depth++;
+                return depth;
+            }
+        }
+
+        [Fact]
+        public void TheDeclaredTypeItselfStillMapsThroughTheExtension()
+        {
+            var generated = new ConfRoot { Name = "n" }.MapTo<ConfRootDto>();
+
+            Assert.Equal("n", generated!.Name);
+            Assert.Equal("", generated.Extra);
+        }
+
         // ---- refusals ---------------------------------------------------------------------------
 
         public class ConfInner { public string City { get; set; } = ""; }
@@ -575,8 +702,9 @@ namespace Mapsicle.SourceGen.Tests
             {
                 nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCovariant),
                 nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumFit), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
-                nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfNest),
-                nameof(ConfNullable), nameof(ConfPartial), nameof(ConfShielded), nameof(ConfStamp), nameof(ConfWiden),
+                nameof(ConfKennel), nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfLoopOwner), nameof(ConfNest),
+                nameof(ConfNullable), nameof(ConfOwner), nameof(ConfPartial), nameof(ConfRoot), nameof(ConfShielded), nameof(ConfStamp),
+                nameof(ConfTagged), nameof(ConfWiden),
             };
 
             Assert.Equal(covered, declared);
