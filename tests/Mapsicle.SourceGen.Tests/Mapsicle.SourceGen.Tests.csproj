@@ -10,15 +10,18 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mapsicle\Mapsicle.csproj" />
     <!-- Referenced as an analyzer, which is how a consumer installs it. Running the generator over
-         this project's own source is the only way to test what a consumer actually gets. -->
+         this project's own source is the only way to test what a consumer actually gets. It is
+         referenced as an assembly too, for the tests that read its diagnostics: a diagnostic about
+         the project's own settings cannot be provoked from inside the project that reports it. -->
     <ProjectReference Include="..\..\src\Mapsicle.SourceGen\Mapsicle.SourceGen.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="true" />
   </ItemGroup>
 
 </Project>

@@ -635,6 +635,20 @@ the fallback than fix the pair, exempt it:
 Nothing is broken when you see it. It is the difference between 1.00x and 1.80x on that pair, and it
 names the member responsible.
 
+**On netstandard2.0 or .NET Framework, set the language version.** Generated code needs C# 9, and
+those targets default to 7.3. Below C# 9 the generator emits nothing and reports `MSG003` once, and
+every pair maps through the engine:
+
+```xml
+<PropertyGroup>
+  <LangVersion>9.0</LangVersion>
+</PropertyGroup>
+```
+
+With that set, a netstandard2.0 project generates like any other. The target has no
+`ModuleInitializerAttribute`, so the generated file declares an internal one, unless your project
+already has its own.
+
 **To check it worked**, turn on the emitted files and read them:
 
 ```xml

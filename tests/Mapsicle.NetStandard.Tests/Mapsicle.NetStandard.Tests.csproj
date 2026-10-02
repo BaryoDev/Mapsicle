@@ -18,6 +18,8 @@
   -->
   <ItemGroup>
     <ProjectReference Include="../../src/Mapsicle/Mapsicle.csproj" SetTargetFramework="TargetFramework=netstandard2.0" />
+    <ProjectReference Include="../Mapsicle.SourceGen.NetStandard.Fixture/Mapsicle.SourceGen.NetStandard.Fixture.csproj" />
+    <ProjectReference Include="../Mapsicle.SourceGen.OldLanguage.Fixture/Mapsicle.SourceGen.OldLanguage.Fixture.csproj" />
   </ItemGroup>
 
   <ItemGroup>

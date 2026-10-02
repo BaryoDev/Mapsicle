@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A consumer on netstandard2.0 with the language version that target defaults to. Generated code
+    needs C# 9, so the generator has to stand aside here and say so. It used to emit anyway, and
+    the build failed inside the generated files.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Mapsicle\Mapsicle.csproj" />
+    <ProjectReference Include="..\..\src\Mapsicle.SourceGen\Mapsicle.SourceGen.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>
