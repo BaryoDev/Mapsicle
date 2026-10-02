@@ -1200,6 +1200,9 @@ var dto = mapper.MapWithConvention<ApiResponse, UserDto>(
     NamingConvention.PascalCase);
 ```
 
+The convention pass only fills a member that still holds the value a new `UserDto` starts with, so
+anything the mapper or its configuration set is kept.
+
 ### Check Name Matching
 
 ```csharp
@@ -1209,6 +1212,10 @@ bool match = NamingConvention.NamesMatch(
     "UserName", NamingConvention.PascalCase);
 // Result: true
 ```
+
+Matching compares the letters and digits and ignores case and where the words break, so `user_id`
+matches `UserID` and `address_line_1` matches `AddressLine1`. When a name is converted, an acronym
+stays one word: `HTTPServerID` becomes `http_server_id`.
 
 ### Real-World Example: External API Integration
 

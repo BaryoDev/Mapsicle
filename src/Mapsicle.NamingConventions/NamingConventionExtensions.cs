@@ -13,6 +13,7 @@ namespace Mapsicle.NamingConventions
     public static class NamingConventionExtensions
     {
         private static readonly ConcurrentDictionary<(Type, Type, string, string), Dictionary<string, string>> _propertyMappingCache = new();
+        private static readonly ConcurrentDictionary<Type, Dictionary<string, object?>> _initialValueCache = new();
 
         /// <summary>
         /// Creates a mapper that applies naming conventions when matching properties.
@@ -103,6 +104,7 @@ namespace Mapsicle.NamingConventions
             // A member the configuration ignores is left at its default by the mapper, which is
             // exactly what this pass reads as "not mapped yet", so it used to fill it anyway.
             var typeMap = (mapper as FluentMapper)?.Configuration.GetTypeMap(sourceType, destType);
+            var initialValues = _initialValueCache.GetOrAdd(destType, _ => ReadInitialValues(new TDest()));
 
             foreach (var mapping in propertyMappings)
             {
@@ -113,13 +115,11 @@ namespace Mapsicle.NamingConventions
 
                 if (sourceProp?.GetGetMethod() != null && destProp?.CanWrite == true)
                 {
-                    // Only set if dest property is default/null (wasn't mapped by standard mapper)
-                    var currentValue = destProp.GetValue(dest);
-                    var defaultValue = destProp.PropertyType.IsValueType
-                        ? Activator.CreateInstance(destProp.PropertyType)
-                        : null;
+                    // "Not mapped yet" used to mean equal to default(T), so a string initialised to ""
+                    // or a bool initialised to true was read as already mapped and never filled.
+                    initialValues.TryGetValue(destProp.Name, out var initialValue);
 
-                    if (Equals(currentValue, defaultValue))
+                    if (Equals(destProp.GetValue(dest), initialValue))
                     {
                         try
                         {
@@ -204,7 +204,29 @@ namespace Mapsicle.NamingConventions
         /// <summary>
         /// Clears the property mapping cache. Useful for testing scenarios.
         /// </summary>
-        public static void ClearMappingCache() => _propertyMappingCache.Clear();
+        public static void ClearMappingCache()
+        {
+            _propertyMappingCache.Clear();
+            _initialValueCache.Clear();
+        }
+
+        private static Dictionary<string, object?> ReadInitialValues(object fresh)
+        {
+            var values = new Dictionary<string, object?>();
+            foreach (var prop in fresh.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (prop.GetGetMethod() == null || prop.GetIndexParameters().Length > 0) continue;
+                try
+                {
+                    values[prop.Name] = prop.GetValue(fresh);
+                }
+                catch (Exception)
+                {
+                    values[prop.Name] = null;
+                }
+            }
+            return values;
+        }
 
         private static object? ConvertValue(object value, Type targetType)
         {
