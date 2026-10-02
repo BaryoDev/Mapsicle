@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A consumer on netstandard2.0 that has raised its language version, which is the oldest setup
+    the generator emits for. The target has no ModuleInitializerAttribute, and the generated file
+    used to reference it anyway, so this project did not build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Mapsicle\Mapsicle.csproj" />
+    <ProjectReference Include="..\..\src\Mapsicle.SourceGen\Mapsicle.SourceGen.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

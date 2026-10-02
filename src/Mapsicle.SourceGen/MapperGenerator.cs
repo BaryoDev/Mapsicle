@@ -70,6 +70,24 @@ namespace Mapsicle.SourceGen
                          "keeps working through the engine, and is reported as information because nothing asked " +
                          "for it by name.");
 
+        /// <summary>Reported once when the project's language version is too old to emit for.</summary>
+        /// <remarks>
+        /// Generated code needs a module initializer and an unconstrained <c>TDest?</c>, and both
+        /// arrived in C# 9. A netstandard2.0 project defaults to 7.3, and emitting there failed the
+        /// build with CS8370 and CS8627 inside the generated files.
+        /// </remarks>
+        private static readonly DiagnosticDescriptor LanguageTooOld = new(
+            id: "MSG003",
+            title: "Mapsicle needs C# 9 to generate mappers",
+            messageFormat: "Nothing was generated because this project compiles with C# {0} and generated mappers need C# 9 or later. Every pair still maps through the runtime engine. Set <LangVersion>9.0</LangVersion> or later to generate.",
+            category: "Mapsicle",
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "A project on netstandard2.0 or .NET Framework defaults to C# 7.3. The generator stands aside " +
+                         "there and the runtime engine maps every pair, so the build and the call sites are unaffected.");
+
+        private const string ModuleInitializerName = "System.Runtime.CompilerServices.ModuleInitializerAttribute";
+
         /// <summary>Wires the generator to the assembly's declared pairs.</summary>
         /// <param name="context">Supplied by Roslyn.</param>
         public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -97,7 +115,9 @@ namespace Mapsicle.SourceGen
 
                 if (requested.Plans.Count == 0) return;
 
-                spc.AddSource("MapsicleGenerated.g.cs", SourceText.From(Emit(requested.Plans), Encoding.UTF8));
+                spc.AddSource(
+                    "MapsicleGenerated.g.cs",
+                    SourceText.From(Emit(requested.Plans, requested.NeedsModuleInitializer), Encoding.UTF8));
                 spc.AddSource("MapsicleGeneratedExtensions.g.cs", SourceText.From(EmitExtensions(requested.Plans), Encoding.UTF8));
             });
         }
@@ -175,14 +195,18 @@ namespace Mapsicle.SourceGen
 
         private readonly struct Requested
         {
-            internal Requested(List<MapPlan> plans, List<Diagnostic> diagnostics)
+            internal Requested(List<MapPlan> plans, List<Diagnostic> diagnostics, bool needsModuleInitializer = false)
             {
                 Plans = plans;
                 Diagnostics = diagnostics;
+                NeedsModuleInitializer = needsModuleInitializer;
             }
 
             internal List<MapPlan> Plans { get; }
             internal List<Diagnostic> Diagnostics { get; }
+
+            /// <summary>Set when the target has no <c>ModuleInitializerAttribute</c> this assembly can use.</summary>
+            internal bool NeedsModuleInitializer { get; }
         }
 
         private static Requested ReadPairs(
@@ -194,6 +218,28 @@ namespace Mapsicle.SourceGen
 
             var marker = compilation.GetTypeByMetadataName(AttributeName);
             if (marker is null) return new Requested(plans, diagnostics);
+
+            if (compilation is CSharpCompilation { LanguageVersion: < LanguageVersion.CSharp9 } old)
+            {
+                // Only when the assembly asked for something. The package can arrive through a
+                // reference the author never looked at, and a warning about pairs nobody declared
+                // is noise.
+                if (AsksForGeneration(compilation, marker))
+                {
+                    diagnostics.Add(Diagnostic.Create(
+                        LanguageTooOld, Location.None, old.LanguageVersion.ToDisplayString()));
+                }
+
+                return new Requested(plans, diagnostics);
+            }
+
+            // A copy already in this assembly's source is used as it stands, since a second one
+            // would be a duplicate definition. A non-public copy in a referenced assembly is not
+            // relied on, whether or not it happens to be visible from here.
+            var initializer = compilation.GetTypeByMetadataName(ModuleInitializerName);
+            var needsModuleInitializer = initializer is null
+                || (initializer.DeclaredAccessibility != Accessibility.Public
+                    && !SymbolEqualityComparer.Default.Equals(initializer.ContainingAssembly, compilation.Assembly));
 
             var index = 0;
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -233,7 +279,7 @@ namespace Mapsicle.SourceGen
                 && compilation.Assembly.GetAttributes().Any(
                     a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, allMarker));
 
-            if (!scanAll) return new Requested(plans, diagnostics);
+            if (!scanAll) return new Requested(plans, diagnostics, needsModuleInitializer);
 
             foreach (var candidate in scanned
                          .Where(c => c is not null)
@@ -261,7 +307,17 @@ namespace Mapsicle.SourceGen
                 index++;
             }
 
-            return new Requested(plans, diagnostics);
+            return new Requested(plans, diagnostics, needsModuleInitializer);
+        }
+
+        /// <summary>Whether the assembly carries either attribute that asks for generated mappers.</summary>
+        private static bool AsksForGeneration(Compilation compilation, INamedTypeSymbol marker)
+        {
+            var allMarker = compilation.GetTypeByMetadataName(GenerateAllAttributeName);
+
+            return compilation.Assembly.GetAttributes().Any(
+                a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, marker)
+                     || (allMarker is not null && SymbolEqualityComparer.Default.Equals(a.AttributeClass, allMarker)));
         }
 
         /// <summary>A stable key for a pair, so the two doors cannot emit it twice.</summary>
@@ -1402,10 +1458,28 @@ namespace Mapsicle.SourceGen
         /// write and cannot edit. Prefixing unconditionally is valid for ordinary identifiers too,
         /// so there is no keyword table to keep current.
         /// </remarks>
-        private static string Emit(List<MapPlan> plans)
+        private static string Emit(List<MapPlan> plans, bool needsModuleInitializer)
         {
             var sb = new StringBuilder();
             Preamble(sb);
+
+            // netstandard2.0 and .NET Framework have no ModuleInitializerAttribute, and the file
+            // referenced it anyway, so a project on either failed with CS0234. The compiler only
+            // looks for the name, so declaring it here is enough, and every runtime runs a module
+            // initializer. CS0436 is for a referenced assembly that exposes its own copy.
+            if (needsModuleInitializer)
+            {
+                sb.AppendLine("#pragma warning disable CS0436");
+                sb.AppendLine();
+                sb.AppendLine("namespace System.Runtime.CompilerServices");
+                sb.AppendLine("{");
+                sb.AppendLine("    [global::System.AttributeUsage(global::System.AttributeTargets.Method, Inherited = false)]");
+                sb.AppendLine("    internal sealed class ModuleInitializerAttribute : global::System.Attribute");
+                sb.AppendLine("    {");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+                sb.AppendLine();
+            }
 
             sb.AppendLine("namespace Mapsicle.Generated");
             sb.AppendLine("{");
