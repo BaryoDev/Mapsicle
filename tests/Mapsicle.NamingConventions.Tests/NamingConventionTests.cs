@@ -48,8 +48,8 @@ public class NamingConventionTests
     [Theory]
     [InlineData("UserName", new[] { "User", "Name" })]
     [InlineData("FirstName", new[] { "First", "Name" })]
-    [InlineData("ID", new[] { "I", "D" })]
-    [InlineData("XMLParser", new[] { "X", "M", "L", "Parser" })]
+    [InlineData("ID", new[] { "ID" })]
+    [InlineData("XMLParser", new[] { "XML", "Parser" })]
     [InlineData("userId", new[] { "user", "Id" })]
     public void PascalCase_ToWords_SplitsCorrectly(string input, string[] expected)
     {

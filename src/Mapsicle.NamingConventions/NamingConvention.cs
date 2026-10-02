@@ -9,11 +9,14 @@ namespace Mapsicle.NamingConventions
     /// </summary>
     public abstract class NamingConvention
     {
-        // Compiled regex for better performance - splits on word boundaries
-        // Matches sequences like "User", "Name", "ID", "XMLParser", etc.
+        // The capitalised-word alternative used to come first and accept a lone capital, so the
+        // acronym alternative never ran and "HTTPServerID" split into H, T, T, P, Server, I, D. The
+        // classes were ASCII only, so "StraßeName" lost its ß and split around the gap.
         /// <summary>Splits an identifier into words at case changes and separators.</summary>
         protected static readonly Regex WordBoundaryRegex = new(
-                @"([A-Z][a-z0-9]*|[A-Z]+(?=[A-Z][a-z]|$)|[a-z0-9]+)",
+                @"[\p{Lu}\p{Lt}]+(?>\p{Nd}*)(?![\p{Ll}\p{Lo}\p{Lm}\p{M}])"
+                + @"|[\p{Lu}\p{Lt}][\p{Ll}\p{Lo}\p{Lm}\p{M}\p{Nd}]*"
+                + @"|[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{Nd}]+",
                 RegexOptions.Compiled);
 
         /// <summary>
@@ -57,6 +60,17 @@ namespace Mapsicle.NamingConventions
         /// </summary>
         public abstract string FromWords(string[] words);
 
+        internal static string[] SplitAtCaseChanges(string name)
+        {
+            var matches = WordBoundaryRegex.Matches(name);
+            var words = new string[matches.Count];
+            for (int i = 0; i < matches.Count; i++)
+            {
+                words[i] = matches[i].Value;
+            }
+            return words;
+        }
+
         /// <summary>
         /// Converts a name from one convention to another.
         /// </summary>
@@ -76,17 +90,13 @@ namespace Mapsicle.NamingConventions
             if (string.IsNullOrEmpty(sourceName) || string.IsNullOrEmpty(destName))
                 return false;
 
-            var sourceWords = sourceConvention.ToWords(sourceName);
-            var destWords = destConvention.ToWords(destName);
-
-            if (sourceWords.Length != destWords.Length) return false;
-
-            for (int i = 0; i < sourceWords.Length; i++)
-            {
-                if (!string.Equals(sourceWords[i], destWords[i], StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
-            return true;
+            // Compared word by word, this refused address_line_1 against AddressLine1, because one
+            // side has three words and the other two. Where a word ends is a property of the
+            // convention, not of the name, so only the letters are compared.
+            return string.Equals(
+                string.Concat(sourceConvention.ToWords(sourceName)),
+                string.Concat(destConvention.ToWords(destName)),
+                StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -96,14 +106,7 @@ namespace Mapsicle.NamingConventions
 
         public override string[] ToWords(string name)
         {
-            // Use compiled regex for better performance
-            var matches = WordBoundaryRegex.Matches(name);
-            var words = new string[matches.Count];
-            for (int i = 0; i < matches.Count; i++)
-            {
-                words[i] = matches[i].Value;
-            }
-            return words;
+            return SplitAtCaseChanges(name);
         }
 
         public override string FromWords(string[] words)
@@ -126,14 +129,7 @@ namespace Mapsicle.NamingConventions
 
         public override string[] ToWords(string name)
         {
-            // Use compiled regex for better performance
-            var matches = WordBoundaryRegex.Matches(name);
-            var words = new string[matches.Count];
-            for (int i = 0; i < matches.Count; i++)
-            {
-                words[i] = matches[i].Value;
-            }
-            return words;
+            return SplitAtCaseChanges(name);
         }
 
         public override string FromWords(string[] words)

@@ -13,6 +13,8 @@ namespace Mapsicle.NamingConventions
     public static class NamingConventionExtensions
     {
         private static readonly ConcurrentDictionary<(Type, Type, string, string), Dictionary<string, string>> _propertyMappingCache = new();
+        private static readonly ConcurrentDictionary<(Type, Type), HashSet<string>> _boundMemberCache = new();
+        private static readonly ConcurrentDictionary<Type, Dictionary<string, object?>> _initialValueCache = new();
 
         /// <summary>
         /// Creates a mapper that applies naming conventions when matching properties.
@@ -100,26 +102,29 @@ namespace Mapsicle.NamingConventions
             var sourceType = typeof(TSource);
             var destType = typeof(TDest);
 
-            // A member the configuration ignores is left at its default by the mapper, which is
-            // exactly what this pass reads as "not mapped yet", so it used to fill it anyway.
+            // "Not mapped yet" used to mean equal to default(T) and nothing else. A string initialised
+            // to "" or a list initialised to a new instance was therefore never filled, and a member
+            // the configuration ignored or resolved to its default was filled over. The mapper and
+            // its configuration are asked first, and the value only decides what neither accounts for.
             var typeMap = (mapper as FluentMapper)?.Configuration.GetTypeMap(sourceType, destType);
+            var bound = _boundMemberCache.GetOrAdd(
+                (source.GetType(), dest.GetType()),
+                pair => new HashSet<string>(Mapper.GetBoundMembers(pair.Item1, pair.Item2).Keys, StringComparer.OrdinalIgnoreCase));
+            var initialValues = _initialValueCache.GetOrAdd(destType, _ => ReadInitialValues(new TDest()));
 
             foreach (var mapping in propertyMappings)
             {
-                if (typeMap?.IsIgnored(mapping.Value) == true) continue;
+                if (bound.Contains(mapping.Value)) continue;
+                if (typeMap?.IsIgnored(mapping.Value) == true || typeMap?.HasCustomMapping(mapping.Value) == true) continue;
 
                 var sourceProp = sourceType.GetProperty(mapping.Key);
                 var destProp = destType.GetProperty(mapping.Value);
 
                 if (sourceProp?.GetGetMethod() != null && destProp?.CanWrite == true)
                 {
-                    // Only set if dest property is default/null (wasn't mapped by standard mapper)
-                    var currentValue = destProp.GetValue(dest);
-                    var defaultValue = destProp.PropertyType.IsValueType
-                        ? Activator.CreateInstance(destProp.PropertyType)
-                        : null;
+                    initialValues.TryGetValue(destProp.Name, out var initialValue);
 
-                    if (Equals(currentValue, defaultValue))
+                    if (StillUnset(destProp.GetValue(dest), initialValue))
                     {
                         try
                         {
@@ -204,7 +209,37 @@ namespace Mapsicle.NamingConventions
         /// <summary>
         /// Clears the property mapping cache. Useful for testing scenarios.
         /// </summary>
-        public static void ClearMappingCache() => _propertyMappingCache.Clear();
+        public static void ClearMappingCache()
+        {
+            _propertyMappingCache.Clear();
+            _boundMemberCache.Clear();
+            _initialValueCache.Clear();
+        }
+
+        // A hook such as AfterMap can set a member nothing else accounts for, and a value that moved
+        // off its initial one is the only sign of it. An initializer that builds a new instance
+        // gives every destination a different reference, so there the comparison says nothing and
+        // the member is filled.
+        private static bool StillUnset(object? current, object? initial) =>
+            Equals(current, initial) || initial is not (null or string or ValueType);
+
+        private static Dictionary<string, object?> ReadInitialValues(object fresh)
+        {
+            var values = new Dictionary<string, object?>();
+            foreach (var prop in fresh.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (prop.GetGetMethod() == null || prop.GetIndexParameters().Length > 0) continue;
+                try
+                {
+                    values[prop.Name] = prop.GetValue(fresh);
+                }
+                catch (Exception)
+                {
+                    values[prop.Name] = null;
+                }
+            }
+            return values;
+        }
 
         private static object? ConvertValue(object value, Type targetType)
         {
