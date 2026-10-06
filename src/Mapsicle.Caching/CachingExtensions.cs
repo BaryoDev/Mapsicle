@@ -357,9 +357,28 @@ namespace Mapsicle.Caching
         /// <typeparam name="TDto">The DTO type.</typeparam>
         /// <param name="id">The entity ID.</param>
         /// <returns>The cache key.</returns>
+        /// <remarks>
+        /// Types are named by namespace, declaring type and generic arguments, without assembly
+        /// versions, so the key survives an upgrade and two types sharing a short name differ.
+        /// </remarks>
         public static string CreateEntityCacheKey<TEntity, TDto>(object id)
         {
-            return $"mapsicle:{typeof(TEntity).Name}:{typeof(TDto).Name}:{id}";
+            return $"mapsicle:{KeyName(typeof(TEntity))}:{KeyName(typeof(TDto))}:{id}";
+        }
+
+        // Type.Name made Billing.Invoice and Legacy.Invoice the same key, so a hit for one could be
+        // cast to the other. FullName alone embeds assembly versions in generic arguments.
+        private static string KeyName(Type type)
+        {
+            if (type.IsArray)
+                return $"{KeyName(type.GetElementType()!)}[{new string(',', type.GetArrayRank() - 1)}]";
+            if (!type.IsGenericType || type.IsGenericTypeDefinition)
+                return type.FullName ?? type.Name;
+
+            var arguments = type.GetGenericArguments();
+            var names = new string[arguments.Length];
+            for (var i = 0; i < arguments.Length; i++) names[i] = KeyName(arguments[i]);
+            return $"{type.GetGenericTypeDefinition().FullName}[{string.Join(",", names)}]";
         }
 
         #endregion

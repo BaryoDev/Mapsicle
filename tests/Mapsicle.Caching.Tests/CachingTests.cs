@@ -204,7 +204,45 @@ public class CachingTests
     {
         var key = CachingExtensions.CreateEntityCacheKey<User, UserDto>(123);
 
-        Assert.Equal("mapsicle:User:UserDto:123", key);
+        Assert.Equal("mapsicle:Mapsicle.Caching.Tests.CachingTests+User:Mapsicle.Caching.Tests.CachingTests+UserDto:123", key);
+    }
+
+    public static class Billing
+    {
+        public class Invoice { }
+        public class InvoiceDto { }
+    }
+
+    public static class Legacy
+    {
+        public class Invoice { }
+        public class InvoiceDto { }
+    }
+
+    [Fact]
+    public void CreateEntityCacheKey_SameNamedTypes_DoNotCollide()
+    {
+        Assert.NotEqual(
+            CachingExtensions.CreateEntityCacheKey<Billing.Invoice, Billing.InvoiceDto>(1),
+            CachingExtensions.CreateEntityCacheKey<Legacy.Invoice, Legacy.InvoiceDto>(1));
+    }
+
+    [Fact]
+    public void CreateEntityCacheKey_GenericArguments_DoNotCollide()
+    {
+        Assert.NotEqual(
+            CachingExtensions.CreateEntityCacheKey<List<Billing.Invoice>, Billing.InvoiceDto[]>(1),
+            CachingExtensions.CreateEntityCacheKey<List<Legacy.Invoice>, Legacy.InvoiceDto[]>(1));
+    }
+
+    [Fact]
+    public void CreateEntityCacheKey_GenericArguments_LeaveOutAssemblyVersions()
+    {
+        var key = CachingExtensions.CreateEntityCacheKey<List<int?>, Billing.InvoiceDto[,]>(1);
+
+        Assert.Equal(
+            "mapsicle:System.Collections.Generic.List`1[System.Nullable`1[System.Int32]]:Mapsicle.Caching.Tests.CachingTests+Billing+InvoiceDto[,]:1",
+            key);
     }
 
     #endregion
