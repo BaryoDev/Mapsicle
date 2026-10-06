@@ -23,6 +23,16 @@ generator, which adds to it. `[RequiresDynamicCode]` on the runtime fallback bel
 additive in the API listing and can still turn a consumer's AOT build noisy, which is the kind of
 change a major version exists to signal.
 
+## [2.5.0] - 2026-10-06
+
+### Changed
+
+- `CachingExtensions.CreateEntityCacheKey` names types by namespace, declaring type and generic
+  arguments instead of the short name, so `Billing.Invoice` and `Legacy.Invoice` no longer share a
+  key. Every key it returns changes: `mapsicle:User:UserDto:1` is now
+  `mapsicle:MyApp.User:MyApp.UserDto:1`. Entries stored under the old keys are missed, not misread,
+  and expire on their own.
+
 ## [2.4.2] - 2026-10-02
 
 ### Fixed
