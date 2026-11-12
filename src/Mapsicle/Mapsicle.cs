@@ -2267,21 +2267,40 @@ namespace Mapsicle
         /// <summary>
         /// Maps a dictionary to an object of type T.
         /// </summary>
-        public static T? MapTo<T>(this IDictionary<string, object?>? source) where T : new()
+        /// <remarks>
+        /// This overload had <c>where T : new()</c>. C# checks a constraint when it picks an
+        /// overload, so a dictionary mapped into a positional record or a type with <c>required</c>
+        /// members silently bound to the <c>IEnumerable</c> overload and returned a
+        /// <c>List&lt;T&gt;</c> holding one object built from a key value pair. Without the
+        /// constraint it binds, and a type with no parameterless constructor is built through the
+        /// public constructor with the most parameters, matched to keys by name. Among constructors
+        /// tied on parameter count, the one whose parameter names match the most dictionary keys
+        /// wins, then the one whose parameter type names sort first, so the choice does not depend
+        /// on reflection order. A constructor parameter with no matching key, or a value that does
+        /// not convert, gets the default of its type.
+        /// </remarks>
+        public static T? MapTo<T>(this IDictionary<string, object?>? source)
         {
             if (source is null) return default;
             DynamicCodeGuard.EnsureDictionarySupported(typeof(T));
-
-            var dest = new T();
-            var destProps = GetCachedWritableProperties(typeof(T));
 
             // Build case-insensitive lookup once
             var lookup = new Dictionary<string, object?>(source.Count, StringComparer.OrdinalIgnoreCase);
             foreach (var kvp in source) lookup[kvp.Key] = kvp.Value;
 
+            var dest = CreateFromDictionary<T>(lookup, out var constructed);
+            if (dest is null) return default;
+
+            var destProps = GetCachedWritableProperties(typeof(T));
+
+            // Boxed once. SetValue on a struct writes to the box it is handed, so passing the value
+            // each time wrote every property to a throwaway copy.
+            object boxed = dest!;
+
             foreach (var prop in destProps)
             {
                 if (prop.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
+                if (constructed != null && constructed.Contains(prop.Name)) continue;
 
                 var mapFromAttr = prop.GetCustomAttribute<MapFromAttribute>();
                 string key = mapFromAttr?.SourcePropertyName ?? prop.Name;
@@ -2292,7 +2311,7 @@ namespace Mapsicle
                     {
                         if (TryConvertDictionaryValue(value, prop.PropertyType, out var converted))
                         {
-                            prop.SetValue(dest, converted);
+                            prop.SetValue(boxed, converted);
                         }
                         else
                         {
@@ -2308,12 +2327,75 @@ namespace Mapsicle
                 }
             }
 
-            return dest;
+            return (T)boxed;
         }
 
         #endregion
 
         #region Private Helpers
+
+        /// <summary>
+        /// Creates the destination for the dictionary entry point: the parameterless constructor when
+        /// there is one, otherwise the public constructor chosen as the dictionary entry point documents.
+        /// </summary>
+        /// <param name="lookup">The dictionary, keyed without regard to case.</param>
+        /// <param name="constructed">Names of the members the constructor call already supplied.</param>
+        private static T? CreateFromDictionary<T>(Dictionary<string, object?> lookup, out HashSet<string>? constructed)
+        {
+            constructed = null;
+            var type = typeof(T);
+
+            if (type.IsValueType || type.GetConstructor(Type.EmptyTypes) != null)
+            {
+                return Activator.CreateInstance<T>();
+            }
+
+            if (type.IsAbstract || type.IsInterface) return default;
+
+            // Most parameters, then the most parameter names present as keys, then parameter type
+            // names in ordinal order, so two equal candidates never depend on reflection order.
+            var ctor = type.GetConstructors()
+                .OrderByDescending(c => c.GetParameters().Length)
+                .ThenByDescending(c => c.GetParameters().Count(p => p.Name != null && lookup.ContainsKey(p.Name)))
+                .ThenBy(c => string.Join(",", c.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name)), StringComparer.Ordinal)
+                .FirstOrDefault();
+
+            if (ctor is null) return default;
+
+            var parameters = ctor.GetParameters();
+            var args = new object?[parameters.Length];
+            constructed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (var i = 0; i < parameters.Length; i++)
+            {
+                var parameter = parameters[i];
+                var name = parameter.Name ?? string.Empty;
+                object? converted = null;
+
+                if (lookup.TryGetValue(name, out var value) && value != null
+                    && TryConvertDictionaryValue(value, parameter.ParameterType, out var ok))
+                {
+                    converted = ok;
+                }
+                else if (parameter.ParameterType.IsValueType && Nullable.GetUnderlyingType(parameter.ParameterType) is null)
+                {
+                    converted = Activator.CreateInstance(parameter.ParameterType);
+                }
+
+                args[i] = converted;
+                constructed.Add(name);
+            }
+
+            try
+            {
+                return (T)ctor.Invoke(args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw;
+            }
+        }
 
         /// <summary>
         /// The dictionary entry point's conversion decision, matching what the compiled paths allow.
