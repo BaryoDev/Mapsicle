@@ -280,13 +280,16 @@ public class Program
         Console.WriteLine($"  AutoMapper_Single: {autoMapper.Value:F1} ns");
         Console.WriteLine($"  ratio: {ratio:F2}x {(ratio < 1 ? "(faster)" : "(slower)")}");
 
-        // Bounded at parity plus a tenth. The README states a number; this states only that the
-        // direction of the comparison still holds, which is what survives a change of hardware.
-        if (ratio > 1.10)
+        // The README says 1.30x to 1.44x faster, which is a ratio of 0.69 to 0.77. This was bounded
+        // at 1.10, so a mapper ten percent slower than AutoMapper passed while the README said it
+        // was faster. Ten consecutive green runs on this runner measured 0.70 to 0.84, so 0.95
+        // fails on losing the lead and keeps 0.11 of headroom for noise. It is not set on the README
+        // number, which is a measurement on other hardware.
+        if (ratio > 0.95)
         {
             ClaimFailures.Add(
                 $"Mapsicle is {ratio:F2}x AutoMapper on single-object mapping. The README claims it "
-              + "is faster. Update the code or the claim.");
+              + "is 1.30x to 1.44x faster and CI requires at most 0.95x. Update the code or the claim.");
         }
 
         // The collection row was published and checked by nothing, which is the pattern 2.0.0

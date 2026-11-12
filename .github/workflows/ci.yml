@@ -178,8 +178,9 @@ jobs:
   # gate used a hand-rolled loop, which on the same machine reported 290ns per map where
   # BenchmarkDotNet reported 33ns, so the gate is only as trustworthy as its instrument.
   #
-  # Bounded at parity plus a tenth. The README publishes a number; this asserts only that the
-  # direction of the comparison holds, which is what survives a change of hardware.
+  # Bounded loosely on purpose, and the README says which numbers this job enforces: a single object
+  # at most 0.95x AutoMapper, a 100-item collection no slower than AutoMapper, a declared pair at most
+  # 1.15x hand written. The published ratios are measurements on other hardware, not the bounds.
   claims:
     name: performance claims hold
     runs-on: ubuntu-latest

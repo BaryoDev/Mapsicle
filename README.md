@@ -81,7 +81,7 @@ configuring anything, and that an undeclared pair still maps instead of failing 
 | :-------- | :----- |
 | The compiler must prove every pair maps | **Mapperly.** A pair it cannot generate does not compile. Mapsicle warns with `MSG001` and falls back, which is safer at run time and weaker as a guarantee. |
 | A rename must never silently unmap a member | **Mapperly.** Its `[MapProperty]` uses `nameof`, so a rename is a compile error. Mapsicle's `[MapFrom]` takes a string and quietly stops matching. |
-| You need AOT with no path that can fall back to runtime code generation | **Mapperly.** Mapsicle's declared pairs are AOT clean, but an undeclared one throws `NotSupportedException` at first use under NativeAOT, and nothing at build time stops you leaving one undeclared by accident. |
+| You need AOT with no path that can fall back to runtime code generation | **Mapperly.** Mapsicle's declared pairs run under NativeAOT (CI publishes a smoke binary and runs it), though the library still emits trim and AOT analysis warnings from its runtime fallback, and an undeclared pair throws `NotSupportedException` at first use, and nothing at build time stops you leaving one undeclared by accident. |
 | Collection throughput at around a hundred elements bounds your workload | **Mapperly**, by about 12 percent over an undeclared Mapsicle pair on x64. A declared pair closes that. |
 | You want AutoMapper's configuration API without AutoMapper's licence | **Mapster.** Its fluent config is deliberately shaped like `CreateMap`, so porting is mechanical. Mapsicle's fluent API is its own shape. |
 
@@ -89,6 +89,13 @@ Mapsicle is 1.30x to 1.44x faster than AutoMapper on single objects depending on
 1.09x to 1.20x on collections, and faster again on deeply nested graphs and large collections. Against
 Mapperly and Mapster the gap is ten percent either way. All of that is measured below, and all of it
 is a supporting argument rather than the reason to switch.
+
+Those figures come from the author's machines and are not what CI enforces. The `claims` job runs on a
+shared x64 runner and fails if a single object is slower than 0.95x AutoMapper's time (recent runs
+sit at 0.70 to 0.84), if a 100-item collection is slower than AutoMapper at all (0.78 to 0.89), or if
+a declared pair is more than 1.15x hand written code. The 1.00x plus or minus 0.05 band is checked
+only by `--band` on an idle machine, which no workflow runs, and the Mapperly and Mapster ratios, the
+1.80x undeclared row, first-map time and the arm64 numbers are not gated.
 
 ### Quick Comparison
 
@@ -234,7 +241,7 @@ loops side by side.
 |----------|----------------|-----|
 | **Fastest warm mapping** | **Mapsicle**, pair declared | 1.00x hand written, against 1.08 and 1.09 for Mapperly and Mapster. Ten percent, which is a tiebreaker rather than a reason |
 | **The compiler must prove every pair maps** | **Mapperly** | A pair it cannot generate does not compile. Mapsicle warns and falls back, which is safer at run time and weaker as a guarantee |
-| **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs are AOT clean, but an undeclared one throws `NotSupportedException` at run time. Mapperly has no such path to leave open by accident |
+| **AOT, and nothing may fall back to reflection** | **Mapperly** | Mapsicle's declared pairs run under NativeAOT, but publishing reports trim and AOT analysis warnings from the runtime fallback, and an undeclared pair throws `NotSupportedException` at run time. Mapperly has no such path to leave open by accident |
 | **AOT, and you will declare every pair** | **Mapsicle** or **Mapperly** | Both work. Check the build for `MSG001` if you pick Mapsicle |
 | **An object graph with reference cycles** | **AutoMapper**, or **Mapsicle** | AutoMapper preserves the reference so the cycle survives intact. Mapsicle terminates and returns something usable, but expands the cycle to `MaxDepth` (32) nested copies before it stops. Mapperly and Mapster both abort the process on default settings, and both are correct with one line of configuration |
 | **Quick prototyping, zero setup** | **Mapsicle** or **Mapster** | Neither asks for configuration. Mapsicle additionally lets you add the generator later without touching a call site |
