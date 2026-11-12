@@ -50,6 +50,36 @@ namespace Mapsicle
                 return srcType == targetType ? propExp : Expression.Convert(propExp, targetType);
             }
 
+            // A sequence into an interface the core can fill with a List<T>, or into an ImmutableList<T>.
+            // The nested rule below tests IsClass, so IList<Dto>, IReadOnlyList<Dto> and the rest of
+            // these were skipped and the member stayed null while List<Dto> and Dto[] filled. The list
+            // is built as a List<T> and handed over as the interface, or copied into an immutable list.
+            if (IsMappableSource(srcType) && TryGetCollectionDestination(targetType, out var itemType, out var immutable)
+                && ElementTypeOf(srcType) is { } sourceItem && !IsKeyValuePair(sourceItem))
+            {
+                var listType = typeof(List<>).MakeGenericType(itemType);
+
+                if (HasUnconvertibleScalarElements(srcType, listType))
+                {
+                    return null;
+                }
+
+                var list = buildNestedMap(propExp, listType);
+                if (!immutable) return Expression.Convert(list, targetType);
+
+                // CreateRange throws on null, and a null source collection maps to null like the
+                // other collection members.
+                var built = Expression.Variable(listType, "built");
+                return Expression.Block(
+                    targetType,
+                    new[] { built },
+                    Expression.Assign(built, list),
+                    Expression.Condition(
+                        Expression.Equal(built, Expression.Constant(null, listType)),
+                        Expression.Default(targetType),
+                        Expression.Call(CreateImmutableListMethod(targetType, itemType), built)));
+            }
+
             // Nested complex object. string is excluded on both sides: it is a class, but mapping into
             // or out of it means ToString or parsing, not member-by-member mapping.
             //
@@ -125,6 +155,56 @@ namespace Mapsicle
             }
 
             return null;
+        }
+
+        private static bool IsKeyValuePair(Type type) =>
+            type.IsGenericType && type.GetGenericTypeDefinition() == typeof(KeyValuePair<,>);
+
+        /// <summary>
+        /// Whether the destination is one of the collection interfaces a <c>List&lt;T&gt;</c> satisfies,
+        /// or an <c>ImmutableList&lt;T&gt;</c>, and the element type it holds.
+        /// </summary>
+        /// <remarks>
+        /// The immutable type is matched by name. The core targets netstandard2.0 and stays free of
+        /// package dependencies, so it cannot reference System.Collections.Immutable. A destination
+        /// of that type means the consumer's own compilation already has the assembly loaded.
+        /// </remarks>
+        internal static bool TryGetCollectionDestination(Type targetType, out Type itemType, out bool immutable)
+        {
+            itemType = null!;
+            immutable = false;
+
+            if (!targetType.IsGenericType) return false;
+
+            var definition = targetType.GetGenericTypeDefinition();
+            if (definition == typeof(IList<>)
+                || definition == typeof(ICollection<>)
+                || definition == typeof(IEnumerable<>)
+                || definition == typeof(IReadOnlyList<>)
+                || definition == typeof(IReadOnlyCollection<>))
+            {
+                itemType = targetType.GetGenericArguments()[0];
+                return true;
+            }
+
+            if (definition.FullName == "System.Collections.Immutable.ImmutableList`1")
+            {
+                itemType = targetType.GetGenericArguments()[0];
+                immutable = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static MethodInfo CreateImmutableListMethod(Type immutableListType, Type itemType)
+        {
+            var holder = immutableListType.Assembly.GetType("System.Collections.Immutable.ImmutableList", throwOnError: true)!;
+            return holder.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .First(m => m.Name == "CreateRange" && m.GetParameters().Length == 1
+                    && m.GetParameters()[0].ParameterType.IsGenericType
+                    && m.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                .MakeGenericMethod(itemType);
         }
 
         /// <summary>

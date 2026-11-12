@@ -729,7 +729,28 @@ namespace Mapsicle.SourceGen
             if (sourceElement is null) return null;
 
             if (to is not INamedTypeSymbol { IsGenericType: true } list) return null;
-            if (list.ConstructedFrom.ToDisplayString() != "System.Collections.Generic.List<T>") return null;
+
+            // The collection interfaces a List<T> satisfies, and ImmutableList<T>, are filled the way
+            // the engine fills them: build the List<T>, then hand it over as the interface or copy it
+            // into the immutable list. Anything else that is not a List<T> is refused.
+            var wrap = CollectionWrap.None;
+            switch (list.ConstructedFrom.ToDisplayString())
+            {
+                case "System.Collections.Generic.List<T>":
+                    break;
+                case "System.Collections.Generic.IList<T>":
+                case "System.Collections.Generic.ICollection<T>":
+                case "System.Collections.Generic.IEnumerable<T>":
+                case "System.Collections.Generic.IReadOnlyList<T>":
+                case "System.Collections.Generic.IReadOnlyCollection<T>":
+                    wrap = CollectionWrap.Interface;
+                    break;
+                case "System.Collections.Immutable.ImmutableList<T>":
+                    wrap = CollectionWrap.Immutable;
+                    break;
+                default:
+                    return null;
+            }
 
             var destElement = list.TypeArguments[0];
             var key = Key(sourceElement, destElement, HelperKind.List) + (sourceIsArray ? "[]" : "");
@@ -744,7 +765,7 @@ namespace Mapsicle.SourceGen
 
             if (context.TryGetHelper(key, out var existing))
             {
-                return $"{existing.Name}({expression})";
+                return WrapCollection($"{existing.Name}({expression})", wrap, to, context);
             }
 
             var helper = context.Begin(key, HelperKind.List, Full(sourceElement), Full(destElement));
@@ -767,7 +788,24 @@ namespace Mapsicle.SourceGen
             }
 
             helper.ElementExpression = element;
-            return $"{helper.Name}({expression})";
+            return WrapCollection($"{helper.Name}({expression})", wrap, to, context);
+        }
+
+        private enum CollectionWrap { None, Interface, Immutable }
+
+        private static string WrapCollection(string call, CollectionWrap wrap, ITypeSymbol to, PlanContext context)
+        {
+            switch (wrap)
+            {
+                case CollectionWrap.Interface:
+                    return $"({Full(to)}){call}";
+                case CollectionWrap.Immutable:
+                    // CreateRange throws on null, so a null list maps to null as the engine does.
+                    var name = $"__list{context.NextTemp()}";
+                    return $"({call} is {{ }} {name} ? global::System.Collections.Immutable.ImmutableList.CreateRange({name}) : null)";
+                default:
+                    return call;
+            }
         }
 
         /// <summary>The conversion the engine's collection element path performs, or null.</summary>
@@ -1386,6 +1424,8 @@ namespace Mapsicle.SourceGen
             internal PlanContext(string prefix) => Prefix = prefix;
 
             internal string Prefix { get; }
+
+            internal int NextTemp() => _next++;
 
             internal IEnumerable<Helper> Helpers => _helpers.Values;
 

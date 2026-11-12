@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AutoMapper;
 using Mapsicle;
 using Xunit;
@@ -44,6 +45,43 @@ namespace Mapsicle.Parity.Tests
             Assert.NotNull(automapper);
             Assert.NotNull(mapsicle);
             Assert.Equal(automapper!.Name, mapsicle!.Name);
+        }
+
+        [Fact]
+        public void AListIntoInterfaceTypedMembers_BothFillThem()
+        {
+            var source = new SeqSource { Items = new List<SeqItem> { new() { A = 1 }, new() { A = 2 } } };
+
+            var automapper = NewConfig(c =>
+            {
+                c.CreateMap<SeqItem, SeqItemDto>();
+                c.CreateMap<SeqSource, SeqDest>();
+            }).Map<SeqDest>(source);
+            Mapper.ClearCache();
+            var mapsicle = ((object)source).MapTo<SeqDest>();
+
+            Assert.Equal(2, automapper.Items!.Count);
+            Assert.Equal(2, automapper.Many!.Count);
+            Assert.NotNull(mapsicle);
+            Assert.Equal(automapper.Items.Count, mapsicle!.Items!.Count);
+            Assert.Equal(automapper.Many.Count, mapsicle.Many!.Count);
+            Assert.Equal(2, mapsicle.Seq!.Count());
+            Assert.Equal(2, mapsicle.Items[1].A);
+        }
+
+        public class SeqItem { public int A { get; set; } }
+        public class SeqItemDto { public int A { get; set; } }
+        public class SeqSource
+        {
+            public List<SeqItem> Items { get; set; } = new();
+            public List<SeqItem> Many => Items;
+            public List<SeqItem> Seq => Items;
+        }
+        public class SeqDest
+        {
+            public IReadOnlyList<SeqItemDto>? Items { get; set; }
+            public ICollection<SeqItemDto>? Many { get; set; }
+            public IEnumerable<SeqItemDto>? Seq { get; set; }
         }
 
         // ---- Conversions where the two must agree ------------------------------------------------

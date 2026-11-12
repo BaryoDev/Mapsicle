@@ -619,6 +619,9 @@ than on single objects.
 **4. Type collection members as `List<T>` or `T[]`.** The emitted loop indexes the source, which is
 where most of the margin over Mapperly comes from. A member declared `IEnumerable<T>` cannot be
 indexed, so the pair is refused and stays on the engine.
+A destination member typed `IList<T>`, `ICollection<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`,
+`IReadOnlyCollection<T>` or `ImmutableList<T>` is filled from a `List<T>` or array source in both
+lanes.
 
 **5. Read the build output for `MSG001`.** That warning is the generator telling you a pair you asked
 for fell back:
