@@ -2273,7 +2273,11 @@ namespace Mapsicle
         /// members silently bound to the <c>IEnumerable</c> overload and returned a
         /// <c>List&lt;T&gt;</c> holding one object built from a key value pair. Without the
         /// constraint it binds, and a type with no parameterless constructor is built through the
-        /// public constructor with the most parameters, matched to keys by name.
+        /// public constructor with the most parameters, matched to keys by name. Among constructors
+        /// tied on parameter count, the one whose parameter names match the most dictionary keys
+        /// wins, then the one whose parameter type names sort first, so the choice does not depend
+        /// on reflection order. A constructor parameter with no matching key, or a value that does
+        /// not convert, gets the default of its type.
         /// </remarks>
         public static T? MapTo<T>(this IDictionary<string, object?>? source)
         {
@@ -2289,6 +2293,10 @@ namespace Mapsicle
 
             var destProps = GetCachedWritableProperties(typeof(T));
 
+            // Boxed once. SetValue on a struct writes to the box it is handed, so passing the value
+            // each time wrote every property to a throwaway copy.
+            object boxed = dest!;
+
             foreach (var prop in destProps)
             {
                 if (prop.GetCustomAttribute<IgnoreMapAttribute>() != null) continue;
@@ -2303,7 +2311,7 @@ namespace Mapsicle
                     {
                         if (TryConvertDictionaryValue(value, prop.PropertyType, out var converted))
                         {
-                            prop.SetValue(dest, converted);
+                            prop.SetValue(boxed, converted);
                         }
                         else
                         {
@@ -2319,7 +2327,7 @@ namespace Mapsicle
                 }
             }
 
-            return dest;
+            return (T)boxed;
         }
 
         #endregion
@@ -2328,7 +2336,7 @@ namespace Mapsicle
 
         /// <summary>
         /// Creates the destination for the dictionary entry point: the parameterless constructor when
-        /// there is one, otherwise the public constructor with the most parameters.
+        /// there is one, otherwise the public constructor chosen as the dictionary entry point documents.
         /// </summary>
         /// <param name="lookup">The dictionary, keyed without regard to case.</param>
         /// <param name="constructed">Names of the members the constructor call already supplied.</param>
@@ -2344,17 +2352,13 @@ namespace Mapsicle
 
             if (type.IsAbstract || type.IsInterface) return default;
 
-            ConstructorInfo? ctor = null;
-            var maxParams = -1;
-            foreach (var candidate in type.GetConstructors())
-            {
-                var count = candidate.GetParameters().Length;
-                if (count > maxParams)
-                {
-                    maxParams = count;
-                    ctor = candidate;
-                }
-            }
+            // Most parameters, then the most parameter names present as keys, then parameter type
+            // names in ordinal order, so two equal candidates never depend on reflection order.
+            var ctor = type.GetConstructors()
+                .OrderByDescending(c => c.GetParameters().Length)
+                .ThenByDescending(c => c.GetParameters().Count(p => p.Name != null && lookup.ContainsKey(p.Name)))
+                .ThenBy(c => string.Join(",", c.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name)), StringComparer.Ordinal)
+                .FirstOrDefault();
 
             if (ctor is null) return default;
 

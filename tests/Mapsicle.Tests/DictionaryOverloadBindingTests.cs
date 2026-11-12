@@ -23,7 +23,16 @@ namespace Mapsicle.Tests
 
         public record DbMixed(int A) { public string? B { get; set; } }
 
-        public struct DbStruct { public int A { get; set; } }
+        public struct DbStruct { public int A { get; set; } public string? B { get; set; } }
+
+        public class DbTied
+        {
+            public DbTied(int a, string b) { Used = "ab"; A = a; }
+            public DbTied(int a, long c) { Used = "ac"; A = a; }
+            public DbTied(string z, int y) { Used = "zy"; }
+            public string Used { get; }
+            public int A { get; }
+        }
 
         private static Dictionary<string, object?> Row() => new() { ["a"] = 5, ["B"] = "x" };
 
@@ -83,6 +92,25 @@ namespace Mapsicle.Tests
             var result = Row().MapTo<DbStruct>();
 
             Assert.Equal(5, result.A);
+            Assert.Equal("x", result.B);
+        }
+
+        [Fact]
+        public void TheConstructorWithTheMostMatchingKeysWinsAmongTies()
+        {
+            Assert.Equal("ab", new Dictionary<string, object?> { ["a"] = 4, ["b"] = "x" }.MapTo<DbTied>()!.Used);
+            Assert.Equal("ac", new Dictionary<string, object?> { ["a"] = 4, ["c"] = 9L }.MapTo<DbTied>()!.Used);
+            Assert.Equal("zy", new Dictionary<string, object?> { ["z"] = "q", ["y"] = 1 }.MapTo<DbTied>()!.Used);
+        }
+
+        [Fact]
+        public void WithNoMatchingKeysTheParameterTypeNamesDecide()
+        {
+            // (int, long) sorts before (int, string) and (string, int), on every run.
+            for (var i = 0; i < 20; i++)
+            {
+                Assert.Equal("ac", new Dictionary<string, object?>().MapTo<DbTied>()!.Used);
+            }
         }
 
         [Fact]
