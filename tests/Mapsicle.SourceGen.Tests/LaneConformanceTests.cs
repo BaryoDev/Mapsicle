@@ -727,6 +727,16 @@ namespace Mapsicle.SourceGen.Tests
         }
 
         [Fact]
+        public void ANullListIntoAnImmutableListMemberAgrees()
+        {
+            var source = new ConfSeq { E = null! };
+
+            LanesAgree<ConfSeq, ConfSeqDto>(source, d => d.E is null);
+
+            Assert.Null(((object)source).MapTo<ConfSeqDto>()!.E);
+        }
+
+        [Fact]
         public void EveryDeclaredPairWasActuallyGenerated()
         {
             // Without this the suite is decorative. A refused pair falls back to the runtime engine,

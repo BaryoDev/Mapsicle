@@ -65,9 +65,19 @@ namespace Mapsicle
                 }
 
                 var list = buildNestedMap(propExp, listType);
-                return immutable
-                    ? Expression.Call(CreateImmutableListMethod(targetType, itemType), list)
-                    : Expression.Convert(list, targetType);
+                if (!immutable) return Expression.Convert(list, targetType);
+
+                // CreateRange throws on null, and a null source collection maps to null like the
+                // other collection members.
+                var built = Expression.Variable(listType, "built");
+                return Expression.Block(
+                    targetType,
+                    new[] { built },
+                    Expression.Assign(built, list),
+                    Expression.Condition(
+                        Expression.Equal(built, Expression.Constant(null, listType)),
+                        Expression.Default(targetType),
+                        Expression.Call(CreateImmutableListMethod(targetType, itemType), built)));
             }
 
             // Nested complex object. string is excluded on both sides: it is a class, but mapping into

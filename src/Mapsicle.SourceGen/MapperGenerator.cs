@@ -765,7 +765,7 @@ namespace Mapsicle.SourceGen
 
             if (context.TryGetHelper(key, out var existing))
             {
-                return WrapCollection($"{existing.Name}({expression})", wrap, to);
+                return WrapCollection($"{existing.Name}({expression})", wrap, to, context);
             }
 
             var helper = context.Begin(key, HelperKind.List, Full(sourceElement), Full(destElement));
@@ -788,17 +788,25 @@ namespace Mapsicle.SourceGen
             }
 
             helper.ElementExpression = element;
-            return WrapCollection($"{helper.Name}({expression})", wrap, to);
+            return WrapCollection($"{helper.Name}({expression})", wrap, to, context);
         }
 
         private enum CollectionWrap { None, Interface, Immutable }
 
-        private static string WrapCollection(string call, CollectionWrap wrap, ITypeSymbol to) => wrap switch
+        private static string WrapCollection(string call, CollectionWrap wrap, ITypeSymbol to, PlanContext context)
         {
-            CollectionWrap.Interface => $"({Full(to)}){call}",
-            CollectionWrap.Immutable => $"global::System.Collections.Immutable.ImmutableList.CreateRange({call})",
-            _ => call,
-        };
+            switch (wrap)
+            {
+                case CollectionWrap.Interface:
+                    return $"({Full(to)}){call}";
+                case CollectionWrap.Immutable:
+                    // CreateRange throws on null, so a null list maps to null as the engine does.
+                    var name = $"__list{context.NextTemp()}";
+                    return $"({call} is {{ }} {name} ? global::System.Collections.Immutable.ImmutableList.CreateRange({name}) : null)";
+                default:
+                    return call;
+            }
+        }
 
         /// <summary>The conversion the engine's collection element path performs, or null.</summary>
         /// <remarks>
@@ -1416,6 +1424,8 @@ namespace Mapsicle.SourceGen
             internal PlanContext(string prefix) => Prefix = prefix;
 
             internal string Prefix { get; }
+
+            internal int NextTemp() => _next++;
 
             internal IEnumerable<Helper> Helpers => _helpers.Values;
 

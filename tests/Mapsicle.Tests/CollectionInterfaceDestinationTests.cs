@@ -110,6 +110,17 @@ namespace Mapsicle.Tests
         public class CidArraySource { public CidItem[] Items { get; set; } = System.Array.Empty<CidItem>(); }
 
         [Fact]
+        public void ANullListIntoAnImmutableListMemberIsNull()
+        {
+            var source = new CidSource { Items = null! };
+
+            Assert.Null(source.MapTo<CidImmutable>()!.Items);
+
+            using var factory = MapperFactory.Create();
+            Assert.Null(factory.MapTo<CidImmutable>(source)!.Items);
+        }
+
+        [Fact]
         public void AnEmptyListGivesAnEmptyInterfaceMember()
         {
             var dto = new CidSource().MapTo<CidIReadOnlyList>()!;
