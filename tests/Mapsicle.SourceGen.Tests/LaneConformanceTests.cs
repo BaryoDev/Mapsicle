@@ -28,6 +28,7 @@ using Xunit;
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfOwner), typeof(Mapsicle.SourceGen.Tests.ConfOwnerDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfKennel), typeof(Mapsicle.SourceGen.Tests.ConfKennelDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfTagged), typeof(Mapsicle.SourceGen.Tests.ConfTaggedDto))]
+[assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfSeq), typeof(Mapsicle.SourceGen.Tests.ConfSeqDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.FaceArray), typeof(Mapsicle.SourceGen.Tests.FaceArrayDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.FaceImplArray), typeof(Mapsicle.SourceGen.Tests.FaceImplArrayDto))]
 [assembly: MapsicleGenerate(typeof(Mapsicle.SourceGen.Tests.ConfRoot), typeof(Mapsicle.SourceGen.Tests.ConfRootDto))]
@@ -204,6 +205,17 @@ namespace Mapsicle.SourceGen.Tests
 
     // An array into a list of the same element type. The engine builds a new element for each one,
     // and the emitter put the source instances in the list.
+    public class ConfSeq { public List<ConfItem> A { get; set; } = new(); public List<ConfItem> B { get; set; } = new(); public List<ConfItem> C { get; set; } = new(); public List<ConfItem> D { get; set; } = new(); public List<ConfItem> E { get; set; } = new(); public ConfItem[] F { get; set; } = System.Array.Empty<ConfItem>(); }
+    public class ConfSeqDto
+    {
+        public IList<ConfItemDto>? A { get; set; }
+        public ICollection<ConfItemDto>? B { get; set; }
+        public IEnumerable<ConfItemDto>? C { get; set; }
+        public IReadOnlyList<ConfItemDto>? D { get; set; }
+        public System.Collections.Immutable.ImmutableList<ConfItemDto>? E { get; set; }
+        public IReadOnlyCollection<ConfItemDto>? F { get; set; }
+    }
+
     public class ConfTag { public string Label { get; set; } = ""; }
     public class ConfTagged { public ConfTag[] Tags { get; set; } = System.Array.Empty<ConfTag>(); }
     public class ConfTaggedDto { public List<ConfTag> Tags { get; set; } = new(); }
@@ -695,6 +707,26 @@ namespace Mapsicle.SourceGen.Tests
         }
 
         [Fact]
+        public void CollectionInterfaceDestinationsAgree()
+        {
+            var items = new List<ConfItem> { new() { Sku = "a", Qty = 1 }, new() { Sku = "b", Qty = 2 } };
+            var source = new ConfSeq { A = items, B = items, C = items, D = items, E = items, F = items.ToArray() };
+
+            LanesAgree<ConfSeq, ConfSeqDto>(
+                source,
+                d => string.Join(",", d.A!.Select(i => i.Sku + i.Qty)),
+                d => string.Join(",", d.B!.Select(i => i.Sku + i.Qty)),
+                d => string.Join(",", d.C!.Select(i => i.Sku + i.Qty)),
+                d => string.Join(",", d.D!.Select(i => i.Sku + i.Qty)),
+                d => string.Join(",", d.E!.Select(i => i.Sku + i.Qty)),
+                d => string.Join(",", d.F!.Select(i => i.Sku + i.Qty)));
+
+            var dto = ((object)source).MapTo<ConfSeqDto>()!;
+            Assert.Equal(2, dto.D!.Count);
+            Assert.Equal(2, dto.E!.Count);
+        }
+
+        [Fact]
         public void EveryDeclaredPairWasActuallyGenerated()
         {
             // Without this the suite is decorative. A refused pair falls back to the runtime engine,
@@ -743,7 +775,7 @@ namespace Mapsicle.SourceGen.Tests
                 nameof(ConfCaseEnum), nameof(ConfCasing), nameof(ConfControlled), nameof(ConfCovariant),
                 nameof(ConfCrossEnum), nameof(ConfDerived), nameof(ConfEnumFit), nameof(ConfEnumText), nameof(ConfFlat), nameof(ConfFlatten),
                 nameof(ConfKennel), nameof(ConfKinds), nameof(ConfLift), nameof(ConfList), nameof(ConfLoopOwner), nameof(ConfNest),
-                nameof(ConfNullable), nameof(ConfOwner), nameof(ConfPartial), nameof(ConfRoot), nameof(ConfShielded), nameof(ConfStamp),
+                nameof(ConfNullable), nameof(ConfOwner), nameof(ConfPartial), nameof(ConfRoot), nameof(ConfSeq), nameof(ConfShielded), nameof(ConfStamp),
                 nameof(ConfTagged), nameof(ConfWiden),
             };
 

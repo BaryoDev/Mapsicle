@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Mapsicle;
 
 [assembly: MapsicleGenerate(typeof(AotOrder), typeof(AotOrderDto))]
+[assembly: MapsicleGenerate(typeof(AotShelf), typeof(AotShelfDto))]
 
 // Published with NativeAOT in CI and run. Under JIT every one of these passed while the published
 // binary threw on a declared list and returned null for an undeclared pair, so only the binary counts.
@@ -39,6 +40,8 @@ Check("declared typed", () => order.MapTo<AotOrder, AotOrderDto>()?.Name, "Ana")
 Check("declared untyped", () => ((object)order).MapTo<AotOrderDto>()?.Name, "Ana");
 Check("declared list", () => new List<AotOrder> { order, order }.MapTo<AotOrderDto>()[1].Name, "Ana");
 Check("declared array", () => new[] { order }.MapTo<AotOrderDto>()[0].Name, "Ana");
+Check("declared interface list member", () => new AotShelf { Orders = new List<AotOrder> { order, order } }
+    .MapTo<AotShelf, AotShelfDto>()?.Orders?.Count.ToString(), "2");
 Check("scalar widening", () => ((object)5).MapTo<long>().ToString(), "5");
 Check("typed scalar widening", () => 5.MapTo<int, long>().ToString(), "5");
 Check("factory scalar widening", () => { using var f = MapperFactory.Create(); return f.MapTo<long>(5).ToString(); }, "5");
@@ -59,3 +62,5 @@ public class AotOrder { public int Id { get; set; } public string? Name { get; s
 public class AotOrderDto { public int Id { get; set; } public string? Name { get; set; } }
 public class AotPet { public string? Name { get; set; } }
 public class AotPetDto { public string? Name { get; set; } }
+public class AotShelf { public List<AotOrder> Orders { get; set; } = new(); }
+public class AotShelfDto { public IReadOnlyList<AotOrderDto>? Orders { get; set; } }
