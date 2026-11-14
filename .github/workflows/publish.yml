@@ -1,24 +1,24 @@
 name: Publish to NuGet
 
 # The version comes from the tag, never from a typed input, so what was published
-# is always recoverable from git. A dispatch run exists only to exercise this
-# workflow without publishing: a release path that can only be tested by
-# releasing has never been tested. The publish step runs only for a pushed tag,
-# so a dispatch run builds, checks and obtains a key, and stops there.
+# is always recoverable from git. A dispatch run exists only to exercise the build
+# and checks without publishing, in the dry-run job. It does not exchange a key
+# with nuget.org, so a broken trusted publishing policy first shows on a real tag push.
+# The publish job runs only for a pushed tag, in the nuget-release environment.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
 
-concurrency:
-  group: publish
-  cancel-in-progress: false
-
 jobs:
   dry-run:
+    # Own group, so a dry run never replaces a pending publish.
+    concurrency:
+      group: publish-dry-run-${{ github.ref }}
+      cancel-in-progress: false
     # Dispatch run. Builds, checks and packs only: no key exchange and no push,
-    # and no environment, so it runs from any branch.
+    # and no environment. It still needs a commit on the default branch and a green CI run.
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
@@ -32,8 +32,8 @@ jobs:
           # The ancestry check below needs the default branch's history.
           fetch-depth: 0
 
-      # A tag can be pushed on any commit, and a dispatch can run any branch's copy of this file.
-      # Neither says the commit was ever reviewed or merged, so the commit has to be on the default
+      # A tag can be pushed on any commit, which does not say the commit was ever reviewed or
+      # merged, so the commit has to be on the default
       # branch before anything else runs. The same rule is worth a tag ruleset on v*, which is a
       # repository setting rather than something this file can enforce.
       - name: Require the commit to be on the default branch
@@ -113,6 +113,9 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: nuget-release
+    concurrency:
+      group: publish
+      cancel-in-progress: false
 
     permissions:
       contents: read
@@ -128,8 +131,8 @@ jobs:
           # The ancestry check below needs the default branch's history.
           fetch-depth: 0
 
-      # A tag can be pushed on any commit, and a dispatch can run any branch's copy of this file.
-      # Neither says the commit was ever reviewed or merged, so the commit has to be on the default
+      # A tag can be pushed on any commit, which does not say the commit was ever reviewed or
+      # merged, so the commit has to be on the default
       # branch before anything else runs. The same rule is worth a tag ruleset on v*, which is a
       # repository setting rather than something this file can enforce.
       - name: Require the commit to be on the default branch
