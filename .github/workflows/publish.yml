@@ -1,23 +1,121 @@
 name: Publish to NuGet
 
 # The version comes from the tag, never from a typed input, so what was published
-# is always recoverable from git. A dispatch run exists only to exercise this
-# workflow without publishing: a release path that can only be tested by
-# releasing has never been tested. The publish step runs only for a pushed tag,
-# so a dispatch run builds, checks and obtains a key, and stops there.
+# is always recoverable from git. A dispatch run exists only to exercise the build
+# and checks without publishing, in the dry-run job. It does not exchange a key
+# with nuget.org, so a broken trusted publishing policy first shows on a real tag push.
+# The publish job runs only for a pushed tag, in the nuget-release environment.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
 
-concurrency:
-  group: publish
-  cancel-in-progress: false
-
 jobs:
-  publish:
+  dry-run:
+    # Own group, so a dry run never replaces a pending publish.
+    concurrency:
+      group: publish-dry-run-${{ github.ref }}
+      cancel-in-progress: false
+    # Dispatch run. Builds, checks and packs only: no key exchange and no push,
+    # and no environment. It still needs a commit on the default branch and a green CI run.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Read only, so the CI check below can list the workflow runs for this commit.
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The ancestry check below needs the default branch's history.
+          fetch-depth: 0
+
+      # A tag can be pushed on any commit, which does not say the commit was ever reviewed or
+      # merged, so the commit has to be on the default
+      # branch before anything else runs. The same rule is worth a tag ruleset on v*, which is a
+      # repository setting rather than something this file can enforce.
+      - name: Require the commit to be on the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::$GITHUB_SHA is not on $DEFAULT_BRANCH. Publish from a commit that was merged."
+            exit 1
+          fi
+
+      # ci.yml holds the native-aot, parity, claims, coverage and every-package-packs jobs, and this
+      # job runs only a subset of them. A run that concluded success is a run where every job passed,
+      # so a release cannot go out ahead of, or in spite of, a red one.
+      - name: Require a green CI run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq '.total_count')
+          if [ "${count:-0}" -lt 1 ]; then
+            echo "::error::No successful ci.yml run found for $GITHUB_SHA. Wait for CI on the default branch to go green, then re-run."
+            exit 1
+          fi
+          echo "CI is green for $GITHUB_SHA."
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Read the version from the tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # A dispatch run publishes nothing, so the number only has to be well formed.
+            VERSION="0.0.0-dryrun"
+          fi
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Tag $GITHUB_REF_NAME does not look like vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - run: dotnet restore Mapsicle.sln
+
+      # Version applied at build time so the assemblies carry the release
+      # AssemblyVersion, not the csproj default. Pack reuses these via --no-build.
+      - name: Build
+        run: dotnet build Mapsicle.sln -c Release --no-restore /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test
+        run: dotnet test Mapsicle.sln -c Release --no-build --verbosity normal
+
+      # The same checks ci.yml runs. This job used to run its own tests and
+      # nothing else, so it could publish while the audit or formatting was red.
+      - name: Dependency audit
+        run: dotnet restore Mapsicle.sln /p:NuGetAudit=true /p:NuGetAuditMode=all /p:WarningsNotAsErrors= /p:TreatWarningsAsErrors=true
+
+      - name: Formatting
+        run: dotnet format Mapsicle.sln --verify-no-changes --no-restore
+
+      - name: Pack
+        run: |
+          for proj in src/*/*.csproj; do
+            dotnet pack "$proj" -c Release --no-build --output ./packages \
+              /p:Version=${{ steps.version.outputs.version }}
+          done
+          ls -la ./packages
+
+  publish:
+    # Tag push only. Runs in the protected environment.
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    environment: nuget-release
+    concurrency:
+      group: publish
+      cancel-in-progress: false
 
     permissions:
       contents: read
@@ -33,8 +131,8 @@ jobs:
           # The ancestry check below needs the default branch's history.
           fetch-depth: 0
 
-      # A tag can be pushed on any commit, and a dispatch can run any branch's copy of this file.
-      # Neither says the commit was ever reviewed or merged, so the commit has to be on the default
+      # A tag can be pushed on any commit, which does not say the commit was ever reviewed or
+      # merged, so the commit has to be on the default
       # branch before anything else runs. The same rule is worth a tag ruleset on v*, which is a
       # repository setting rather than something this file can enforce.
       - name: Require the commit to be on the default branch
@@ -112,8 +210,8 @@ jobs:
       # Requested here rather than earlier: the key expires after an hour and
       # each OIDC token buys exactly one key.
       #
-      # Runs on dry runs too, so a dry run actually verifies the trusted
-      # publishing policy. Obtaining a key publishes nothing.
+      # Dispatch runs use the dry-run job and never reach this step. The trusted
+      # publishing policy is bound to the environment this job runs in.
       - name: Exchange OIDC token for a short-lived NuGet key
         id: nuget_login
         uses: NuGet/login@v1
