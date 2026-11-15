@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="xunit" />
@@ -24,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Mapsicle\Mapsicle.csproj" />
     <ProjectReference Include="..\..\src\Mapsicle.Fluent\Mapsicle.Fluent.csproj" />
+    <ProjectReference Include="..\..\src\Mapsicle.Dapper\Mapsicle.Dapper.csproj" />
   </ItemGroup>
 
 </Project>

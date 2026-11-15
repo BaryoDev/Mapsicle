@@ -165,6 +165,24 @@ namespace Mapsicle.Dapper.Tests
         }
 
         [Fact]
+        public void QueryAndMap_WithTwoConfigurations_EachKeepsItsOwnMapping()
+        {
+            var full = new MapperConfiguration(cfg =>
+                cfg.CreateMap<User, UserSummaryDto>()
+                    .ForMember(d => d.FullName, opt => opt.MapFrom(s => $"{s.FirstName} {s.LastName}")));
+            var reversed = new MapperConfiguration(cfg =>
+                cfg.CreateMap<User, UserSummaryDto>()
+                    .ForMember(d => d.FullName, opt => opt.MapFrom(s => $"{s.LastName}, {s.FirstName}")));
+            const string sql = "SELECT * FROM Users WHERE Id = 1";
+
+            for (var i = 0; i < 2; i++)
+            {
+                Assert.Equal("John Doe", _connection.QueryAndMap<User, UserSummaryDto>(sql, full)[0].FullName);
+                Assert.Equal("Doe, John", _connection.QueryAndMap<User, UserSummaryDto>(sql, reversed)[0].FullName);
+            }
+        }
+
+        [Fact]
         public void QueryAndMap_WithIMapper_UsesProvidedMapper()
         {
             var config = new MapperConfiguration(cfg =>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Dapper;
 using Mapsicle.Fluent;
@@ -25,7 +26,7 @@ namespace Mapsicle.Dapper
         public static List<TDest> MapTo<TDest>(this IEnumerable<object> source)
         {
             if (source is null) return new List<TDest>();
-            return source.Select(item => MapRow<TDest>(item)).ToList();
+            return MapRows<object, TDest>(source);
         }
 
         /// <summary>
@@ -39,7 +40,7 @@ namespace Mapsicle.Dapper
         public static List<TDest> MapTo<TSource, TDest>(this IEnumerable<TSource> source, IMapper mapper)
         {
             if (source is null) return new List<TDest>();
-            return source.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
+            return MapRows<TSource, TDest>(source, mapper);
         }
 
         #endregion
@@ -69,7 +70,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => MapRow<TDest>(item)).ToList();
+            return MapRows<TSource, TDest>(results);
         }
 
         /// <summary>
@@ -96,9 +97,9 @@ namespace Mapsicle.Dapper
             int? commandTimeout = null,
             CommandType? commandType = null)
         {
-            var mapper = config.CreateMapper();
+            var mapper = MapperFor(config);
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
+            return MapRows<TSource, TDest>(results, mapper);
         }
 
         /// <summary>
@@ -126,7 +127,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = connection.Query<TSource>(sql, param, transaction, buffered, commandTimeout, commandType);
-            return results.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
+            return MapRows<TSource, TDest>(results, mapper);
         }
 
         #endregion
@@ -154,7 +155,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = await connection.QueryAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return results.Select(item => MapRow<TDest>(item)).ToList();
+            return MapRows<TSource, TDest>(results);
         }
 
         /// <summary>
@@ -180,7 +181,7 @@ namespace Mapsicle.Dapper
             CommandType? commandType = null)
         {
             var results = await connection.QueryAsync<TSource>(sql, param, transaction, commandTimeout, commandType);
-            return results.Select(item => mapper.Map<TSource, TDest>(item)!).ToList();
+            return MapRows<TSource, TDest>(results, mapper);
         }
 
         #endregion
@@ -363,7 +364,7 @@ namespace Mapsicle.Dapper
         {
             var results = connection.Query<TSource>(
                 procedureName, param, transaction, true, commandTimeout, CommandType.StoredProcedure);
-            return results.Select(item => MapRow<TDest>(item)).ToList();
+            return MapRows<TSource, TDest>(results);
         }
 
         /// <summary>
@@ -386,12 +387,51 @@ namespace Mapsicle.Dapper
         {
             var results = await connection.QueryAsync<TSource>(
                 procedureName, param, transaction, commandTimeout, CommandType.StoredProcedure);
-            return results.Select(item => MapRow<TDest>(item)).ToList();
+            return MapRows<TSource, TDest>(results);
         }
 
         #endregion
 
         #region Row Mapping
+
+        // CreateMapper returns a mapper with its own empty plan cache, so calling it per query
+        // rebuilt every plan on every call. The configuration version still invalidates a plan held
+        // by the shared mapper, so a change made after the first query is honoured.
+        private static readonly ConditionalWeakTable<MapperConfiguration, IMapper> _mappers = new();
+
+        private static IMapper MapperFor(MapperConfiguration config) =>
+            _mappers.GetValue(config, c => c.CreateMapper());
+
+        // Buffered Dapper results are a List, walked by index into a list sized up front. A LINQ
+        // Select and ToList cost an iterator and a delegate per call, plus a closure when the
+        // mapper was captured.
+        private static List<TDest> MapRows<TSource, TDest>(IEnumerable<TSource> rows)
+        {
+            if (rows is List<TSource> list)
+            {
+                var target = new List<TDest>(list.Count);
+                for (var i = 0; i < list.Count; i++) target.Add(MapRow<TDest>(list[i]));
+                return target;
+            }
+
+            var result = rows is ICollection<TSource> collection ? new List<TDest>(collection.Count) : new List<TDest>();
+            foreach (var row in rows) result.Add(MapRow<TDest>(row));
+            return result;
+        }
+
+        private static List<TDest> MapRows<TSource, TDest>(IEnumerable<TSource> rows, IMapper mapper)
+        {
+            if (rows is List<TSource> list)
+            {
+                var target = new List<TDest>(list.Count);
+                for (var i = 0; i < list.Count; i++) target.Add(mapper.Map<TSource, TDest>(list[i])!);
+                return target;
+            }
+
+            var result = rows is ICollection<TSource> collection ? new List<TDest>(collection.Count) : new List<TDest>();
+            foreach (var row in rows) result.Add(mapper.Map<TSource, TDest>(row)!);
+            return result;
+        }
 
         // An untyped Dapper row is a DapperRow, whose columns live behind IDictionary<string, object>
         // and not in properties. The object path found no properties on it, so every column was
